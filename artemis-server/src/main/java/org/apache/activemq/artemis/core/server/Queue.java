@@ -24,9 +24,11 @@ import java.util.concurrent.Executor;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.Pair;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.filter.Filter;
+import org.apache.activemq.artemis.core.paging.PagingStore;
 import org.apache.activemq.artemis.core.paging.cursor.PageSubscription;
 import org.apache.activemq.artemis.core.persistence.OperationContext;
 import org.apache.activemq.artemis.core.postoffice.Binding;
@@ -48,6 +50,8 @@ public interface Queue extends Bindable,CriticalComponent {
 
    void setFilter(Filter filter);
 
+   PagingStore getPagingStore();
+
    PageSubscription getPageSubscription();
 
    RoutingType getRoutingType();
@@ -59,6 +63,15 @@ public interface Queue extends Bindable,CriticalComponent {
    boolean allowsReferenceCallback();
 
    boolean isDurable();
+
+   int durableUp(Message message);
+
+   int durableDown(Message message);
+
+   void refUp(MessageReference messageReference);
+
+   void refDown(MessageReference messageReference);
+
 
    /**
     * The queue definition could be durable, but the messages could eventually be considered non durable.
@@ -80,6 +93,10 @@ public interface Queue extends Bindable,CriticalComponent {
    boolean isPurgeOnNoConsumers();
 
    void setPurgeOnNoConsumers(boolean value);
+
+   boolean isEnabled();
+
+   void setEnabled(boolean value);
 
    int getConsumersBeforeDispatch();
 
@@ -118,6 +135,10 @@ public interface Queue extends Bindable,CriticalComponent {
    boolean isGroupRebalance();
 
    void setGroupRebalance(boolean groupRebalance);
+
+   boolean isGroupRebalancePauseDispatch();
+
+   void setGroupRebalancePauseDispatch(boolean groupRebalancePauseDisptach);
 
    SimpleString getGroupFirstKey();
 
@@ -457,4 +478,7 @@ public interface Queue extends Bindable,CriticalComponent {
 
    }
 
+   default QueueConfiguration getQueueConfiguration() {
+      return null;
+   }
 }

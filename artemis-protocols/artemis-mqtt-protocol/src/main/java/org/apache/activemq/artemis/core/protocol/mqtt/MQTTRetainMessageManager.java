@@ -18,6 +18,7 @@
 package org.apache.activemq.artemis.core.protocol.mqtt;
 
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.server.BindingQueryResult;
 import org.apache.activemq.artemis.core.server.MessageReference;
@@ -49,22 +50,15 @@ public class MQTTRetainMessageManager {
 
       Queue queue = session.getServer().locateQueue(retainAddress);
       if (queue == null) {
-         queue = session.getServer().createQueue(retainAddress, retainAddress, null, true, false);
+         queue = session.getServer().createQueue(new QueueConfiguration(retainAddress));
       }
 
-      try (LinkedListIterator<MessageReference> iterator = queue.iterator()) {
-         synchronized (queue) {
-            if (iterator.hasNext()) {
-               MessageReference ref = iterator.next();
-               iterator.remove();
-               queue.acknowledge(tx, ref);
-            }
+      queue.deleteAllReferences();
 
-            if (!reset) {
-               sendToQueue(message.copy(session.getServer().getStorageManager().generateID()), queue, tx);
-            }
-         }
+      if (!reset) {
+         sendToQueue(message.copy(session.getServer().getStorageManager().generateID()), queue, tx);
       }
+
    }
 
    // SEND to Queue.
@@ -76,18 +70,23 @@ public class MQTTRetainMessageManager {
       // Iterate over all matching retain queues and add the queue
       Transaction tx = session.getServerSession().newTransaction();
       try {
-         synchronized (queue) {
-            for (SimpleString retainedQueueName : bindingQueryResult.getQueueNames()) {
-               Queue retainedQueue = session.getServer().locateQueue(retainedQueueName);
-               try (LinkedListIterator<MessageReference> i = retainedQueue.iterator()) {
-                  if (i.hasNext()) {
-                     Message message = i.next().getMessage().copy(session.getServer().getStorageManager().generateID());
-                     sendToQueue(message, queue, tx);
+         for (SimpleString retainedQueueName : bindingQueryResult.getQueueNames()) {
+            Queue retainedQueue = session.getServer().locateQueue(retainedQueueName);
+            try (LinkedListIterator<MessageReference> i = retainedQueue.iterator()) {
+               if (i.hasNext()) {
+                  MessageReference ref = i.next();
+                  while (i.hasNext()) {
+                     ref = i.next();
+                     if (i.hasNext()) {
+                        i.remove();
+                     }
                   }
+                  Message message = ref.getMessage().copy(session.getServer().getStorageManager().generateID());
+                  sendToQueue(message, queue, tx);
                }
             }
          }
-      } catch (Throwable t) {
+      } catch (Exception t) {
          tx.rollback();
          throw t;
       }

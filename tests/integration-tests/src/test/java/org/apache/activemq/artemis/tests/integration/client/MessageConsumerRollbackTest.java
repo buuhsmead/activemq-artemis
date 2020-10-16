@@ -21,6 +21,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
@@ -65,9 +66,9 @@ public class MessageConsumerRollbackTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createTransactedSession();
 
-      session.createQueue(inQueue, inQueue, true);
+      session.createQueue(new QueueConfiguration(inQueue));
 
-      session.createQueue(outQueue, outQueue, true);
+      session.createQueue(new QueueConfiguration(outQueue));
 
       session.close();
    }
@@ -219,7 +220,6 @@ public class MessageConsumerRollbackTest extends ActiveMQTestBase {
             }
 
             if (counter.incrementAndGet() % 200 == 0) {
-               System.out.println("rollback " + message);
                session.rollback();
             } else {
                commitLatch.countDown();

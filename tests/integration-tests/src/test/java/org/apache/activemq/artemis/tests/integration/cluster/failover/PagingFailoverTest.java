@@ -18,6 +18,7 @@ package org.apache.activemq.artemis.tests.integration.cluster.failover;
 
 import java.util.HashMap;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
@@ -33,8 +34,10 @@ import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.tests.integration.cluster.util.SameProcessActiveMQServer;
 import org.apache.activemq.artemis.tests.integration.cluster.util.TestableServer;
 import org.apache.activemq.artemis.tests.util.TransportConfigurationUtils;
+import org.apache.activemq.artemis.utils.RetryRule;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 
 /**
@@ -43,6 +46,9 @@ import org.junit.Test;
  */
 public class PagingFailoverTest extends FailoverTestBase {
    // Constants -----------------------------------------------------
+
+   @Rule
+   public RetryRule retryRule = new RetryRule(2);
 
    private static final SimpleString ADDRESS = new SimpleString("SimpleAddress");
 
@@ -91,7 +97,7 @@ public class PagingFailoverTest extends FailoverTestBase {
       sf = createSessionFactoryAndWaitForTopology(locator, 2);
       session = addClientSession(sf.createSession(!transacted, !transacted, 0));
 
-      session.createQueue(PagingFailoverTest.ADDRESS, PagingFailoverTest.ADDRESS, true);
+      session.createQueue(new QueueConfiguration(PagingFailoverTest.ADDRESS));
 
       ClientProducer prod = session.createProducer(PagingFailoverTest.ADDRESS);
 
@@ -167,7 +173,7 @@ public class PagingFailoverTest extends FailoverTestBase {
       ClientSessionFactoryInternal sf = createSessionFactoryAndWaitForTopology(locator, 2);
       session = sf.createSession(false, false, 0);
 
-      session.createQueue(PagingFailoverTest.ADDRESS, PagingFailoverTest.ADDRESS, true);
+      session.createQueue(new QueueConfiguration(PagingFailoverTest.ADDRESS));
 
       ClientProducer prod = session.createProducer(PagingFailoverTest.ADDRESS);
 
@@ -193,7 +199,6 @@ public class PagingFailoverTest extends FailoverTestBase {
       while (timeout > System.currentTimeMillis() && queue.getPageSubscription().isPaging()) {
          Thread.sleep(100);
          // Simulating what would happen on expire
-         System.out.println("IsPaging " + queue.getPageSubscription().isPaging());
          queue.expireReferences();
       }
 

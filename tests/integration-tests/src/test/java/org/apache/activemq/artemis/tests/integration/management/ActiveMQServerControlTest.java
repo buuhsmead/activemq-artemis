@@ -26,14 +26,19 @@ import javax.transaction.xa.XAResource;
 import javax.transaction.xa.Xid;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
+import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.JsonUtil;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
@@ -65,35 +70,47 @@ import org.apache.activemq.artemis.core.security.Role;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ActiveMQServers;
 import org.apache.activemq.artemis.core.server.Queue;
-import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.core.server.ServerConsumer;
 import org.apache.activemq.artemis.core.server.ServerSession;
 import org.apache.activemq.artemis.core.server.impl.AddressInfo;
 import org.apache.activemq.artemis.core.settings.impl.DeletionPolicy;
 import org.apache.activemq.artemis.core.settings.impl.SlowConsumerPolicy;
 import org.apache.activemq.artemis.core.transaction.impl.XidImpl;
-import org.apache.activemq.artemis.nativo.jlibaio.LibaioContext;
 import org.apache.activemq.artemis.jms.client.ActiveMQConnection;
 import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
 import org.apache.activemq.artemis.jms.client.ActiveMQSession;
+import org.apache.activemq.artemis.nativo.jlibaio.LibaioContext;
 import org.apache.activemq.artemis.spi.core.security.ActiveMQJAASSecurityManager;
 import org.apache.activemq.artemis.spi.core.security.jaas.InVMLoginModule;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.unit.core.config.impl.fakes.FakeConnectorServiceFactory;
 import org.apache.activemq.artemis.tests.util.Wait;
 import org.apache.activemq.artemis.utils.RandomUtil;
+import org.apache.activemq.artemis.utils.RetryMethod;
+import org.apache.activemq.artemis.utils.RetryRule;
 import org.apache.activemq.artemis.utils.UUIDGenerator;
+import org.jboss.logging.Logger;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import static org.apache.activemq.artemis.jms.client.ActiveMQConnection.JMS_SESSION_CLIENT_ID_PROPERTY;
 
+@RunWith(Parameterized.class)
 public class ActiveMQServerControlTest extends ManagementTestBase {
+
+   private static final Logger log = Logger.getLogger(ActiveMQServerControlTest.class);
+
+   @Rule
+   public RetryRule retryRule = new RetryRule(0);
 
    // Constants -----------------------------------------------------
 
    // Attributes ----------------------------------------------------
+
+   protected boolean legacyCreateQueue;
 
    private ActiveMQServer server;
 
@@ -101,12 +118,20 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
 
    private TransportConfiguration connectorConfig;
 
+   @Parameterized.Parameters(name = "legacyCreateQueue={0}")
+   public static Collection<Object[]> getParams() {
+      return Arrays.asList(new Object[][]{{true}, {false}});
+   }
+
+   public ActiveMQServerControlTest(boolean legacyCreateQueue) {
+      this.legacyCreateQueue = legacyCreateQueue;
+   }
+
    // Static --------------------------------------------------------
 
    private static boolean contains(final String name, final String[] strings) {
       boolean found = false;
       for (String str : strings) {
-         IntegrationTestLogger.LOGGER.info("Does " + str + " match " + name);
          if (name.equals(str)) {
             found = true;
             break;
@@ -166,10 +191,36 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       Assert.assertEquals(conf.isMessageCounterEnabled(), serverControl.isMessageCounterEnabled());
       Assert.assertEquals(conf.getTransactionTimeoutScanPeriod(), serverControl.getTransactionTimeoutScanPeriod());
       Assert.assertEquals(conf.getMessageExpiryScanPeriod(), serverControl.getMessageExpiryScanPeriod());
-      Assert.assertEquals(conf.getMessageExpiryThreadPriority(), serverControl.getMessageExpiryThreadPriority());
       Assert.assertEquals(conf.getJournalCompactMinFiles(), serverControl.getJournalCompactMinFiles());
       Assert.assertEquals(conf.getJournalCompactPercentage(), serverControl.getJournalCompactPercentage());
       Assert.assertEquals(conf.isPersistenceEnabled(), serverControl.isPersistenceEnabled());
+      Assert.assertTrue(serverControl.isActive());
+   }
+
+   @Test
+   public void testSecurityCacheSizes() throws Exception {
+      ActiveMQServerControl serverControl = createManagementControl();
+
+      Assert.assertEquals(usingCore() ? 1 : 0, serverControl.getAuthenticationCacheSize());
+      Assert.assertEquals(usingCore() ? 7 : 0, serverControl.getAuthorizationCacheSize());
+
+      ServerLocator loc = createInVMNonHALocator();
+      ClientSessionFactory csf = createSessionFactory(loc);
+      ClientSession session = csf.createSession("myUser", "myPass", false, true, false, false, 0);
+      session.start();
+
+      final String address = "ADDRESS";
+
+      serverControl.createAddress(address, "MULTICAST");
+
+      ClientProducer producer = session.createProducer(address);
+
+      ClientMessage m = session.createMessage(true);
+      m.putStringProperty("hello", "world");
+      producer.send(m);
+
+      Assert.assertEquals(usingCore() ? 2 : 1, serverControl.getAuthenticationCacheSize());
+      Assert.assertEquals(usingCore() ? 8 : 1, serverControl.getAuthorizationCacheSize());
    }
 
    @Test
@@ -213,7 +264,11 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
 
       checkNoResource(ObjectNameBuilder.DEFAULT.getQueueObjectName(address, name, RoutingType.ANYCAST));
       serverControl.createAddress(address.toString(), "ANYCAST");
-      serverControl.createQueue(address.toString(), "ANYCAST", name.toString(), null, true, -1, false, false);
+      if (legacyCreateQueue) {
+         serverControl.createQueue(address.toString(), "ANYCAST", name.toString(), null, true, -1, false, false);
+      } else {
+         serverControl.createQueue(new QueueConfiguration(name).setAddress(address).setRoutingType(RoutingType.ANYCAST).setAutoCreateAddress(false).toJSON());
+      }
 
       checkResource(ObjectNameBuilder.DEFAULT.getQueueObjectName(address, name, RoutingType.ANYCAST));
       QueueControl queueControl = ManagementControlHelper.createQueueControl(address, name, RoutingType.ANYCAST, mbeanServer);
@@ -236,7 +291,11 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ActiveMQServerControl serverControl = createManagementControl();
 
       checkNoResource(ObjectNameBuilder.DEFAULT.getQueueObjectName(address, name, RoutingType.ANYCAST));
-      serverControl.createQueue(null, name.toString(), "ANYCAST");
+      if (legacyCreateQueue) {
+         serverControl.createQueue(null, name.toString(), "ANYCAST");
+      } else {
+         serverControl.createQueue(new QueueConfiguration(name).setRoutingType(RoutingType.ANYCAST).toJSON());
+      }
 
       checkResource(ObjectNameBuilder.DEFAULT.getQueueObjectName(name, name, RoutingType.ANYCAST));
       QueueControl queueControl = ManagementControlHelper.createQueueControl(address, name, RoutingType.ANYCAST, mbeanServer);
@@ -262,7 +321,11 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
 
       checkNoResource(ObjectNameBuilder.DEFAULT.getQueueObjectName(address, name, RoutingType.ANYCAST));
       serverControl.createAddress(address.toString(), "ANYCAST");
-      serverControl.createQueue(address.toString(), "ANYCAST", name.toString(), filter, durable, -1, false, false);
+      if (legacyCreateQueue) {
+         serverControl.createQueue(address.toString(), "ANYCAST", name.toString(), filter, durable, -1, false, false);
+      } else {
+         serverControl.createQueue(new QueueConfiguration(name).setAddress(address).setRoutingType(RoutingType.ANYCAST).setFilterString(filter).setAutoCreateAddress(false).toJSON());
+      }
 
       checkResource(ObjectNameBuilder.DEFAULT.getQueueObjectName(address, name, RoutingType.ANYCAST));
       QueueControl queueControl = ManagementControlHelper.createQueueControl(address, name, RoutingType.ANYCAST, mbeanServer);
@@ -287,7 +350,11 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
 
       checkNoResource(ObjectNameBuilder.DEFAULT.getQueueObjectName(address, name, RoutingType.ANYCAST));
       serverControl.createAddress(address.toString(), "ANYCAST");
-      serverControl.createQueue(address.toString(), "ANYCAST", name.toString(), null, durable, -1, false, false);
+      if (legacyCreateQueue) {
+         serverControl.createQueue(address.toString(), "ANYCAST", name.toString(), null, durable, -1, false, false);
+      } else {
+         serverControl.createQueue(new QueueConfiguration(name).setAddress(address).setRoutingType(RoutingType.ANYCAST).setDurable(durable).setAutoCreateAddress(false).toJSON());
+      }
 
       checkResource(ObjectNameBuilder.DEFAULT.getQueueObjectName(address, name, RoutingType.ANYCAST));
       QueueControl queueControl = ManagementControlHelper.createQueueControl(address, name, RoutingType.ANYCAST, mbeanServer);
@@ -314,7 +381,18 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ActiveMQServerControl serverControl = createManagementControl();
 
       checkNoResource(ObjectNameBuilder.DEFAULT.getQueueObjectName(address, name, RoutingType.ANYCAST));
-      serverControl.createQueue(address.toString(), RoutingType.ANYCAST.toString(), name.toString(), null, durable, maxConsumers, purgeOnNoConsumers, autoCreateAddress);
+      if (legacyCreateQueue) {
+         serverControl.createQueue(address.toString(), RoutingType.ANYCAST.toString(), name.toString(), null, durable, maxConsumers, purgeOnNoConsumers, autoCreateAddress);
+      } else {
+         serverControl.createQueue(new QueueConfiguration(name)
+                                      .setAddress(address)
+                                      .setRoutingType(RoutingType.ANYCAST)
+                                      .setDurable(durable)
+                                      .setMaxConsumers(maxConsumers)
+                                      .setPurgeOnNoConsumers(purgeOnNoConsumers)
+                                      .setAutoCreateAddress(autoCreateAddress)
+                                      .toJSON());
+      }
 
       checkResource(ObjectNameBuilder.DEFAULT.getQueueObjectName(address, name, RoutingType.ANYCAST));
       QueueControl queueControl = ManagementControlHelper.createQueueControl(address, name, RoutingType.ANYCAST, mbeanServer);
@@ -361,7 +439,31 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ActiveMQServerControl serverControl = createManagementControl();
 
       checkNoResource(ObjectNameBuilder.DEFAULT.getQueueObjectName(address, name, RoutingType.ANYCAST));
-      serverControl.createQueue(address.toString(), RoutingType.ANYCAST.toString(), name.toString(), null, durable, maxConsumers, purgeOnNoConsumers, exclusive, groupRebalance, groupBuckets, groupFirstKey, lastValue, lastValueKey, nonDestructive, consumersBeforeDispatch, delayBeforeDispatch, autoDelete, autoDeleteDelay, autoDeleteMessageCount, autoCreateAddress, ringSize);
+      if (legacyCreateQueue) {
+         serverControl.createQueue(address.toString(), RoutingType.ANYCAST.toString(), name.toString(), null, durable, maxConsumers, purgeOnNoConsumers, exclusive, groupRebalance, groupBuckets, groupFirstKey, lastValue, lastValueKey, nonDestructive, consumersBeforeDispatch, delayBeforeDispatch, autoDelete, autoDeleteDelay, autoDeleteMessageCount, autoCreateAddress, ringSize);
+      } else {
+         serverControl.createQueue(new QueueConfiguration(name)
+                                      .setAddress(address)
+                                      .setRoutingType(RoutingType.ANYCAST)
+                                      .setDurable(durable)
+                                      .setMaxConsumers(maxConsumers)
+                                      .setPurgeOnNoConsumers(purgeOnNoConsumers)
+                                      .setExclusive(exclusive)
+                                      .setGroupRebalance(groupRebalance)
+                                      .setGroupBuckets(groupBuckets)
+                                      .setGroupFirstKey(groupFirstKey)
+                                      .setLastValue(lastValue)
+                                      .setLastValueKey(lastValueKey)
+                                      .setNonDestructive(nonDestructive)
+                                      .setConsumersBeforeDispatch(consumersBeforeDispatch)
+                                      .setDelayBeforeDispatch(delayBeforeDispatch)
+                                      .setAutoDelete(autoDelete)
+                                      .setAutoDeleteDelay(autoDeleteDelay)
+                                      .setAutoDeleteMessageCount(autoDeleteMessageCount)
+                                      .setRingSize(ringSize)
+                                      .setAutoCreateAddress(autoCreateAddress)
+                                      .toJSON());
+      }
 
       checkResource(ObjectNameBuilder.DEFAULT.getQueueObjectName(address, name, RoutingType.ANYCAST));
       QueueControl queueControl = ManagementControlHelper.createQueueControl(address, name, RoutingType.ANYCAST, mbeanServer);
@@ -373,9 +475,9 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       Assert.assertEquals(purgeOnNoConsumers, queueControl.isPurgeOnNoConsumers());
       Assert.assertEquals(false, queueControl.isTemporary());
       Assert.assertEquals(exclusive, queueControl.isExclusive());
-//      Assert.assertEquals(groupRebalance, queueControl.getGroupRebalance());
-//      Assert.assertEquals(groupBuckets, queueControl.getGroupBuckets());
-//      Assert.assertEquals(groupFirstKey, queueControl.getGroupFirstKey());
+      Assert.assertEquals(groupRebalance, queueControl.isGroupRebalance());
+      Assert.assertEquals(groupBuckets, queueControl.getGroupBuckets());
+      Assert.assertEquals(groupFirstKey, queueControl.getGroupFirstKey());
       Assert.assertEquals(lastValue, queueControl.isLastValue());
 //      Assert.assertEquals(lastValueKey, queueControl.getLastValueKey());
 //      Assert.assertEquals(nonDestructive, queueControl.isNonDestructive());
@@ -397,6 +499,53 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
    }
 
    @Test
+   public void testRemoveQueueFilter() throws Exception {
+
+      String address = RandomUtil.randomString();
+      QueueConfiguration queue1 = new QueueConfiguration("q1")
+              .setAddress(address)
+              .setFilterString("hello='world'");
+
+      QueueConfiguration queue2 = new QueueConfiguration("q2")
+              .setAddress(address)
+              .setFilterString("hello='darling'");
+
+      ActiveMQServerControl serverControl = createManagementControl();
+      serverControl.createAddress(address, "MULTICAST");
+
+      if (legacyCreateQueue) {
+         serverControl.createQueue(address, queue1.getName().toString(), queue1.getFilterString().toString(), queue1.isDurable());
+         serverControl.createQueue(address, queue2.getName().toString(), queue2.getFilterString().toString(), queue2.isDurable());
+      } else {
+         serverControl.createQueue(queue1.toJSON());
+         serverControl.createQueue(queue2.toJSON());
+      }
+
+      ServerLocator loc = createInVMNonHALocator();
+      ClientSessionFactory csf = createSessionFactory(loc);
+      ClientSession session = csf.createSession();
+      session.start();
+
+      ClientProducer producer = session.createProducer(address);
+      ClientConsumer consumer1 = session.createConsumer("q1");
+      ClientConsumer consumer2 = session.createConsumer("q2");
+
+      ClientMessage m = session.createMessage(true);
+      m.putStringProperty("hello", "world");
+      producer.send(m);
+
+      assertNotNull(consumer1.receiveImmediate());
+      assertNull(consumer2.receiveImmediate());
+
+      serverControl.updateQueue(queue2.setFilterString((String) null).toJSON());
+
+      producer.send(m);
+
+      assertNotNull(consumer1.receive(1000));
+      assertNotNull(consumer2.receive(1000));
+   }
+
+   @Test
    public void testCreateAndDestroyQueueClosingConsumers() throws Exception {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString name = RandomUtil.randomSimpleString();
@@ -406,7 +555,11 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
 
       checkNoResource(ObjectNameBuilder.DEFAULT.getQueueObjectName(address, name, RoutingType.ANYCAST));
       serverControl.createAddress(address.toString(), "ANYCAST");
-      serverControl.createQueue(address.toString(), "ANYCAST", name.toString(), null, durable, -1, false, false);
+      if (legacyCreateQueue) {
+         serverControl.createQueue(address.toString(), "ANYCAST", name.toString(), null, durable, -1, false, false);
+      } else {
+         serverControl.createQueue(new QueueConfiguration(name).setAddress(address).setRoutingType(RoutingType.ANYCAST).setDurable(durable).setAutoCreateAddress(false).toJSON());
+      }
 
       ServerLocator receiveLocator = createInVMNonHALocator();
       ClientSessionFactory receiveCsf = createSessionFactory(receiveLocator);
@@ -439,7 +592,11 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
 
       checkNoResource(ObjectNameBuilder.DEFAULT.getQueueObjectName(address, name, RoutingType.ANYCAST));
       serverControl.createAddress(address.toString(), "ANYCAST");
-      serverControl.createQueue(address.toString(), "ANYCAST", name.toString(), filter, durable, -1, false, false);
+      if (legacyCreateQueue) {
+         serverControl.createQueue(address.toString(), "ANYCAST", name.toString(), filter, durable, -1, false, false);
+      } else {
+         serverControl.createQueue(new QueueConfiguration(name).setAddress(address).setRoutingType(RoutingType.ANYCAST).setDurable(durable).setAutoCreateAddress(false).toJSON());
+      }
 
       checkResource(ObjectNameBuilder.DEFAULT.getQueueObjectName(address, name, RoutingType.ANYCAST));
       QueueControl queueControl = ManagementControlHelper.createQueueControl(address, name, RoutingType.ANYCAST, mbeanServer);
@@ -465,7 +622,11 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
 
       checkNoResource(ObjectNameBuilder.DEFAULT.getQueueObjectName(address, name, RoutingType.ANYCAST));
       serverControl.createAddress(address.toString(), "ANYCAST");
-      serverControl.createQueue(address.toString(), "ANYCAST", name.toString(), filter, durable, -1, false, false);
+      if (legacyCreateQueue) {
+         serverControl.createQueue(address.toString(), "ANYCAST", name.toString(), filter, durable, -1, false, false);
+      } else {
+         serverControl.createQueue(new QueueConfiguration(name).setAddress(address).setRoutingType(RoutingType.ANYCAST).setFilterString(filter).setDurable(durable).setAutoCreateAddress(false).toJSON());
+      }
 
       checkResource(ObjectNameBuilder.DEFAULT.getQueueObjectName(address, name, RoutingType.ANYCAST));
       QueueControl queueControl = ManagementControlHelper.createQueueControl(address, name, RoutingType.ANYCAST, mbeanServer);
@@ -481,6 +642,25 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
    }
 
    @Test
+   public void testCreateAndUpdateQueueWithoutFilter() throws Exception {
+      SimpleString address = RandomUtil.randomSimpleString();
+      SimpleString name = RandomUtil.randomSimpleString();
+
+      ActiveMQServerControl serverControl = createManagementControl();
+
+      serverControl.createQueue(new QueueConfiguration(name).setAddress(address).setRoutingType(RoutingType.ANYCAST).setAutoCreateAddress(true).setFilterString((String) null).toJSON());
+      serverControl.updateQueue(new QueueConfiguration(name).setAddress(address).setRoutingType(RoutingType.ANYCAST).setMaxConsumers(1).toJSON());
+
+      QueueControl queueControl = ManagementControlHelper.createQueueControl(address, name, RoutingType.ANYCAST, mbeanServer);
+      Assert.assertEquals(address.toString(), queueControl.getAddress());
+      Assert.assertEquals(name.toString(), queueControl.getName());
+      Assert.assertNull(queueControl.getFilter());
+      Assert.assertEquals(1, queueControl.getMaxConsumers());
+
+      serverControl.destroyQueue(name.toString());
+   }
+
+   @Test
    public void testGetQueueNames() throws Exception {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString name = RandomUtil.randomSimpleString();
@@ -492,7 +672,11 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
 
       Assert.assertFalse(ActiveMQServerControlTest.contains(name.toString(), serverControl.getQueueNames()));
       serverControl.createAddress(address.toString(), "ANYCAST");
-      serverControl.createQueue(address.toString(), "ANYCAST", name.toString(), null, true, -1, false, false);
+      if (legacyCreateQueue) {
+         serverControl.createQueue(address.toString(), "ANYCAST", name.toString(), null, true, -1, false, false);
+      } else {
+         serverControl.createQueue(new QueueConfiguration(name).setAddress(address).setRoutingType(RoutingType.ANYCAST).setDurable(true).setAutoCreateAddress(false).toJSON());
+      }
       Assert.assertTrue(ActiveMQServerControlTest.contains(name.toString(), serverControl.getQueueNames()));
 
       serverControl.destroyQueue(name.toString());
@@ -513,11 +697,19 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       Assert.assertFalse(ActiveMQServerControlTest.contains(anycastName.toString(), serverControl.getQueueNames()));
       Assert.assertFalse(ActiveMQServerControlTest.contains(multicastName.toString(), serverControl.getQueueNames()));
 
-      serverControl.createQueue(address.toString(), RoutingType.ANYCAST.toString(), anycastName.toString(), null, true, -1, false, true);
+      if (legacyCreateQueue) {
+         serverControl.createQueue(address.toString(), RoutingType.ANYCAST.toString(), anycastName.toString(), null, true, -1, false, true);
+      } else {
+         serverControl.createQueue(new QueueConfiguration(anycastName).setAddress(address).setRoutingType(RoutingType.ANYCAST).toJSON());
+      }
       Assert.assertTrue(ActiveMQServerControlTest.contains(anycastName.toString(), serverControl.getQueueNames(RoutingType.ANYCAST.toString())));
       Assert.assertFalse(ActiveMQServerControlTest.contains(anycastName.toString(), serverControl.getQueueNames(RoutingType.MULTICAST.toString())));
 
-      serverControl.createQueue(address.toString(), RoutingType.MULTICAST.toString(), multicastName.toString(), null, true, -1, false, true);
+      if (legacyCreateQueue) {
+         serverControl.createQueue(address.toString(), RoutingType.MULTICAST.toString(), multicastName.toString(), null, true, -1, false, true);
+      } else {
+         serverControl.createQueue(new QueueConfiguration(multicastName).setAddress(address).setRoutingType(RoutingType.MULTICAST).toJSON());
+      }
       Assert.assertTrue(ActiveMQServerControlTest.contains(multicastName.toString(), serverControl.getQueueNames(RoutingType.MULTICAST.toString())));
       Assert.assertFalse(ActiveMQServerControlTest.contains(multicastName.toString(), serverControl.getQueueNames(RoutingType.ANYCAST.toString())));
 
@@ -559,7 +751,11 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       // management operations
 
       Assert.assertFalse(ActiveMQServerControlTest.contains(address.toString(), serverControl.getAddressNames()));
-      serverControl.createQueue(address.toString(), "ANYCAST", name.toString(), null, true, -1, false, true);
+      if (legacyCreateQueue) {
+         serverControl.createQueue(address.toString(), "ANYCAST", name.toString(), null, true, -1, false, true);
+      } else {
+         serverControl.createQueue(new QueueConfiguration(name).setAddress(address).setRoutingType(RoutingType.ANYCAST).toJSON());
+      }
       Assert.assertTrue(ActiveMQServerControlTest.contains(address.toString(), serverControl.getAddressNames()));
 
       serverControl.destroyQueue(name.toString(), true, true);
@@ -708,7 +904,9 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
 
       String DLA = "someDLA";
       String expiryAddress = "someExpiry";
-      long expiryDelay = -1;
+      long expiryDelay = RandomUtil.randomPositiveLong();
+      long minExpiryDelay = RandomUtil.randomPositiveLong();
+      long maxExpiryDelay = RandomUtil.randomPositiveLong();
       boolean lastValueQueue = true;
       int deliveryAttempts = 1;
       long maxSizeBytes = 20;
@@ -754,6 +952,13 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       long autoDeleteAddressesDelay = RandomUtil.randomPositiveLong();
       double redeliveryCollisionAvoidanceFactor = RandomUtil.randomDouble();
       long retroactiveMessageCount = RandomUtil.randomPositiveLong();
+      boolean autoCreateDeadLetterResources = RandomUtil.randomBoolean();
+      String deadLetterQueuePrefix = RandomUtil.randomString();
+      String deadLetterQueueSuffix = RandomUtil.randomString();
+      boolean autoCreateExpiryResources = RandomUtil.randomBoolean();
+      String expiryQueuePrefix = RandomUtil.randomString();
+      String expiryQueueSuffix = RandomUtil.randomString();
+      boolean enableMetrics = RandomUtil.randomBoolean();
 
       serverControl.addAddressSettings(addressMatch,
                                        DLA,
@@ -803,7 +1008,16 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
                                        autoDeleteQueuesMessageCount,
                                        autoDeleteAddressesDelay,
                                        redeliveryCollisionAvoidanceFactor,
-                                       retroactiveMessageCount);
+                                       retroactiveMessageCount,
+                                       autoCreateDeadLetterResources,
+                                       deadLetterQueuePrefix,
+                                       deadLetterQueueSuffix,
+                                       autoCreateExpiryResources,
+                                       expiryQueuePrefix,
+                                       expiryQueueSuffix,
+                                       minExpiryDelay,
+                                       maxExpiryDelay,
+                                       enableMetrics);
 
       boolean ex = false;
       try {
@@ -855,7 +1069,16 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
                                           autoDeleteQueuesMessageCount,
                                           autoDeleteAddressesDelay,
                                           redeliveryCollisionAvoidanceFactor,
-                                          retroactiveMessageCount);
+                                          retroactiveMessageCount,
+                                          autoCreateDeadLetterResources,
+                                          deadLetterQueuePrefix,
+                                          deadLetterQueueSuffix,
+                                          autoCreateExpiryResources,
+                                          expiryQueuePrefix,
+                                          expiryQueueSuffix,
+                                          minExpiryDelay,
+                                          maxExpiryDelay,
+                                          enableMetrics);
       } catch (Exception expected) {
          ex = true;
       }
@@ -869,6 +1092,9 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
 
       assertEquals(DLA, info.getDeadLetterAddress());
       assertEquals(expiryAddress, info.getExpiryAddress());
+      assertEquals(expiryDelay, info.getExpiryDelay());
+      assertEquals(minExpiryDelay, info.getMinExpiryDelay());
+      assertEquals(maxExpiryDelay, info.getMaxExpiryDelay());
       assertEquals(lastValueQueue, info.isLastValueQueue());
       assertEquals(deliveryAttempts, info.getMaxDeliveryAttempts());
       assertEquals(maxSizeBytes, info.getMaxSizeBytes());
@@ -914,6 +1140,13 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       assertEquals(autoDeleteAddressesDelay, info.getAutoDeleteAddressesDelay());
       assertEquals(redeliveryCollisionAvoidanceFactor, info.getRedeliveryCollisionAvoidanceFactor(), 0);
       assertEquals(retroactiveMessageCount, info.getRetroactiveMessageCount());
+      assertEquals(autoCreateDeadLetterResources, info.isAutoCreateDeadLetterResources());
+      assertEquals(deadLetterQueuePrefix, info.getDeadLetterQueuePrefix());
+      assertEquals(deadLetterQueueSuffix, info.getDeadLetterQueueSuffix());
+      assertEquals(autoCreateExpiryResources, info.isAutoCreateExpiryResources());
+      assertEquals(expiryQueuePrefix, info.getExpiryQueuePrefix());
+      assertEquals(expiryQueueSuffix, info.getExpiryQueueSuffix());
+      assertEquals(enableMetrics, info.isEnableMetrics());
 
       serverControl.addAddressSettings(addressMatch,
                                        DLA,
@@ -963,13 +1196,25 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
                                        autoDeleteQueuesMessageCount,
                                        autoDeleteAddressesDelay,
                                        redeliveryCollisionAvoidanceFactor,
-                                       retroactiveMessageCount);
+                                       retroactiveMessageCount,
+                                       autoCreateDeadLetterResources,
+                                       deadLetterQueuePrefix,
+                                       deadLetterQueueSuffix,
+                                       autoCreateExpiryResources,
+                                       expiryQueuePrefix,
+                                       expiryQueueSuffix,
+                                       minExpiryDelay,
+                                       maxExpiryDelay,
+                                       enableMetrics);
 
       jsonString = serverControl.getAddressSettingsAsJSON(exactAddress);
       info = AddressSettingsInfo.from(jsonString);
 
       assertEquals(DLA, info.getDeadLetterAddress());
       assertEquals(expiryAddress, info.getExpiryAddress());
+      assertEquals(expiryDelay, info.getExpiryDelay());
+      assertEquals(minExpiryDelay, info.getMinExpiryDelay());
+      assertEquals(maxExpiryDelay, info.getMaxExpiryDelay());
       assertEquals(lastValueQueue, info.isLastValueQueue());
       assertEquals(deliveryAttempts, info.getMaxDeliveryAttempts());
       assertEquals(-1, info.getMaxSizeBytes());
@@ -1015,6 +1260,13 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       assertEquals(autoDeleteAddressesDelay, info.getAutoDeleteAddressesDelay());
       assertEquals(redeliveryCollisionAvoidanceFactor, info.getRedeliveryCollisionAvoidanceFactor(), 0);
       assertEquals(retroactiveMessageCount, info.getRetroactiveMessageCount());
+      assertEquals(autoCreateDeadLetterResources, info.isAutoCreateDeadLetterResources());
+      assertEquals(deadLetterQueuePrefix, info.getDeadLetterQueuePrefix());
+      assertEquals(deadLetterQueueSuffix, info.getDeadLetterQueueSuffix());
+      assertEquals(autoCreateExpiryResources, info.isAutoCreateExpiryResources());
+      assertEquals(expiryQueuePrefix, info.getExpiryQueuePrefix());
+      assertEquals(expiryQueueSuffix, info.getExpiryQueueSuffix());
+      assertEquals(enableMetrics, info.isEnableMetrics());
 
       ex = false;
       try {
@@ -1066,13 +1318,221 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
                                           autoDeleteQueuesMessageCount,
                                           autoDeleteAddressesDelay,
                                           redeliveryCollisionAvoidanceFactor,
-                                          retroactiveMessageCount);
+                                          retroactiveMessageCount,
+                                          autoCreateDeadLetterResources,
+                                          deadLetterQueuePrefix,
+                                          deadLetterQueueSuffix,
+                                          autoCreateExpiryResources,
+                                          expiryQueuePrefix,
+                                          expiryQueueSuffix,
+                                          minExpiryDelay,
+                                          maxExpiryDelay,
+                                          enableMetrics);
       } catch (Exception e) {
          ex = true;
       }
 
       assertTrue("Supposed to have an exception called", ex);
 
+   }
+
+   @Test
+   public void testRemoveAddressSettingsEffective() throws Exception {
+      ActiveMQServerControl serverControl = createManagementControl();
+      String addr = "test";
+      String root = "test.#";
+
+      String DLA = "someDLA";
+      String expiryAddress = "someExpiry";
+      long expiryDelay = RandomUtil.randomPositiveLong();
+      long minExpiryDelay = 10000;
+      long maxExpiryDelay = 20000;
+      boolean lastValueQueue = true;
+      int deliveryAttempts = 1;
+      long maxSizeBytes = 10 * 1024 * 1024;
+      int pageSizeBytes = 1024 * 1024;
+      int pageMaxCacheSize = 7;
+      long redeliveryDelay = 4;
+      double redeliveryMultiplier = 1;
+      long maxRedeliveryDelay = 1000;
+      long redistributionDelay = 5;
+      boolean sendToDLAOnNoRoute = true;
+      String addressFullMessagePolicy = "PAGE";
+      long slowConsumerThreshold = 5;
+      long slowConsumerCheckPeriod = 10;
+      String slowConsumerPolicy = SlowConsumerPolicy.getType(RandomUtil.randomPositiveInt() % 2).toString();
+      boolean autoCreateJmsQueues = RandomUtil.randomBoolean();
+      boolean autoDeleteJmsQueues = RandomUtil.randomBoolean();
+      boolean autoCreateJmsTopics = RandomUtil.randomBoolean();
+      boolean autoDeleteJmsTopics = RandomUtil.randomBoolean();
+      boolean autoCreateQueues = RandomUtil.randomBoolean();
+      boolean autoDeleteQueues = RandomUtil.randomBoolean();
+      boolean autoCreateAddresses = RandomUtil.randomBoolean();
+      boolean autoDeleteAddresses = RandomUtil.randomBoolean();
+      String configDeleteQueues = DeletionPolicy.getType(RandomUtil.randomPositiveInt() % 2).toString();
+      String configDeleteAddresses = DeletionPolicy.getType(RandomUtil.randomPositiveInt() % 2).toString();
+      long maxSizeBytesRejectThreshold = RandomUtil.randomPositiveLong();
+      String defaultLastValueKey = RandomUtil.randomString();
+      boolean defaultNonDestructive = RandomUtil.randomBoolean();
+      boolean defaultExclusiveQueue = RandomUtil.randomBoolean();
+      boolean defaultGroupRebalance = RandomUtil.randomBoolean();
+      int defaultGroupBuckets = RandomUtil.randomPositiveInt();
+      String defaultGroupFirstKey = RandomUtil.randomString();
+      int defaultMaxConsumers = RandomUtil.randomPositiveInt();
+      boolean defaultPurgeOnNoConsumers = RandomUtil.randomBoolean();
+      int defaultConsumersBeforeDispatch = RandomUtil.randomPositiveInt();
+      long defaultDelayBeforeDispatch = RandomUtil.randomPositiveLong();
+      String defaultQueueRoutingType = RoutingType.getType((byte) (RandomUtil.randomPositiveInt() % 2)).toString();
+      String defaultAddressRoutingType = RoutingType.getType((byte) (RandomUtil.randomPositiveInt() % 2)).toString();
+      int defaultConsumerWindowSize = RandomUtil.randomPositiveInt();
+      long defaultRingSize = RandomUtil.randomPositiveLong();
+      boolean autoDeleteCreatedQueues = RandomUtil.randomBoolean();
+      long autoDeleteQueuesDelay = RandomUtil.randomPositiveLong();
+      long autoDeleteQueuesMessageCount = RandomUtil.randomPositiveLong();
+      long autoDeleteAddressesDelay = RandomUtil.randomPositiveLong();
+      double redeliveryCollisionAvoidanceFactor = RandomUtil.randomDouble();
+      long retroactiveMessageCount = RandomUtil.randomPositiveLong();
+      boolean autoCreateDeadLetterResources = RandomUtil.randomBoolean();
+      String deadLetterQueuePrefix = RandomUtil.randomString();
+      String deadLetterQueueSuffix = RandomUtil.randomString();
+      boolean autoCreateExpiryResources = RandomUtil.randomBoolean();
+      String expiryQueuePrefix = RandomUtil.randomString();
+      String expiryQueueSuffix = RandomUtil.randomString();
+      boolean enableMetrics = RandomUtil.randomBoolean();
+
+      serverControl.addAddressSettings(root,
+              DLA,
+              expiryAddress,
+              expiryDelay,
+              lastValueQueue,
+              deliveryAttempts,
+              maxSizeBytes,
+              pageSizeBytes,
+              pageMaxCacheSize,
+              redeliveryDelay,
+              redeliveryMultiplier,
+              maxRedeliveryDelay,
+              redistributionDelay,
+              sendToDLAOnNoRoute,
+              addressFullMessagePolicy,
+              slowConsumerThreshold,
+              slowConsumerCheckPeriod,
+              slowConsumerPolicy,
+              autoCreateJmsQueues,
+              autoDeleteJmsQueues,
+              autoCreateJmsTopics,
+              autoDeleteJmsTopics,
+              autoCreateQueues,
+              autoDeleteQueues,
+              autoCreateAddresses,
+              autoDeleteAddresses,
+              configDeleteQueues,
+              configDeleteAddresses,
+              maxSizeBytesRejectThreshold,
+              defaultLastValueKey,
+              defaultNonDestructive,
+              defaultExclusiveQueue,
+              defaultGroupRebalance,
+              defaultGroupBuckets,
+              defaultGroupFirstKey,
+              defaultMaxConsumers,
+              defaultPurgeOnNoConsumers,
+              defaultConsumersBeforeDispatch,
+              defaultDelayBeforeDispatch,
+              defaultQueueRoutingType,
+              defaultAddressRoutingType,
+              defaultConsumerWindowSize,
+              defaultRingSize,
+              autoDeleteCreatedQueues,
+              autoDeleteQueuesDelay,
+              autoDeleteQueuesMessageCount,
+              autoDeleteAddressesDelay,
+              redeliveryCollisionAvoidanceFactor,
+              retroactiveMessageCount,
+              autoCreateDeadLetterResources,
+              deadLetterQueuePrefix,
+              deadLetterQueueSuffix,
+              autoCreateExpiryResources,
+              expiryQueuePrefix,
+              expiryQueueSuffix,
+              minExpiryDelay,
+              maxExpiryDelay,
+              enableMetrics);
+
+      AddressSettingsInfo rootInfo = AddressSettingsInfo.from(serverControl.getAddressSettingsAsJSON(root));
+
+      // Give settings for addr different values to the root
+      final long addrMinExpiryDelay = rootInfo.getMinExpiryDelay() + 1;
+      final long addrMaxExpiryDelay = rootInfo.getMaxExpiryDelay() - 1;
+      serverControl.addAddressSettings(addr,
+              DLA,
+              expiryAddress,
+              expiryDelay,
+              lastValueQueue,
+              deliveryAttempts,
+              maxSizeBytes,
+              pageSizeBytes,
+              pageMaxCacheSize,
+              redeliveryDelay,
+              redeliveryMultiplier,
+              maxRedeliveryDelay,
+              redistributionDelay,
+              sendToDLAOnNoRoute,
+              addressFullMessagePolicy,
+              slowConsumerThreshold,
+              slowConsumerCheckPeriod,
+              slowConsumerPolicy,
+              autoCreateJmsQueues,
+              autoDeleteJmsQueues,
+              autoCreateJmsTopics,
+              autoDeleteJmsTopics,
+              autoCreateQueues,
+              autoDeleteQueues,
+              autoCreateAddresses,
+              autoDeleteAddresses,
+              configDeleteQueues,
+              configDeleteAddresses,
+              maxSizeBytesRejectThreshold,
+              defaultLastValueKey,
+              defaultNonDestructive,
+              defaultExclusiveQueue,
+              defaultGroupRebalance,
+              defaultGroupBuckets,
+              defaultGroupFirstKey,
+              defaultMaxConsumers,
+              defaultPurgeOnNoConsumers,
+              defaultConsumersBeforeDispatch,
+              defaultDelayBeforeDispatch,
+              defaultQueueRoutingType,
+              defaultAddressRoutingType,
+              defaultConsumerWindowSize,
+              defaultRingSize,
+              autoDeleteCreatedQueues,
+              autoDeleteQueuesDelay,
+              autoDeleteQueuesMessageCount,
+              autoDeleteAddressesDelay,
+              redeliveryCollisionAvoidanceFactor,
+              retroactiveMessageCount,
+              autoCreateDeadLetterResources,
+              deadLetterQueuePrefix,
+              deadLetterQueueSuffix,
+              autoCreateExpiryResources,
+              expiryQueuePrefix,
+              expiryQueueSuffix,
+              addrMinExpiryDelay,
+              addrMaxExpiryDelay,
+              enableMetrics);
+      AddressSettingsInfo addrInfo = AddressSettingsInfo.from(serverControl.getAddressSettingsAsJSON(addr));
+
+      assertEquals("settings for addr should carry update", addrMinExpiryDelay, addrInfo.getMinExpiryDelay());
+      assertEquals("settings for addr should carry update", addrMaxExpiryDelay, addrInfo.getMaxExpiryDelay());
+
+      serverControl.removeAddressSettings(addr);
+
+      AddressSettingsInfo rereadAddrInfo = AddressSettingsInfo.from(serverControl.getAddressSettingsAsJSON(addr));
+
+      assertEquals("settings for addr should have reverted to original value after removal", rootInfo.getMinExpiryDelay(), rereadAddrInfo.getMinExpiryDelay());
+      assertEquals("settings for addr should have reverted to original value after removal", rootInfo.getMaxExpiryDelay(), rereadAddrInfo.getMaxExpiryDelay());
    }
 
    @Test
@@ -1126,8 +1586,13 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
 
       String divertQueue = RandomUtil.randomString();
       String queue = RandomUtil.randomString();
-      session.createQueue(forwardingAddress, RoutingType.ANYCAST, divertQueue);
-      session.createQueue(address, RoutingType.ANYCAST, queue);
+      if (legacyCreateQueue) {
+         session.createQueue(forwardingAddress, RoutingType.ANYCAST, divertQueue);
+         session.createQueue(address, RoutingType.ANYCAST, queue);
+      } else {
+         session.createQueue(new QueueConfiguration(divertQueue).setAddress(forwardingAddress).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+         session.createQueue(new QueueConfiguration(queue).setAddress(address).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       ClientProducer producer = session.createProducer(address);
       ClientMessage message = session.createMessage(false);
@@ -1172,6 +1637,110 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
    }
 
    @Test
+   public void testCreateAndUpdateDivert() throws Exception {
+      String address = RandomUtil.randomString();
+      String name = RandomUtil.randomString();
+      String routingName = RandomUtil.randomString();
+      String forwardingAddress = RandomUtil.randomString();
+      String updatedForwardingAddress = RandomUtil.randomString();
+
+      ActiveMQServerControl serverControl = createManagementControl();
+
+      checkNoResource(ObjectNameBuilder.DEFAULT.getDivertObjectName(name, address));
+      assertEquals(0, serverControl.getDivertNames().length);
+
+      serverControl.createDivert(name.toString(), routingName, address, forwardingAddress, true, null, null);
+
+      checkResource(ObjectNameBuilder.DEFAULT.getDivertObjectName(name, address));
+      DivertControl divertControl = ManagementControlHelper.createDivertControl(name.toString(), address, mbeanServer);
+      assertEquals(name.toString(), divertControl.getUniqueName());
+      assertEquals(address, divertControl.getAddress());
+      assertEquals(forwardingAddress, divertControl.getForwardingAddress());
+      assertEquals(routingName, divertControl.getRoutingName());
+      assertTrue(divertControl.isExclusive());
+      assertNull(divertControl.getFilter());
+      assertNull(divertControl.getTransformerClassName());
+      String[] divertNames = serverControl.getDivertNames();
+      assertEquals(1, divertNames.length);
+      assertEquals(name, divertNames[0]);
+
+      // check that a message sent to the address is diverted exclusively
+      ServerLocator locator = createInVMNonHALocator();
+
+      ClientSessionFactory csf = createSessionFactory(locator);
+      ClientSession session = csf.createSession();
+
+      String updatedDivertQueue = RandomUtil.randomString();
+      String divertQueue = RandomUtil.randomString();
+      String queue = RandomUtil.randomString();
+      if (legacyCreateQueue) {
+         session.createQueue(updatedForwardingAddress, RoutingType.ANYCAST, updatedDivertQueue);
+         session.createQueue(forwardingAddress, RoutingType.ANYCAST, divertQueue);
+         session.createQueue(address, RoutingType.ANYCAST, queue);
+      } else {
+         session.createQueue(new QueueConfiguration(updatedDivertQueue).setAddress(updatedForwardingAddress).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+         session.createQueue(new QueueConfiguration(divertQueue).setAddress(forwardingAddress).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+         session.createQueue(new QueueConfiguration(queue).setAddress(address).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
+
+      ClientProducer producer = session.createProducer(address);
+      ClientMessage message = session.createMessage(false);
+      String text = RandomUtil.randomString();
+      message.putStringProperty("prop", text);
+      producer.send(message);
+
+      ClientConsumer consumer = session.createConsumer(queue);
+      ClientConsumer divertedConsumer = session.createConsumer(divertQueue);
+      ClientConsumer updatedDivertedConsumer = session.createConsumer(updatedDivertQueue);
+
+      session.start();
+
+      assertNull(consumer.receiveImmediate());
+      message = divertedConsumer.receive(5000);
+      assertNotNull(message);
+      assertEquals(text, message.getStringProperty("prop"));
+      assertNull(updatedDivertedConsumer.receiveImmediate());
+
+      serverControl.updateDivert(name.toString(), updatedForwardingAddress, null, null, null, ActiveMQDefaultConfiguration.getDefaultDivertRoutingType());
+
+      checkResource(ObjectNameBuilder.DEFAULT.getDivertObjectName(name, address));
+      divertControl = ManagementControlHelper.createDivertControl(name.toString(), address, mbeanServer);
+      assertEquals(name.toString(), divertControl.getUniqueName());
+      assertEquals(address, divertControl.getAddress());
+      assertEquals(updatedForwardingAddress, divertControl.getForwardingAddress());
+      assertEquals(routingName, divertControl.getRoutingName());
+      assertTrue(divertControl.isExclusive());
+      assertNull(divertControl.getFilter());
+      assertNull(divertControl.getTransformerClassName());
+      divertNames = serverControl.getDivertNames();
+      assertEquals(1, divertNames.length);
+      assertEquals(name, divertNames[0]);
+
+      // check that a message is no longer exclusively diverted
+      message = session.createMessage(false);
+      String text2 = RandomUtil.randomString();
+      message.putStringProperty("prop", text2);
+      producer.send(message);
+
+      assertNull(consumer.receiveImmediate());
+      assertNull(divertedConsumer.receiveImmediate());
+      message = updatedDivertedConsumer.receive(5000);
+      assertNotNull(message);
+      assertEquals(text2, message.getStringProperty("prop"));
+
+      consumer.close();
+      divertedConsumer.close();
+      updatedDivertedConsumer.close();
+      session.deleteQueue(queue);
+      session.deleteQueue(divertQueue);
+      session.deleteQueue(updatedDivertQueue);
+      session.close();
+
+      locator.close();
+
+   }
+
+   @Test
    public void testCreateAndDestroyBridge() throws Exception {
       String name = RandomUtil.randomString();
       String sourceAddress = RandomUtil.randomString();
@@ -1188,8 +1757,13 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ClientSessionFactory csf = createSessionFactory(locator);
       ClientSession session = csf.createSession();
 
-      session.createQueue(sourceAddress, RoutingType.ANYCAST, sourceQueue);
-      session.createQueue(targetAddress, RoutingType.ANYCAST, targetQueue);
+      if (legacyCreateQueue) {
+         session.createQueue(sourceAddress, RoutingType.ANYCAST, sourceQueue);
+         session.createQueue(targetAddress, RoutingType.ANYCAST, targetQueue);
+      } else {
+         session.createQueue(new QueueConfiguration(sourceQueue).setAddress(sourceAddress).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+         session.createQueue(new QueueConfiguration(targetQueue).setAddress(targetAddress).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       serverControl.createBridge(name, sourceQueue, targetAddress, null, // forwardingAddress
                                  null, // filterString
@@ -1260,7 +1834,11 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ServerLocator locator = createInVMNonHALocator();
       ClientSessionFactory csf = createSessionFactory(locator);
       ClientSession clientSession = csf.createSession(true, false, false);
-      clientSession.createQueue(atestq, atestq, null, true);
+      if (legacyCreateQueue) {
+         clientSession.createQueue(atestq, atestq, null, true);
+      } else {
+         clientSession.createQueue(new QueueConfiguration(atestq).setDurable(true));
+      }
 
       ClientMessage m1 = createTextMessage(clientSession, "");
       ClientMessage m2 = createTextMessage(clientSession, "");
@@ -1326,7 +1904,11 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ServerLocator locator = createInVMNonHALocator();
       ClientSessionFactory csf = createSessionFactory(locator);
       ClientSession clientSession = csf.createSession(true, false, false);
-      clientSession.createQueue(atestq, atestq, null, true);
+      if (legacyCreateQueue) {
+         clientSession.createQueue(atestq, atestq, null, true);
+      } else {
+         clientSession.createQueue(new QueueConfiguration(atestq));
+      }
 
       ClientMessage m1 = createTextMessage(clientSession, "");
       ClientMessage m2 = createTextMessage(clientSession, "");
@@ -1375,7 +1957,11 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ServerLocator locator = createInVMNonHALocator();
       ClientSessionFactory csf = createSessionFactory(locator);
       ClientSession clientSession = csf.createSession(true, false, false);
-      clientSession.createQueue(atestq, atestq, null, true);
+      if (legacyCreateQueue) {
+         clientSession.createQueue(atestq, atestq, null, true);
+      } else {
+         clientSession.createQueue(new QueueConfiguration(atestq));
+      }
 
       ClientMessage m1 = createTextMessage(clientSession, "");
       ClientMessage m2 = createTextMessage(clientSession, "");
@@ -1417,8 +2003,13 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ServerLocator locator = createInVMNonHALocator();
       ClientSessionFactory csf = createSessionFactory(locator);
       ClientSession clientSession = csf.createSession(true, false, false);
-      clientSession.createQueue(recQueue, recQueue, null, true);
-      clientSession.createQueue(sendQueue, sendQueue, null, true);
+      if (legacyCreateQueue) {
+         clientSession.createQueue(recQueue, recQueue, null, true);
+         clientSession.createQueue(sendQueue, sendQueue, null, true);
+      } else {
+         clientSession.createQueue(new QueueConfiguration(recQueue));
+         clientSession.createQueue(new QueueConfiguration(sendQueue));
+      }
       ClientMessage m1 = createTextMessage(clientSession, "");
       m1.putStringProperty("m1", "m1");
       ClientProducer clientProducer = clientSession.createProducer(recQueue);
@@ -1458,8 +2049,6 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       boolean success = serverControl.commitPreparedTransaction(XidImpl.toBase64String(xid));
 
       success = serverControl.commitPreparedTransaction(XidImpl.toBase64String(xid));
-
-      System.out.println("ActiveMQServerControlTest.testCommitPreparedTransactions");
    }
 
    @Test
@@ -1507,8 +2096,13 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ClientSessionFactory csf = createSessionFactory(locator);
       ClientSession session = csf.createSession();
 
-      session.createQueue(random1, RoutingType.ANYCAST, random1);
-      session.createQueue(random2, RoutingType.ANYCAST, random2);
+      if (legacyCreateQueue) {
+         session.createQueue(random1, RoutingType.ANYCAST, random1);
+         session.createQueue(random2, RoutingType.ANYCAST, random2);
+      } else {
+         session.createQueue(new QueueConfiguration(random1).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+         session.createQueue(new QueueConfiguration(random2).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       ClientProducer producer1 = session.createProducer(random1);
       ClientProducer producer2 = session.createProducer(random2);
@@ -1562,8 +2156,13 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ClientSessionFactory csf = createSessionFactory(locator);
       ClientSession session = csf.createSession();
 
-      session.createQueue(random1, RoutingType.ANYCAST, random1);
-      session.createQueue(random2, RoutingType.ANYCAST, random2);
+      if (legacyCreateQueue) {
+         session.createQueue(random1, RoutingType.ANYCAST, random1);
+         session.createQueue(random2, RoutingType.ANYCAST, random2);
+      } else {
+         session.createQueue(new QueueConfiguration(random1).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+         session.createQueue(new QueueConfiguration(random2).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       ClientProducer producer1 = session.createProducer(random1);
       ClientProducer producer2 = session.createProducer(random2);
@@ -1609,8 +2208,13 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ClientSessionFactory csf = createSessionFactory(locator);
       ClientSession session = csf.createSession();
 
-      session.createQueue(random1, RoutingType.ANYCAST, random1);
-      session.createQueue(random2, RoutingType.ANYCAST, random2);
+      if (legacyCreateQueue) {
+         session.createQueue(random1, RoutingType.ANYCAST, random1);
+         session.createQueue(random2, RoutingType.ANYCAST, random2);
+      } else {
+         session.createQueue(new QueueConfiguration(random1).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+         session.createQueue(new QueueConfiguration(random2).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       ClientProducer producer1 = session.createProducer(random1);
       ClientProducer producer2 = session.createProducer(random2);
@@ -1657,8 +2261,13 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ClientSessionFactory csf = createSessionFactory(locator);
       ClientSession session = csf.createSession();
 
-      session.createQueue(random1, RoutingType.ANYCAST, random1);
-      session.createQueue(random2, RoutingType.ANYCAST, random2);
+      if (legacyCreateQueue) {
+         session.createQueue(random1, RoutingType.ANYCAST, random1);
+         session.createQueue(random2, RoutingType.ANYCAST, random2);
+      } else {
+         session.createQueue(new QueueConfiguration(random1).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+         session.createQueue(new QueueConfiguration(random2).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       ClientConsumer consumer1 = session.createConsumer(random1);
       ClientConsumer consumer2 = session.createConsumer(random2);
@@ -1690,7 +2299,7 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       addClientSession(factories.get(1).createSession());
 
       String jsonString = serverControl.listConnectionsAsJSON();
-      IntegrationTestLogger.LOGGER.info(jsonString);
+      log.debug(jsonString);
       Assert.assertNotNull(jsonString);
       JsonArray array = JsonUtil.readJsonArray(jsonString);
       Assert.assertEquals(usingCore() ? 3 : 2, array.size());
@@ -1743,13 +2352,17 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ClientSessionFactory factory = createSessionFactory(locator);
       ClientSession session = addClientSession(factory.createSession());
       server.addAddressInfo(new AddressInfo(queueName, RoutingType.ANYCAST));
-      server.createQueue(queueName, RoutingType.ANYCAST, queueName, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(queueName, RoutingType.ANYCAST, queueName, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
       addClientConsumer(session.createConsumer(queueName));
       Thread.sleep(100); // We check the timestamp for the creation time. We need to make sure it's different
       addClientConsumer(session.createConsumer(queueName, SimpleString.toSimpleString(filter), true));
 
       String jsonString = serverControl.listConsumersAsJSON(factory.getConnection().getID().toString());
-      IntegrationTestLogger.LOGGER.info(jsonString);
+      log.debug(jsonString);
       Assert.assertNotNull(jsonString);
       JsonArray array = JsonUtil.readJsonArray(jsonString);
       Assert.assertEquals(2, array.size());
@@ -1801,14 +2414,18 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ClientSessionFactory factory2 = createSessionFactory(locator2);
       ClientSession session2 = addClientSession(factory2.createSession());
       serverControl.createAddress(queueName.toString(), "ANYCAST");
-      server.createQueue(queueName, RoutingType.ANYCAST, queueName, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(queueName, RoutingType.ANYCAST, queueName, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       addClientConsumer(session.createConsumer(queueName));
       Thread.sleep(200);
       addClientConsumer(session2.createConsumer(queueName));
 
       String jsonString = serverControl.listAllConsumersAsJSON();
-      IntegrationTestLogger.LOGGER.info(jsonString);
+      log.debug(jsonString);
       Assert.assertNotNull(jsonString);
       JsonArray array = JsonUtil.readJsonArray(jsonString);
       Assert.assertEquals(usingCore() ? 3 : 2, array.size());
@@ -1867,7 +2484,11 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
    public void testListSessionsAsJSON() throws Exception {
       SimpleString queueName = new SimpleString(UUID.randomUUID().toString());
       server.addAddressInfo(new AddressInfo(queueName, RoutingType.ANYCAST));
-      server.createQueue(queueName, RoutingType.ANYCAST, queueName, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(queueName, RoutingType.ANYCAST, queueName, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
       ActiveMQServerControl serverControl = createManagementControl();
 
       ServerLocator locator = createInVMNonHALocator();
@@ -1877,7 +2498,7 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       session2.createConsumer(queueName);
 
       String jsonString = serverControl.listSessionsAsJSON(factory.getConnection().getID().toString());
-      IntegrationTestLogger.LOGGER.info(jsonString);
+      log.debug(jsonString);
       Assert.assertNotNull(jsonString);
       JsonArray array = JsonUtil.readJsonArray(jsonString);
       Assert.assertEquals(2, array.size());
@@ -1922,7 +2543,11 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
    public void testListAllSessionsAsJSON() throws Exception {
       SimpleString queueName = new SimpleString(UUID.randomUUID().toString());
       server.addAddressInfo(new AddressInfo(queueName, RoutingType.ANYCAST));
-      server.createQueue(queueName, RoutingType.ANYCAST, queueName, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(queueName, RoutingType.ANYCAST, queueName, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
       ActiveMQServerControl serverControl = createManagementControl();
 
       ServerLocator locator = createInVMNonHALocator();
@@ -1937,7 +2562,7 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       session2.createConsumer(queueName);
 
       String jsonString = serverControl.listAllSessionsAsJSON();
-      IntegrationTestLogger.LOGGER.info(jsonString);
+      log.debug(jsonString);
       Assert.assertNotNull(jsonString);
       JsonArray array = JsonUtil.readJsonArray(jsonString);
       Assert.assertEquals(2 + (usingCore() ? 1 : 0), array.size());
@@ -1965,7 +2590,11 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
    public void testListAllSessionsAsJSONWithJMS() throws Exception {
       SimpleString queueName = new SimpleString(UUID.randomUUID().toString());
       server.addAddressInfo(new AddressInfo(queueName, RoutingType.ANYCAST));
-      server.createQueue(queueName, RoutingType.ANYCAST, queueName, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(queueName, RoutingType.ANYCAST, queueName, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
       ActiveMQServerControl serverControl = createManagementControl();
 
       ActiveMQConnectionFactory cf = ActiveMQJMSClient.createConnectionFactory("vm://0", "cf");
@@ -1974,7 +2603,7 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       con.setClientID(clientID);
 
       String jsonString = serverControl.listAllSessionsAsJSON();
-      IntegrationTestLogger.LOGGER.info(jsonString);
+      log.debug(jsonString);
       Assert.assertNotNull(jsonString);
       JsonArray array = JsonUtil.readJsonArray(jsonString);
       Assert.assertEquals(1 + (usingCore() ? 1 : 0), array.size());
@@ -1992,13 +2621,25 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ActiveMQServerControl serverControl = createManagementControl();
 
       server.addAddressInfo(new AddressInfo(queueName1, RoutingType.ANYCAST));
-      server.createQueue(queueName1, RoutingType.ANYCAST, queueName1, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(queueName1, RoutingType.ANYCAST, queueName1, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName1).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       server.addAddressInfo(new AddressInfo(queueName2, RoutingType.ANYCAST));
-      server.createQueue(queueName2, RoutingType.ANYCAST, queueName2, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(queueName2, RoutingType.ANYCAST, queueName2, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName2).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       server.addAddressInfo(new AddressInfo(queueName3, RoutingType.ANYCAST));
-      server.createQueue(queueName3, RoutingType.ANYCAST, queueName3, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(queueName3, RoutingType.ANYCAST, queueName3, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName3).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       //test with filter that matches 2 queues
       String filterString = createJsonFilter("name", "CONTAINS", "my_queue");
@@ -2055,7 +2696,12 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       // as for what we expect it's either true or false through management, we are not testing for directDeliver here, just
       // if management works.
       Assert.assertTrue(resultDirectDeliver.equals("true") || resultDirectDeliver.equals("false"));
-
+      Assert.assertEquals("exclusive", "false", array.getJsonObject(0).getString("exclusive"));
+      Assert.assertEquals("lastValue", "false", array.getJsonObject(0).getString("lastValue"));
+      Assert.assertEquals("scheduledCount", "0", array.getJsonObject(0).getString("scheduledCount"));
+      Assert.assertEquals("groupRebalance", "false", array.getJsonObject(0).getString("groupRebalance"));
+      Assert.assertEquals("groupBuckets", "-1", array.getJsonObject(0).getString("groupBuckets"));
+      Assert.assertEquals("groupFirstKey", "", array.getJsonObject(0).getString("groupFirstKey"));
    }
 
    @Test
@@ -2067,16 +2713,28 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ActiveMQServerControl serverControl = createManagementControl();
 
       server.addAddressInfo(new AddressInfo(queueName1, RoutingType.ANYCAST));
-      server.createQueue(queueName1, RoutingType.ANYCAST, queueName1, new SimpleString("filter1"),null,true,
-                         false, false,20,false,false);
+      if (legacyCreateQueue) {
+         server.createQueue(queueName1, RoutingType.ANYCAST, queueName1, new SimpleString("filter1"),null,true,
+                            false, false,20,false,false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName1).setRoutingType(RoutingType.ANYCAST).setFilterString("filter1").setMaxConsumers(20).setAutoCreateAddress(false));
+      }
       Thread.sleep(500);
       server.addAddressInfo(new AddressInfo(queueName2, RoutingType.ANYCAST));
-      server.createQueue(queueName2, RoutingType.ANYCAST, queueName2, new SimpleString("filter3"), null,true,
-                         false, true,40,false,false);
+      if (legacyCreateQueue) {
+         server.createQueue(queueName2, RoutingType.ANYCAST, queueName2, new SimpleString("filter3"), null,true,
+                            false, true,40,false,false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName2).setRoutingType(RoutingType.ANYCAST).setFilterString("filter3").setAutoCreated(true).setMaxConsumers(40).setAutoCreateAddress(false));
+      }
       Thread.sleep(500);
       server.addAddressInfo(new AddressInfo(queueName3, RoutingType.ANYCAST));
-      server.createQueue(queueName3, RoutingType.ANYCAST, queueName3,  new SimpleString("filter0"),null,true,
-                         false, false,10,false,false);
+      if (legacyCreateQueue) {
+         server.createQueue(queueName3, RoutingType.ANYCAST, queueName3,  new SimpleString("filter0"),null,true,
+                            false, false,10,false,false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName3).setRoutingType(RoutingType.ANYCAST).setFilterString("filter0").setMaxConsumers(10).setAutoCreateAddress(false));
+      }
 
       //test default order
       String filterString = createJsonFilter("name", "CONTAINS", "my_queue");
@@ -2181,16 +2839,32 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ActiveMQServerControl serverControl = createManagementControl();
 
       server.addAddressInfo(new AddressInfo(queueName1, RoutingType.ANYCAST));
-      server.createQueue(queueName1, RoutingType.ANYCAST, queueName1, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(queueName1, RoutingType.ANYCAST, queueName1, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName1).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       server.addAddressInfo(new AddressInfo(queueName2, RoutingType.ANYCAST));
-      server.createQueue(queueName2, RoutingType.ANYCAST, queueName2, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(queueName2, RoutingType.ANYCAST, queueName2, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName2).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       server.addAddressInfo(new AddressInfo(queueName3, RoutingType.ANYCAST));
-      server.createQueue(queueName3, RoutingType.ANYCAST, queueName3, null, false, false, 10, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(queueName3, RoutingType.ANYCAST, queueName3, null, false, false, 10, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName3).setRoutingType(RoutingType.ANYCAST).setDurable(false).setMaxConsumers(10));
+      }
 
       server.addAddressInfo(new AddressInfo(queueName4, RoutingType.ANYCAST));
-      server.createQueue(queueName4, RoutingType.ANYCAST, queueName4, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(queueName4, RoutingType.ANYCAST, queueName4, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName4).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       // create some consumers
       try (ServerLocator locator = createInVMNonHALocator(); ClientSessionFactory csf = createSessionFactory(locator); ClientSession session = csf.createSession()) {
@@ -2319,16 +2993,32 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ActiveMQServerControl serverControl = createManagementControl();
 
       server.addAddressInfo(new AddressInfo(queueName1, RoutingType.ANYCAST));
-      server.createQueue(queueName1, RoutingType.ANYCAST, queueName1, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(queueName1, RoutingType.ANYCAST, queueName1, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName1).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       server.addAddressInfo(new AddressInfo(queueName2, RoutingType.ANYCAST));
-      server.createQueue(queueName2, RoutingType.ANYCAST, queueName2, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(queueName2, RoutingType.ANYCAST, queueName2, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName2).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       server.addAddressInfo(new AddressInfo(queueName3, RoutingType.ANYCAST));
-      server.createQueue(queueName3, RoutingType.ANYCAST, queueName3, null, false, false, 10, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(queueName3, RoutingType.ANYCAST, queueName3, null, false, false, 10, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName3).setRoutingType(RoutingType.ANYCAST).setDurable(false).setMaxConsumers(10));
+      }
 
       server.addAddressInfo(new AddressInfo(queueName4, RoutingType.ANYCAST));
-      server.createQueue(queueName4, RoutingType.ANYCAST, queueName4, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(queueName4, RoutingType.ANYCAST, queueName4, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName4).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       // create some consumers
       try (ServerLocator locator = createInVMNonHALocator(); ClientSessionFactory csf = createSessionFactory(locator); ClientSession session = csf.createSession()) {
@@ -2419,12 +3109,25 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ActiveMQServerControl serverControl = createManagementControl();
 
       server.addAddressInfo(new AddressInfo(addressName1, RoutingType.ANYCAST));
-      server.createQueue(addressName1, RoutingType.ANYCAST, queueName1, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(addressName1, RoutingType.ANYCAST, queueName1, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName1).setAddress(addressName1).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
       server.addAddressInfo(new AddressInfo(addressName2, RoutingType.ANYCAST));
-      server.createQueue(addressName2, RoutingType.ANYCAST, queueName2, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(addressName2, RoutingType.ANYCAST, queueName2, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName2).setAddress(addressName2).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
       server.addAddressInfo(new AddressInfo(addressName3, RoutingType.ANYCAST));
-      server.createQueue(addressName3, RoutingType.ANYCAST, queueName3, null, false, false);
-      server.createQueue(addressName3, RoutingType.ANYCAST, queueName4, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(addressName3, RoutingType.ANYCAST, queueName3, null, false, false);
+         server.createQueue(addressName3, RoutingType.ANYCAST, queueName4, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName3).setAddress(addressName3).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+         server.createQueue(new QueueConfiguration(queueName4).setAddress(addressName3).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       //test with CONTAINS filter
       String filterString = createJsonFilter("name", "CONTAINS", "my_address");
@@ -2498,11 +3201,20 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ActiveMQServerControl serverControl = createManagementControl();
 
       server.addAddressInfo(new AddressInfo(addressName1, RoutingType.ANYCAST));
-      server.createQueue(addressName1, RoutingType.ANYCAST, queueName1, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(addressName1, RoutingType.ANYCAST, queueName1, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName1).setAddress(addressName1).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
       server.addAddressInfo(new AddressInfo(addressName2, RoutingType.ANYCAST));
       server.addAddressInfo(new AddressInfo(addressName3, RoutingType.ANYCAST));
-      server.createQueue(addressName3, RoutingType.ANYCAST, queueName3, null, false, false);
-      server.createQueue(addressName3, RoutingType.ANYCAST, queueName4, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(addressName3, RoutingType.ANYCAST, queueName3, null, false, false);
+         server.createQueue(addressName3, RoutingType.ANYCAST, queueName4, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName3).setAddress(addressName3).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+         server.createQueue(new QueueConfiguration(queueName4).setAddress(addressName3).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       //test default order
       String filterString = createJsonFilter("name", "CONTAINS", "my");
@@ -2549,11 +3261,20 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ActiveMQServerControl serverControl = createManagementControl();
 
       server.addAddressInfo(new AddressInfo(addressName1, RoutingType.ANYCAST));
-      server.createQueue(addressName1, RoutingType.ANYCAST, queueName1, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(addressName1, RoutingType.ANYCAST, queueName1, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName1).setAddress(addressName1).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       server.addAddressInfo(new AddressInfo(addressName2, RoutingType.ANYCAST));
-      server.createQueue(addressName2, RoutingType.ANYCAST, queueName2, null, false, false);
-      server.createQueue(addressName2, RoutingType.ANYCAST, queueName3, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(addressName2, RoutingType.ANYCAST, queueName2, null, false, false);
+         server.createQueue(addressName2, RoutingType.ANYCAST, queueName3, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName2).setAddress(addressName2).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+         server.createQueue(new QueueConfiguration(queueName3).setAddress(addressName2).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       // create some consumers
       try (ServerLocator locator = createInVMNonHALocator(); ClientSessionFactory csf = createSessionFactory(locator); ClientSession session = csf.createSession()) {
@@ -2637,7 +3358,11 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ActiveMQServerControl serverControl = createManagementControl();
 
       server.addAddressInfo(new AddressInfo(addressName1, RoutingType.ANYCAST));
-      server.createQueue(addressName1, RoutingType.ANYCAST, queueName1, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(addressName1, RoutingType.ANYCAST, queueName1, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName1).setAddress(addressName1).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       try (ServerLocator locator = createInVMNonHALocator(); ClientSessionFactory csf = createSessionFactory(locator);) {
 
@@ -2685,7 +3410,11 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ActiveMQServerControl serverControl = createManagementControl();
 
       server.addAddressInfo(new AddressInfo(addressName1, RoutingType.ANYCAST));
-      server.createQueue(addressName1, RoutingType.ANYCAST, queueName1, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(addressName1, RoutingType.ANYCAST, queueName1, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName1).setAddress(addressName1).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       // create some consumers
       try (ServerLocator locator = createInVMNonHALocator(); ClientSessionFactory csf = createSessionFactory(locator);) {
@@ -2765,6 +3494,7 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       }
    }
 
+   @RetryMethod(retries = 2) // the list of connections eventually comes from a hashmap on a different order. Which is fine but makes the test fail. a Retry is ok
    @Test
    public void testListConnections() throws Exception {
       SimpleString queueName1 = new SimpleString("my_queue_one");
@@ -2773,7 +3503,11 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ActiveMQServerControl serverControl = createManagementControl();
 
       server.addAddressInfo(new AddressInfo(addressName1, RoutingType.ANYCAST));
-      server.createQueue(addressName1, RoutingType.ANYCAST, queueName1, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(addressName1, RoutingType.ANYCAST, queueName1, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName1).setAddress(addressName1).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       ClientSessionFactoryImpl csf = null;
       ClientSessionFactoryImpl csf2 = null;
@@ -2784,9 +3518,9 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
 
          //sleep as test compares creationTime
          csf = (ClientSessionFactoryImpl) createSessionFactory(locator);
-         Thread.sleep(500);
+         Thread.sleep(50);
          csf2 = (ClientSessionFactoryImpl) createSessionFactory(locator);
-         Thread.sleep(500);
+         Thread.sleep(50);
          csf3 = (ClientSessionFactoryImpl) createSessionFactory(locator);
 
          ClientSession session1_c1 = csf.createSession("guest", "guest", false, true, true, locator.isPreAcknowledge(), locator.getAckBatchSize());
@@ -2890,7 +3624,11 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ActiveMQServerControl serverControl = createManagementControl();
 
       server.addAddressInfo(new AddressInfo(addressName1, RoutingType.ANYCAST));
-      server.createQueue(addressName1, RoutingType.ANYCAST, queueName1, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(addressName1, RoutingType.ANYCAST, queueName1, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName1).setAddress(addressName1).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       ClientSessionFactoryImpl csf = null;
 
@@ -2928,7 +3666,11 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       ActiveMQServerControl serverControl = createManagementControl();
 
       server.addAddressInfo(new AddressInfo(addressName1, RoutingType.ANYCAST));
-      server.createQueue(addressName1, RoutingType.ANYCAST, queueName1, null, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(addressName1, RoutingType.ANYCAST, queueName1, null, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(queueName1).setAddress(addressName1).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
 
       // create some consumers
       try (ServerLocator locator = createInVMNonHALocator(); ClientSessionFactory csf = createSessionFactory(locator);) {
@@ -2991,7 +3733,14 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       assertEquals("MemoryUsagePercentage", 0, serverControl.getAddressMemoryUsagePercentage());
 
       try (ServerLocator locator = createInVMNonHALocator(); ClientSessionFactory csf = createSessionFactory(locator); ClientSession session = csf.createSession()) {
-         session.createQueue(name1, RoutingType.ANYCAST, name1);
+         if (legacyCreateQueue) {
+            session.createQueue(name1, RoutingType.ANYCAST, name1);
+         } else {
+            session.createQueue(new QueueConfiguration(name1).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+         }
+
+         Queue serverQueue = server.locateQueue(SimpleString.toSimpleString(name1));
+         Assert.assertFalse(serverQueue.isDurable());
          ClientProducer producer1 = session.createProducer(name1);
          sendMessagesWithPredefinedSize(30, session, producer1, MESSAGE_SIZE);
 
@@ -3020,8 +3769,17 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       assertEquals("MemoryUsagePercentage", 0, serverControl.getAddressMemoryUsagePercentage());
 
       try (ServerLocator locator = createInVMNonHALocator(); ClientSessionFactory csf = createSessionFactory(locator); ClientSession session = csf.createSession()) {
-         session.createQueue(name1, RoutingType.ANYCAST, name1);
-         session.createQueue(name2, RoutingType.ANYCAST, name2);
+         if (legacyCreateQueue) {
+            session.createQueue(name1, RoutingType.ANYCAST, name1);
+            session.createQueue(name2, RoutingType.ANYCAST, name2);
+         } else {
+            session.createQueue(new QueueConfiguration(name1).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+            session.createQueue(new QueueConfiguration(name2).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+         }
+
+         Queue serverQueue = server.locateQueue(SimpleString.toSimpleString(name1));
+         Assert.assertFalse(serverQueue.isDurable());
+
          ClientProducer producer1 = session.createProducer(name1);
          ClientProducer producer2 = session.createProducer(name2);
          sendMessagesWithPredefinedSize(10, session, producer1, MESSAGE_SIZE);
@@ -3058,7 +3816,11 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
 
       checkNoResource(ObjectNameBuilder.DEFAULT.getQueueObjectName(address, name, RoutingType.ANYCAST));
       serverControl.createAddress(address.toString(), "ANYCAST");
-      serverControl.createQueue(address.toString(), "ANYCAST", name.toString(), null, durable, -1, false, false);
+      if (legacyCreateQueue) {
+         serverControl.createQueue(address.toString(), "ANYCAST", name.toString(), null, durable, -1, false, false);
+      } else {
+         serverControl.createQueue(new QueueConfiguration(name).setAddress(address).setRoutingType(RoutingType.ANYCAST).setDurable(durable).setAutoCreateAddress(false).toJSON());
+      }
 
       ServerLocator receiveLocator = createInVMNonHALocator();
       ClientSessionFactory receiveCsf = createSessionFactory(receiveLocator);
@@ -3157,9 +3919,17 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
 
       server2.start();
       server.addAddressInfo(new AddressInfo(address, RoutingType.ANYCAST));
-      server.createQueue(address, RoutingType.ANYCAST, address, null, true, false, -1, false, false);
+      if (legacyCreateQueue) {
+         server.createQueue(address, RoutingType.ANYCAST, address, null, true, false, -1, false, false);
+      } else {
+         server.createQueue(new QueueConfiguration(address).setRoutingType(RoutingType.ANYCAST).setAutoCreateAddress(false));
+      }
       server2.addAddressInfo(new AddressInfo(address, RoutingType.ANYCAST));
-      server2.createQueue(address, RoutingType.ANYCAST, address, null, true, false, -1, false, false);
+      if (legacyCreateQueue) {
+         server2.createQueue(address, RoutingType.ANYCAST, address, null, true, false, -1, false, false);
+      } else {
+         server2.createQueue(new QueueConfiguration(address).setRoutingType(RoutingType.ANYCAST).setAutoCreateAddress(false));
+      }
       ServerLocator locator = createInVMNonHALocator();
       ClientSessionFactory csf = createSessionFactory(locator);
       ClientSession session = csf.createSession();

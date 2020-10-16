@@ -38,6 +38,8 @@ public class SessionQueueQueryResponseMessage_V3 extends SessionQueueQueryRespon
 
    protected Boolean groupRebalance;
 
+   protected Boolean groupRebalancePauseDispatch;
+
    protected Integer groupBuckets;
 
    protected SimpleString groupFirstKey;
@@ -62,12 +64,14 @@ public class SessionQueueQueryResponseMessage_V3 extends SessionQueueQueryRespon
 
    private Long ringSize;
 
+   private Boolean enabled;
+
    public SessionQueueQueryResponseMessage_V3(final QueueQueryResult result) {
-      this(result.getName(), result.getAddress(), result.isDurable(), result.isTemporary(), result.getFilterString(), result.getConsumerCount(), result.getMessageCount(), result.isExists(), result.isAutoCreateQueues(), result.isAutoCreated(), result.isPurgeOnNoConsumers(), result.getRoutingType(), result.getMaxConsumers(), result.isExclusive(), result.isGroupRebalance(), result.getGroupBuckets(), result.getGroupFirstKey(), result.isLastValue(), result.getLastValueKey(), result.isNonDestructive(), result.getConsumersBeforeDispatch(), result.getDelayBeforeDispatch(), result.isAutoDelete(), result.getAutoDeleteDelay(), result.getAutoDeleteMessageCount(), result.getDefaultConsumerWindowSize());
+      this(result.getName(), result.getAddress(), result.isDurable(), result.isTemporary(), result.getFilterString(), result.getConsumerCount(), result.getMessageCount(), result.isExists(), result.isAutoCreateQueues(), result.isAutoCreated(), result.isPurgeOnNoConsumers(), result.getRoutingType(), result.getMaxConsumers(), result.isExclusive(), result.isGroupRebalance(), result.isGroupRebalancePauseDispatch(), result.getGroupBuckets(), result.getGroupFirstKey(), result.isLastValue(), result.getLastValueKey(), result.isNonDestructive(), result.getConsumersBeforeDispatch(), result.getDelayBeforeDispatch(), result.isAutoDelete(), result.getAutoDeleteDelay(), result.getAutoDeleteMessageCount(), result.getDefaultConsumerWindowSize(), result.getRingSize(), result.isEnabled());
    }
 
    public SessionQueueQueryResponseMessage_V3() {
-      this(null, null, false, false, null, 0, 0, false, false, false, false, RoutingType.MULTICAST, -1, null, null,null, null, null, null, null, null, null, null, null, null, null);
+      this(null, null, false, false, null, 0, 0, false, false, false, false, RoutingType.MULTICAST, -1, null, null,null, null, null, null, null, null, null, null, null, null, null, null, null, null);
    }
 
    private SessionQueueQueryResponseMessage_V3(final SimpleString name,
@@ -85,6 +89,7 @@ public class SessionQueueQueryResponseMessage_V3 extends SessionQueueQueryRespon
                                                final int maxConsumers,
                                                final Boolean exclusive,
                                                final Boolean groupRebalance,
+                                               final Boolean groupRebalancePauseDispatch,
                                                final Integer groupBuckets,
                                                final SimpleString groupFirstKey,
                                                final Boolean lastValue,
@@ -95,7 +100,9 @@ public class SessionQueueQueryResponseMessage_V3 extends SessionQueueQueryRespon
                                                final Boolean autoDelete,
                                                final Long autoDeleteDelay,
                                                final Long autoDeleteMessageCount,
-                                               final Integer defaultConsumerWindowSize) {
+                                               final Integer defaultConsumerWindowSize,
+                                               final Long ringSize,
+                                               final Boolean enabled) {
       super(SESS_QUEUEQUERY_RESP_V3);
 
       this.durable = durable;
@@ -128,6 +135,8 @@ public class SessionQueueQueryResponseMessage_V3 extends SessionQueueQueryRespon
 
       this.groupRebalance = groupRebalance;
 
+      this.groupRebalancePauseDispatch = groupRebalancePauseDispatch;
+
       this.groupBuckets = groupBuckets;
 
       this.groupFirstKey = groupFirstKey;
@@ -149,6 +158,10 @@ public class SessionQueueQueryResponseMessage_V3 extends SessionQueueQueryRespon
       this.autoDeleteMessageCount = autoDeleteMessageCount;
 
       this.defaultConsumerWindowSize = defaultConsumerWindowSize;
+
+      this.ringSize = ringSize;
+
+      this.enabled = enabled;
    }
 
    public boolean isAutoCreated() {
@@ -247,6 +260,14 @@ public class SessionQueueQueryResponseMessage_V3 extends SessionQueueQueryRespon
       this.groupRebalance = groupRebalance;
    }
 
+   public Boolean isGroupRebalancePauseDispatch() {
+      return groupRebalancePauseDispatch;
+   }
+
+   public void setGroupRebalancePauseDispatch(Boolean groupRebalancePauseDispatch) {
+      this.groupRebalancePauseDispatch = groupRebalancePauseDispatch;
+   }
+
    public Integer getGroupBuckets() {
       return groupBuckets;
    }
@@ -279,6 +300,18 @@ public class SessionQueueQueryResponseMessage_V3 extends SessionQueueQueryRespon
       return ringSize;
    }
 
+   public void setRingSize(Long ringSize) {
+      this.ringSize = ringSize;
+   }
+
+   public Boolean isEnabled() {
+      return enabled;
+   }
+
+   public void setEnabled(Boolean enabled) {
+      this.enabled = enabled;
+   }
+
    @Override
    public void encodeRest(final ActiveMQBuffer buffer) {
       super.encodeRest(buffer);
@@ -300,6 +333,8 @@ public class SessionQueueQueryResponseMessage_V3 extends SessionQueueQueryRespon
       BufferHelper.writeNullableLong(buffer, autoDeleteMessageCount);
       buffer.writeNullableSimpleString(groupFirstKey);
       BufferHelper.writeNullableLong(buffer, ringSize);
+      BufferHelper.writeNullableBoolean(buffer, enabled);
+      BufferHelper.writeNullableBoolean(buffer, groupRebalancePauseDispatch);
 
    }
 
@@ -334,6 +369,12 @@ public class SessionQueueQueryResponseMessage_V3 extends SessionQueueQueryRespon
       if (buffer.readableBytes() > 0) {
          ringSize = BufferHelper.readNullableLong(buffer);
       }
+      if (buffer.readableBytes() > 0) {
+         enabled = BufferHelper.readNullableBoolean(buffer);
+      }
+      if (buffer.readableBytes() > 0) {
+         groupRebalancePauseDispatch = BufferHelper.readNullableBoolean(buffer);
+      }
    }
 
    @Override
@@ -346,6 +387,7 @@ public class SessionQueueQueryResponseMessage_V3 extends SessionQueueQueryRespon
       result = prime * result + maxConsumers;
       result = prime * result + (exclusive == null ? 0 : exclusive ? 1231 : 1237);
       result = prime * result + (groupRebalance == null ? 0 : groupRebalance ? 1231 : 1237);
+      result = prime * result + (groupRebalancePauseDispatch == null ? 0 : groupRebalancePauseDispatch ? 1231 : 1237);
       result = prime * result + (groupBuckets == null ? 0 : groupBuckets.hashCode());
       result = prime * result + (groupFirstKey == null ? 0 : groupFirstKey.hashCode());
       result = prime * result + (lastValue == null ? 0 : lastValue ? 1231 : 1237);
@@ -358,6 +400,7 @@ public class SessionQueueQueryResponseMessage_V3 extends SessionQueueQueryRespon
       result = prime * result + (autoDeleteMessageCount == null ? 0 : autoDeleteMessageCount.hashCode());
       result = prime * result + ((defaultConsumerWindowSize == null) ? 0 : defaultConsumerWindowSize.hashCode());
       result = prime * result + (ringSize == null ? 0 : ringSize.hashCode());
+      result = prime * result + (enabled == null ? 0 : enabled ? 1231 : 1237);
       return result;
    }
 
@@ -377,6 +420,7 @@ public class SessionQueueQueryResponseMessage_V3 extends SessionQueueQueryRespon
       buff.append(", maxConsumers=" + maxConsumers);
       buff.append(", exclusive=" + exclusive);
       buff.append(", groupRebalance=" + groupRebalance);
+      buff.append(", groupRebalancePauseDispatch=" + groupRebalancePauseDispatch);
       buff.append(", groupBuckets=" + groupBuckets);
       buff.append(", groupFirstKey=" + groupFirstKey);
       buff.append(", lastValue=" + lastValue);
@@ -389,12 +433,13 @@ public class SessionQueueQueryResponseMessage_V3 extends SessionQueueQueryRespon
       buff.append(", autoDeleteMessageCount=" + autoDeleteMessageCount);
       buff.append(", defaultConsumerWindowSize=" + defaultConsumerWindowSize);
       buff.append(", ringSize=" + ringSize);
+      buff.append(", enabled=" + enabled);
       return buff.toString();
    }
 
    @Override
    public ClientSession.QueueQuery toQueueQuery() {
-      return new QueueQueryImpl(isDurable(), isTemporary(), getConsumerCount(), getMessageCount(), getFilterString(), getAddress(), getName(), isExists(), isAutoCreateQueues(), getMaxConsumers(), isAutoCreated(), isPurgeOnNoConsumers(), getRoutingType(), isExclusive(), isGroupRebalance(), getGroupBuckets(), getGroupFirstKey(), isLastValue(), getLastValueKey(), isNonDestructive(), getConsumersBeforeDispatch(), getDelayBeforeDispatch(), isAutoDelete(), getAutoDeleteDelay(), getAutoDeleteMessageCount(), getDefaultConsumerWindowSize(), getRingSize());
+      return new QueueQueryImpl(isDurable(), isTemporary(), getConsumerCount(), getMessageCount(), getFilterString(), getAddress(), getName(), isExists(), isAutoCreateQueues(), getMaxConsumers(), isAutoCreated(), isPurgeOnNoConsumers(), getRoutingType(), isExclusive(), isGroupRebalance(), isGroupRebalancePauseDispatch(), getGroupBuckets(), getGroupFirstKey(), isLastValue(), getLastValueKey(), isNonDestructive(), getConsumersBeforeDispatch(), getDelayBeforeDispatch(), isAutoDelete(), getAutoDeleteDelay(), getAutoDeleteMessageCount(), getDefaultConsumerWindowSize(), getRingSize(), isEnabled());
    }
 
    @Override
@@ -419,6 +464,11 @@ public class SessionQueueQueryResponseMessage_V3 extends SessionQueueQueryRespon
          if (other.groupRebalance != null)
             return false;
       } else if (!groupRebalance.equals(other.groupRebalance))
+         return false;
+      if (groupRebalancePauseDispatch == null) {
+         if (other.groupRebalancePauseDispatch != null)
+            return false;
+      } else if (!groupRebalancePauseDispatch.equals(other.groupRebalancePauseDispatch))
          return false;
       if (groupBuckets == null) {
          if (other.groupBuckets != null)
@@ -474,6 +524,11 @@ public class SessionQueueQueryResponseMessage_V3 extends SessionQueueQueryRespon
          if (other.ringSize != null)
             return false;
       } else if (!ringSize.equals(other.ringSize))
+         return false;
+      if (enabled == null) {
+         if (other.enabled != null)
+            return false;
+      } else if (!enabled.equals(other.enabled))
          return false;
       if (defaultConsumerWindowSize == null) {
          if (other.defaultConsumerWindowSize != null)

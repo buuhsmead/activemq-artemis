@@ -25,9 +25,11 @@ import java.util.function.Consumer;
 
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.filter.Filter;
+import org.apache.activemq.artemis.core.paging.PagingStore;
 import org.apache.activemq.artemis.core.paging.cursor.PageSubscription;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
 import org.apache.activemq.artemis.core.postoffice.PostOffice;
@@ -56,10 +58,12 @@ public class LastValueQueue extends QueueImpl {
    private final Map<SimpleString, HolderReference> map = new ConcurrentHashMap<>();
    private final SimpleString lastValueKey;
 
+   @Deprecated
    public LastValueQueue(final long persistenceID,
                          final SimpleString address,
                          final SimpleString name,
                          final Filter filter,
+                         final PagingStore pagingStore,
                          final PageSubscription pageSubscription,
                          final SimpleString user,
                          final boolean durable,
@@ -87,8 +91,52 @@ public class LastValueQueue extends QueueImpl {
                          final ArtemisExecutor executor,
                          final ActiveMQServer server,
                          final QueueFactory factory) {
-      super(persistenceID, address, name, filter, pageSubscription, user, durable, temporary, autoCreated, routingType, maxConsumers, exclusive, groupRebalance, groupBuckets, groupFirstKey, nonDestructive, consumersBeforeDispatch, delayBeforeDispatch, purgeOnNoConsumers, autoDelete, autoDeleteDelay, autoDeleteMessageCount, configurationManaged, scheduledExecutor, postOffice, storageManager, addressSettingsRepository, executor, server, factory);
-      this.lastValueKey = lastValueKey;
+      this(new QueueConfiguration(name)
+              .setId(persistenceID)
+              .setAddress(address)
+              .setFilterString(filter.getFilterString())
+              .setUser(user)
+              .setDurable(durable)
+              .setTemporary(temporary)
+              .setAutoCreated(autoCreated)
+              .setRoutingType(routingType)
+              .setMaxConsumers(maxConsumers)
+              .setExclusive(exclusive)
+              .setGroupRebalance(groupRebalance)
+              .setGroupBuckets(groupBuckets)
+              .setGroupFirstKey(groupFirstKey)
+              .setNonDestructive(nonDestructive)
+              .setConsumersBeforeDispatch(consumersBeforeDispatch)
+              .setDelayBeforeDispatch(delayBeforeDispatch)
+              .setPurgeOnNoConsumers(purgeOnNoConsumers)
+              .setAutoDelete(autoDelete)
+              .setAutoDeleteDelay(autoDeleteDelay)
+              .setAutoDeleteMessageCount(autoDeleteMessageCount)
+              .setConfigurationManaged(configurationManaged)
+              .setLastValueKey(lastValueKey),
+           pagingStore,
+           pageSubscription,
+           scheduledExecutor,
+           postOffice,
+           storageManager,
+           addressSettingsRepository,
+           executor,
+           server,
+           factory);
+   }
+
+   public LastValueQueue(final QueueConfiguration queueConfiguration,
+                         final PagingStore pagingStore,
+                         final PageSubscription pageSubscription,
+                         final ScheduledExecutorService scheduledExecutor,
+                         final PostOffice postOffice,
+                         final StorageManager storageManager,
+                         final HierarchicalRepository<AddressSettings> addressSettingsRepository,
+                         final ArtemisExecutor executor,
+                         final ActiveMQServer server,
+                         final QueueFactory factory) {
+      super(queueConfiguration, pagingStore, pageSubscription, scheduledExecutor, postOffice, storageManager, addressSettingsRepository, executor, server, factory);
+      this.lastValueKey = queueConfiguration.getLastValueKey();
    }
 
    @Override
@@ -106,6 +154,21 @@ public class LastValueQueue extends QueueImpl {
 
             replaceLVQMessage(ref, hr);
 
+            if (isNonDestructive() && hr.isDelivered()) {
+               hr.resetDelivered();
+               // --------------------------------------------------------------------------------
+               // If non Destructive, and if a reference was previously delivered
+               // we would not be able to receive this message again
+               // unless we reset the iterators
+               // The message is not removed, so we can't actually remove it
+               // a result of this operation is that previously delivered messages
+               // will probably be delivered again.
+               // if we ever want to avoid other redeliveries we would have to implement a reset or redeliver
+               // operation on the iterator for a single message
+               resetAllIterators();
+               deliverAsync();
+            }
+
          } else {
             hr = new HolderReference(prop, ref);
 
@@ -115,6 +178,18 @@ public class LastValueQueue extends QueueImpl {
          }
       } else {
          super.addTail(ref, direct);
+      }
+   }
+
+
+   @Override
+   public long getMessageCount() {
+      if (pageSubscription != null) {
+         // messageReferences will have depaged messages which we need to discount from the counter as they are
+         // counted on the pageSubscription as well
+         return (long) pendingMetrics.getMessageCount() + getScheduledCount() + pageSubscription.getMessageCount();
+      } else {
+         return (long) pendingMetrics.getMessageCount() + getScheduledCount();
       }
    }
 
@@ -161,6 +236,11 @@ public class LastValueQueue extends QueueImpl {
    @Override
    public boolean allowsReferenceCallback() {
       return false;
+   }
+
+   @Override
+   public QueueConfiguration getQueueConfiguration() {
+      return super.getQueueConfiguration().setLastValue(true);
    }
 
    private void replaceLVQMessage(MessageReference ref, HolderReference hr) {
@@ -248,11 +328,22 @@ public class LastValueQueue extends QueueImpl {
 
       private final SimpleString prop;
 
+      private volatile boolean delivered = false;
+
       private volatile MessageReference ref;
 
       private long consumerID;
 
       private boolean hasConsumerID = false;
+
+
+      public void resetDelivered() {
+         delivered = false;
+      }
+
+      public boolean isDelivered() {
+         return delivered;
+      }
 
       HolderReference(final SimpleString prop, final MessageReference ref) {
          this.prop = prop;
@@ -271,6 +362,7 @@ public class LastValueQueue extends QueueImpl {
 
       @Override
       public void handled() {
+         delivered = true;
          // We need to remove the entry from the map just before it gets delivered
          ref.handled();
          if (!ref.getQueue().isNonDestructive()) {
@@ -445,6 +537,16 @@ public class LastValueQueue extends QueueImpl {
       @Override
       public long getPersistentSize() throws ActiveMQException {
          return ref.getPersistentSize();
+      }
+
+      @Override
+      public PagingStore getOwner() {
+         return ref.getOwner();
+      }
+
+      @Override
+      public void setOwner(PagingStore owner) {
+         ref.setOwner(owner);
       }
    }
 

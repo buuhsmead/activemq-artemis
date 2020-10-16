@@ -17,6 +17,7 @@
 package org.apache.activemq.artemis.core.protocol.core.impl.wireformat;
 
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.utils.BufferHelper;
@@ -28,6 +29,7 @@ public class CreateSharedQueueMessage_V2 extends CreateSharedQueueMessage {
    private Boolean purgeOnNoConsumers;
    private Boolean exclusive;
    private Boolean groupRebalance;
+   private Boolean groupRebalancePauseDispatch;
    private Integer groupBuckets;
    private SimpleString groupFirstKey;
    private Boolean lastValue;
@@ -38,6 +40,36 @@ public class CreateSharedQueueMessage_V2 extends CreateSharedQueueMessage {
    private Boolean autoDelete;
    private Long autoDeleteDelay;
    private Long autoDeleteMessageCount;
+   private Long ringSize;
+   private Boolean enabled;
+
+   public CreateSharedQueueMessage_V2(final QueueConfiguration queueConfiguration, boolean requiresResponse) {
+      this(
+         queueConfiguration.getAddress(),
+         queueConfiguration.getName(),
+         queueConfiguration.getRoutingType(),
+         queueConfiguration.getFilterString(),
+         queueConfiguration.isDurable(),
+         queueConfiguration.getMaxConsumers(),
+         queueConfiguration.isPurgeOnNoConsumers(),
+         queueConfiguration.isExclusive(),
+         queueConfiguration.isGroupRebalance(),
+         queueConfiguration.isGroupRebalancePauseDispatch(),
+         queueConfiguration.getGroupBuckets(),
+         queueConfiguration.getGroupFirstKey(),
+         queueConfiguration.isLastValue(),
+         queueConfiguration.getLastValueKey(),
+         queueConfiguration.isNonDestructive(),
+         queueConfiguration.getConsumersBeforeDispatch(),
+         queueConfiguration.getDelayBeforeDispatch(),
+         queueConfiguration.isAutoDelete(),
+         queueConfiguration.getAutoDeleteDelay(),
+         queueConfiguration.getAutoDeleteMessageCount(),
+         queueConfiguration.getRingSize(),
+         queueConfiguration.isEnabled(),
+         requiresResponse
+      );
+   }
 
    public CreateSharedQueueMessage_V2(final SimpleString address,
                                       final SimpleString queueName,
@@ -48,6 +80,7 @@ public class CreateSharedQueueMessage_V2 extends CreateSharedQueueMessage {
                                       final Boolean purgeOnNoConsumers,
                                       final Boolean exclusive,
                                       final Boolean groupRebalance,
+                                      final Boolean groupRebalancePauseDispatch,
                                       final Integer groupBuckets,
                                       final SimpleString groupFirstKey,
                                       final Boolean lastValue,
@@ -58,6 +91,8 @@ public class CreateSharedQueueMessage_V2 extends CreateSharedQueueMessage {
                                       final Boolean autoDelete,
                                       final Long autoDeleteDelay,
                                       final Long autoDeleteMessageCount,
+                                      final Long ringSize,
+                                      final Boolean enabled,
                                       final boolean requiresResponse) {
       this();
 
@@ -70,6 +105,7 @@ public class CreateSharedQueueMessage_V2 extends CreateSharedQueueMessage {
       this.purgeOnNoConsumers = purgeOnNoConsumers;
       this.exclusive = exclusive;
       this.groupRebalance = groupRebalance;
+      this.groupRebalancePauseDispatch = groupRebalancePauseDispatch;
       this.groupBuckets = groupBuckets;
       this.groupFirstKey = groupFirstKey;
       this.lastValue = lastValue;
@@ -80,6 +116,8 @@ public class CreateSharedQueueMessage_V2 extends CreateSharedQueueMessage {
       this.autoDelete = autoDelete;
       this.autoDeleteDelay = autoDeleteDelay;
       this.autoDeleteMessageCount = autoDeleteMessageCount;
+      this.ringSize = ringSize;
+      this.enabled = enabled;
       this.requiresResponse = requiresResponse;
    }
 
@@ -167,6 +205,14 @@ public class CreateSharedQueueMessage_V2 extends CreateSharedQueueMessage {
       this.groupRebalance = groupRebalance;
    }
 
+   public Boolean isGroupRebalancePauseDispatch() {
+      return groupRebalancePauseDispatch;
+   }
+
+   public void setGroupRebalancePauseDispatch(Boolean groupRebalancePauseDispatch) {
+      this.groupRebalancePauseDispatch = groupRebalancePauseDispatch;
+   }
+
    public Integer getGroupBuckets() {
       return groupBuckets;
    }
@@ -207,6 +253,47 @@ public class CreateSharedQueueMessage_V2 extends CreateSharedQueueMessage {
       this.autoDeleteMessageCount = autoDeleteMessageCount;
    }
 
+   public Long getRingSize() {
+      return ringSize;
+   }
+
+   public void setRingSize(Long ringSize) {
+      this.ringSize = ringSize;
+   }
+
+   public Boolean isEnabled() {
+      return enabled;
+   }
+
+   public void setEnabled(Boolean enabled) {
+      this.enabled = enabled;
+   }
+
+   public QueueConfiguration toQueueConfiguration() {
+      return new QueueConfiguration(queueName)
+         .setAddress(address)
+         .setDurable(durable)
+         .setRoutingType(routingType)
+         .setExclusive(exclusive)
+         .setGroupRebalance(groupRebalance)
+         .setGroupRebalancePauseDispatch(groupRebalancePauseDispatch)
+         .setNonDestructive(nonDestructive)
+         .setLastValue(lastValue)
+         .setFilterString(filterString)
+         .setMaxConsumers(maxConsumers)
+         .setPurgeOnNoConsumers(purgeOnNoConsumers)
+         .setConsumersBeforeDispatch(consumersBeforeDispatch)
+         .setDelayBeforeDispatch(delayBeforeDispatch)
+         .setGroupBuckets(groupBuckets)
+         .setGroupFirstKey(groupFirstKey)
+         .setLastValueKey(lastValueKey)
+         .setAutoDelete(autoDelete)
+         .setAutoDeleteDelay(autoDeleteDelay)
+         .setAutoDeleteMessageCount(autoDeleteMessageCount)
+         .setRingSize(ringSize)
+         .setEnabled(enabled);
+   }
+
    @Override
    public String toString() {
       StringBuffer buff = new StringBuffer(getParentString());
@@ -219,6 +306,7 @@ public class CreateSharedQueueMessage_V2 extends CreateSharedQueueMessage {
       buff.append(", purgeOnNoConsumers=" + purgeOnNoConsumers);
       buff.append(", exclusive=" + exclusive);
       buff.append(", groupRebalance=" + groupRebalance);
+      buff.append(", groupRebalancePauseDispatch=" + groupRebalancePauseDispatch);
       buff.append(", groupBuckets=" + groupBuckets);
       buff.append(", groupFirstKey=" + groupFirstKey);
       buff.append(", lastValue=" + lastValue);
@@ -229,6 +317,8 @@ public class CreateSharedQueueMessage_V2 extends CreateSharedQueueMessage {
       buff.append(", autoDelete=" + autoDelete);
       buff.append(", autoDeleteDelay=" + autoDeleteDelay);
       buff.append(", autoDeleteMessageCount=" + autoDeleteMessageCount);
+      buff.append(", ringSize=" + ringSize);
+      buff.append(", enabled=" + enabled);
       buff.append(", requiresResponse=" + requiresResponse);
       buff.append("]");
       return buff.toString();
@@ -240,7 +330,7 @@ public class CreateSharedQueueMessage_V2 extends CreateSharedQueueMessage {
       buffer.writeSimpleString(queueName);
       buffer.writeNullableSimpleString(filterString);
       buffer.writeBoolean(durable);
-      buffer.writeByte(routingType.getType());
+      buffer.writeByte(routingType == null ? -1 : routingType.getType());
       buffer.writeBoolean(requiresResponse);
       BufferHelper.writeNullableInteger(buffer, maxConsumers);
       BufferHelper.writeNullableBoolean(buffer, purgeOnNoConsumers);
@@ -256,6 +346,9 @@ public class CreateSharedQueueMessage_V2 extends CreateSharedQueueMessage {
       BufferHelper.writeNullableLong(buffer, autoDeleteDelay);
       BufferHelper.writeNullableLong(buffer, autoDeleteMessageCount);
       buffer.writeNullableSimpleString(groupFirstKey);
+      BufferHelper.writeNullableLong(buffer, ringSize);
+      BufferHelper.writeNullableBoolean(buffer, enabled);
+      BufferHelper.writeNullableBoolean(buffer, groupRebalancePauseDispatch);
    }
 
    @Override
@@ -286,6 +379,15 @@ public class CreateSharedQueueMessage_V2 extends CreateSharedQueueMessage {
       if (buffer.readableBytes() > 0) {
          groupFirstKey = buffer.readNullableSimpleString();
       }
+      if (buffer.readableBytes() > 0) {
+         ringSize = buffer.readNullableLong();
+      }
+      if (buffer.readableBytes() > 0) {
+         enabled = buffer.readNullableBoolean();
+      }
+      if (buffer.readableBytes() > 0) {
+         groupRebalancePauseDispatch = buffer.readNullableBoolean();
+      }
    }
 
    @Override
@@ -302,6 +404,7 @@ public class CreateSharedQueueMessage_V2 extends CreateSharedQueueMessage {
       result = prime * result + (purgeOnNoConsumers == null ? 0 : purgeOnNoConsumers ? 1231 : 1237);
       result = prime * result + (exclusive == null ? 0 : exclusive ? 1231 : 1237);
       result = prime * result + (groupRebalance == null ? 0 : groupRebalance ? 1231 : 1237);
+      result = prime * result + (groupRebalancePauseDispatch == null ? 0 : groupRebalancePauseDispatch ? 1231 : 1237);
       result = prime * result + (groupBuckets == null ? 0 : groupBuckets.hashCode());
       result = prime * result + (groupFirstKey == null ? 0 : groupFirstKey.hashCode());
       result = prime * result + (lastValue == null ? 0 : lastValue ? 1231 : 1237);
@@ -312,7 +415,8 @@ public class CreateSharedQueueMessage_V2 extends CreateSharedQueueMessage {
       result = prime * result + (autoDelete == null ? 0 : autoDelete.hashCode());
       result = prime * result + (autoDeleteDelay == null ? 0 : autoDeleteDelay.hashCode());
       result = prime * result + (autoDeleteMessageCount == null ? 0 : autoDeleteMessageCount.hashCode());
-
+      result = prime * result + (ringSize == null ? 0 : ringSize.hashCode());
+      result = prime * result + (enabled ? 1231 : 1237);
       return result;
    }
 
@@ -366,6 +470,11 @@ public class CreateSharedQueueMessage_V2 extends CreateSharedQueueMessage {
             return false;
       } else if (!groupRebalance.equals(other.groupRebalance))
          return false;
+      if (groupRebalancePauseDispatch == null) {
+         if (other.groupRebalancePauseDispatch != null)
+            return false;
+      } else if (!groupRebalancePauseDispatch.equals(other.groupRebalancePauseDispatch))
+         return false;
       if (groupBuckets == null) {
          if (other.groupBuckets != null)
             return false;
@@ -415,6 +524,16 @@ public class CreateSharedQueueMessage_V2 extends CreateSharedQueueMessage {
          if (other.autoDeleteMessageCount != null)
             return false;
       } else if (!autoDeleteMessageCount.equals(other.autoDeleteMessageCount))
+         return false;
+      if (ringSize == null) {
+         if (other.ringSize != null)
+            return false;
+      } else if (!ringSize.equals(other.ringSize))
+         return false;
+      if (enabled == null) {
+         if (other.enabled != null)
+            return false;
+      } else if (!enabled.equals(other.enabled))
          return false;
       return true;
    }

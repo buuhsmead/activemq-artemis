@@ -34,32 +34,43 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 
+import org.apache.activemq.artemis.api.core.BroadcastEndpointFactory;
 import org.apache.activemq.artemis.api.core.BroadcastGroupConfiguration;
+import org.apache.activemq.artemis.api.core.ChannelBroadcastEndpointFactory;
 import org.apache.activemq.artemis.api.core.ICoreMessage;
+import org.apache.activemq.artemis.api.core.JGroupsFileBroadcastEndpointFactory;
+import org.apache.activemq.artemis.api.core.JGroupsPropertiesBroadcastEndpointFactory;
 import org.apache.activemq.artemis.api.core.JsonUtil;
 import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
+import org.apache.activemq.artemis.api.core.UDPBroadcastEndpointFactory;
 import org.apache.activemq.artemis.api.core.management.AcceptorControl;
+import org.apache.activemq.artemis.api.core.management.ActiveMQServerControl;
+import org.apache.activemq.artemis.api.core.management.AddressControl;
+import org.apache.activemq.artemis.api.core.management.BaseBroadcastGroupControl;
 import org.apache.activemq.artemis.api.core.management.BridgeControl;
-import org.apache.activemq.artemis.api.core.management.BroadcastGroupControl;
 import org.apache.activemq.artemis.api.core.management.ClusterConnectionControl;
 import org.apache.activemq.artemis.api.core.management.DivertControl;
 import org.apache.activemq.artemis.api.core.management.ManagementHelper;
 import org.apache.activemq.artemis.api.core.management.ObjectNameBuilder;
+import org.apache.activemq.artemis.api.core.management.QueueControl;
 import org.apache.activemq.artemis.api.core.management.ResourceNames;
 import org.apache.activemq.artemis.core.config.BridgeConfiguration;
 import org.apache.activemq.artemis.core.config.ClusterConnectionConfiguration;
 import org.apache.activemq.artemis.core.config.Configuration;
-import org.apache.activemq.artemis.core.config.DivertConfiguration;
 import org.apache.activemq.artemis.core.management.impl.AcceptorControlImpl;
 import org.apache.activemq.artemis.core.management.impl.ActiveMQServerControlImpl;
 import org.apache.activemq.artemis.core.management.impl.AddressControlImpl;
+import org.apache.activemq.artemis.core.management.impl.BaseBroadcastGroupControlImpl;
 import org.apache.activemq.artemis.core.management.impl.BridgeControlImpl;
 import org.apache.activemq.artemis.core.management.impl.BroadcastGroupControlImpl;
 import org.apache.activemq.artemis.core.management.impl.ClusterConnectionControlImpl;
 import org.apache.activemq.artemis.core.management.impl.DivertControlImpl;
+import org.apache.activemq.artemis.core.management.impl.JGroupsChannelBroadcastGroupControlImpl;
+import org.apache.activemq.artemis.core.management.impl.JGroupsFileBroadcastGroupControlImpl;
+import org.apache.activemq.artemis.core.management.impl.JGroupsPropertiesBroadcastGroupControlImpl;
 import org.apache.activemq.artemis.core.management.impl.QueueControlImpl;
 import org.apache.activemq.artemis.core.message.impl.CoreMessage;
 import org.apache.activemq.artemis.core.messagecounter.MessageCounter;
@@ -82,9 +93,15 @@ import org.apache.activemq.artemis.core.server.cluster.BroadcastGroup;
 import org.apache.activemq.artemis.core.server.cluster.ClusterConnection;
 import org.apache.activemq.artemis.core.server.impl.AddressInfo;
 import org.apache.activemq.artemis.core.server.impl.CleaningActivateCallback;
+import org.apache.activemq.artemis.core.server.management.ArtemisMBeanServerGuard;
+import org.apache.activemq.artemis.core.server.management.HawtioSecurityControl;
 import org.apache.activemq.artemis.core.server.management.ManagementService;
 import org.apache.activemq.artemis.core.server.management.Notification;
 import org.apache.activemq.artemis.core.server.management.NotificationListener;
+import org.apache.activemq.artemis.core.server.metrics.AddressMetricNames;
+import org.apache.activemq.artemis.core.server.metrics.BrokerMetricNames;
+import org.apache.activemq.artemis.core.server.metrics.MetricsManager;
+import org.apache.activemq.artemis.core.server.metrics.QueueMetricNames;
 import org.apache.activemq.artemis.core.settings.HierarchicalRepository;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.core.transaction.ResourceManager;
@@ -204,8 +221,22 @@ public class ManagementServiceImpl implements ManagementService {
       ObjectName objectName = objectNameBuilder.getActiveMQServerObjectName();
       registerInJMX(objectName, messagingServerControl);
       registerInRegistry(ResourceNames.BROKER, messagingServerControl);
+      registerBrokerMeters();
 
       return messagingServerControl;
+   }
+
+   private void registerBrokerMeters() {
+      MetricsManager metricsManager = messagingServer.getMetricsManager();
+      if (metricsManager != null) {
+         metricsManager.registerBrokerGauge(builder -> {
+            builder.register(BrokerMetricNames.CONNECTION_COUNT, this, metrics -> Double.valueOf(messagingServer.getConnectionCount()), ActiveMQServerControl.CONNECTION_COUNT_DESCRIPTION);
+            builder.register(BrokerMetricNames.TOTAL_CONNECTION_COUNT, this, metrics -> Double.valueOf(messagingServer.getTotalConnectionCount()), ActiveMQServerControl.TOTAL_CONNECTION_COUNT_DESCRIPTION);
+            builder.register(BrokerMetricNames.ADDRESS_MEMORY_USAGE, this, metrics -> Double.valueOf(messagingServerControl.getAddressMemoryUsage()), ActiveMQServerControl.ADDRESS_MEMORY_USAGE_DESCRIPTION);
+            builder.register(BrokerMetricNames.ADDRESS_MEMORY_USAGE_PERCENTAGE, this, metrics -> Double.valueOf(messagingServerControl.getAddressMemoryUsagePercentage()), ActiveMQServerControl.ADDRESS_MEMORY_USAGE_PERCENTAGE_DESCRIPTION);
+            builder.register(BrokerMetricNames.DISK_STORE_USAGE, this, metrics -> Double.valueOf(messagingServer.getDiskStoreUsage()), ActiveMQServerControl.DISK_STORE_USAGE_DESCRIPTION);
+         });
+      }
    }
 
    @Override
@@ -213,6 +244,7 @@ public class ManagementServiceImpl implements ManagementService {
       ObjectName objectName = objectNameBuilder.getActiveMQServerObjectName();
       unregisterFromJMX(objectName);
       unregisterFromRegistry(ResourceNames.BROKER);
+      unregisterMeters(ResourceNames.BROKER + "." + messagingServer.getConfiguration().getName());
    }
 
    @Override
@@ -224,8 +256,25 @@ public class ManagementServiceImpl implements ManagementService {
 
       registerInRegistry(ResourceNames.ADDRESS + addressInfo.getName(), addressControl);
 
+      registerAddressMeters(addressInfo, addressControl);
+
       if (logger.isDebugEnabled()) {
          logger.debug("registered address " + objectName);
+      }
+   }
+
+   @Override
+   public void registerAddressMeters(AddressInfo addressInfo, AddressControl addressControl) {
+      if (messagingServer != null) { // it could be null on tests, but never on a real server
+         MetricsManager metricsManager = messagingServer.getMetricsManager();
+         if (metricsManager != null) {
+            metricsManager.registerAddressGauge(addressInfo.getName().toString(), builder -> {
+               builder.register(AddressMetricNames.ROUTED_MESSAGE_COUNT, this, metrics -> Double.valueOf(addressInfo.getRoutedMessageCount()), AddressControl.ROUTED_MESSAGE_COUNT_DESCRIPTION);
+               builder.register(AddressMetricNames.UNROUTED_MESSAGE_COUNT, this, metrics -> Double.valueOf(addressInfo.getUnRoutedMessageCount()), AddressControl.UNROUTED_MESSAGE_COUNT_DESCRIPTION);
+               builder.register(AddressMetricNames.ADDRESS_SIZE, this, metrics -> Double.valueOf(addressControl.getAddressSize()), AddressControl.ADDRESS_SIZE_DESCRIPTION);
+               builder.register(AddressMetricNames.PAGES_COUNT, this, metrics -> Double.valueOf(addressControl.getNumberOfPages()), AddressControl.NUMBER_OF_PAGES_DESCRIPTION);
+            });
+         }
       }
    }
 
@@ -235,6 +284,7 @@ public class ManagementServiceImpl implements ManagementService {
 
       unregisterFromJMX(objectName);
       unregisterFromRegistry(ResourceNames.ADDRESS + address);
+      unregisterMeters(ResourceNames.ADDRESS + address);
    }
 
    public synchronized void registerQueue(final Queue queue,
@@ -257,11 +307,13 @@ public class ManagementServiceImpl implements ManagementService {
       ObjectName objectName = objectNameBuilder.getQueueObjectName(addressInfo.getName(), queue.getName(), queue.getRoutingType());
       registerInJMX(objectName, queueControl);
       registerInRegistry(ResourceNames.QUEUE + queue.getName(), queueControl);
+      registerQueueMeters(queue);
 
       if (logger.isDebugEnabled()) {
          logger.debug("registered queue " + objectName);
       }
    }
+
    @Override
    public synchronized void registerQueue(final Queue queue,
                                           final SimpleString address,
@@ -274,17 +326,55 @@ public class ManagementServiceImpl implements ManagementService {
       ObjectName objectName = objectNameBuilder.getQueueObjectName(address, name, routingType);
       unregisterFromJMX(objectName);
       unregisterFromRegistry(ResourceNames.QUEUE + name);
+      unregisterMeters(ResourceNames.QUEUE + name);
       if (messageCounterManager != null) {
          messageCounterManager.unregisterMessageCounter(name.toString());
       }
    }
 
+   private void registerQueueMeters(final Queue queue) {
+      if (messagingServer != null) { // messagingServer could be null on certain unit tests where metrics are not relevant
+         MetricsManager metricsManager = messagingServer.getMetricsManager();
+         if (metricsManager != null) {
+            metricsManager.registerQueueGauge(queue.getAddress().toString(), queue.getName().toString(), (builder) -> {
+               builder.register(QueueMetricNames.MESSAGE_COUNT, this, metrics -> Double.valueOf(queue.getMessageCount()), QueueControl.MESSAGE_COUNT_DESCRIPTION);
+               builder.register(QueueMetricNames.DURABLE_MESSAGE_COUNT, this, metrics -> Double.valueOf(queue.getDurableMessageCount()), QueueControl.DURABLE_MESSAGE_COUNT_DESCRIPTION);
+               builder.register(QueueMetricNames.PERSISTENT_SIZE, this, metrics -> Double.valueOf(queue.getPersistentSize()), QueueControl.PERSISTENT_SIZE_DESCRIPTION);
+               builder.register(QueueMetricNames.DURABLE_PERSISTENT_SIZE, this, metrics -> Double.valueOf(queue.getDurablePersistentSize()), QueueControl.DURABLE_PERSISTENT_SIZE_DESCRIPTION);
+
+               builder.register(QueueMetricNames.DELIVERING_MESSAGE_COUNT, this, metrics -> Double.valueOf(queue.getDeliveringCount()), QueueControl.DELIVERING_MESSAGE_COUNT_DESCRIPTION);
+               builder.register(QueueMetricNames.DELIVERING_DURABLE_MESSAGE_COUNT, this, metrics -> Double.valueOf(queue.getDurableDeliveringCount()), QueueControl.DURABLE_DELIVERING_MESSAGE_COUNT_DESCRIPTION);
+               builder.register(QueueMetricNames.DELIVERING_PERSISTENT_SIZE, this, metrics -> Double.valueOf(queue.getDeliveringSize()), QueueControl.DELIVERING_SIZE_DESCRIPTION);
+               builder.register(QueueMetricNames.DELIVERING_DURABLE_PERSISTENT_SIZE, this, metrics -> Double.valueOf(queue.getDurableDeliveringSize()), QueueControl.DURABLE_DELIVERING_SIZE_DESCRIPTION);
+
+               builder.register(QueueMetricNames.SCHEDULED_MESSAGE_COUNT, this, metrics -> Double.valueOf(queue.getScheduledCount()), QueueControl.SCHEDULED_MESSAGE_COUNT_DESCRIPTION);
+               builder.register(QueueMetricNames.SCHEDULED_DURABLE_MESSAGE_COUNT, this, metrics -> Double.valueOf(queue.getDurableScheduledCount()), QueueControl.DURABLE_SCHEDULED_MESSAGE_COUNT_DESCRIPTION);
+               builder.register(QueueMetricNames.SCHEDULED_PERSISTENT_SIZE, this, metrics -> Double.valueOf(queue.getScheduledSize()), QueueControl.SCHEDULED_SIZE_DESCRIPTION);
+               builder.register(QueueMetricNames.SCHEDULED_DURABLE_PERSISTENT_SIZE, this, metrics -> Double.valueOf(queue.getDurableScheduledSize()), QueueControl.DURABLE_SCHEDULED_SIZE_DESCRIPTION);
+
+               builder.register(QueueMetricNames.MESSAGES_ACKNOWLEDGED, this, metrics -> Double.valueOf(queue.getMessagesAcknowledged()), QueueControl.MESSAGES_ACKNOWLEDGED_DESCRIPTION);
+               builder.register(QueueMetricNames.MESSAGES_ADDED, this, metrics -> Double.valueOf(queue.getMessagesAdded()), QueueControl.MESSAGES_ADDED_DESCRIPTION);
+               builder.register(QueueMetricNames.MESSAGES_KILLED, this, metrics -> Double.valueOf(queue.getMessagesKilled()), QueueControl.MESSAGES_KILLED_DESCRIPTION);
+               builder.register(QueueMetricNames.MESSAGES_EXPIRED, this, metrics -> Double.valueOf(queue.getMessagesExpired()), QueueControl.MESSAGES_EXPIRED_DESCRIPTION);
+               builder.register(QueueMetricNames.CONSUMER_COUNT, this, metrics -> Double.valueOf(queue.getConsumerCount()), QueueControl.CONSUMER_COUNT_DESCRIPTION);
+            });
+         }
+      }
+   }
+
+   private void unregisterMeters(final String name) {
+      MetricsManager metricsManager = messagingServer.getMetricsManager();
+      if (metricsManager != null) {
+         metricsManager.remove(name);
+      }
+   }
+
    @Override
-   public synchronized void registerDivert(final Divert divert, final DivertConfiguration config) throws Exception {
-      ObjectName objectName = objectNameBuilder.getDivertObjectName(divert.getUniqueName().toString(), config.getAddress());
-      DivertControl divertControl = new DivertControlImpl(divert, storageManager, config, messagingServer.getInternalNamingPrefix());
+   public synchronized void registerDivert(final Divert divert) throws Exception {
+      ObjectName objectName = objectNameBuilder.getDivertObjectName(divert.getUniqueName().toString(), divert.getAddress().toString());
+      DivertControl divertControl = new DivertControlImpl(divert, storageManager, messagingServer.getInternalNamingPrefix());
       registerInJMX(objectName, divertControl);
-      registerInRegistry(ResourceNames.DIVERT + config.getName(), divertControl);
+      registerInRegistry(ResourceNames.DIVERT + divert.getUniqueName(), divertControl);
 
       if (logger.isDebugEnabled()) {
          logger.debug("registered divert " + objectName);
@@ -339,9 +429,24 @@ public class ManagementServiceImpl implements ManagementService {
                                                    final BroadcastGroupConfiguration configuration) throws Exception {
       broadcastGroup.setNotificationService(this);
       ObjectName objectName = objectNameBuilder.getBroadcastGroupObjectName(configuration.getName());
-      BroadcastGroupControl control = new BroadcastGroupControlImpl(broadcastGroup, storageManager, configuration);
-      registerInJMX(objectName, control);
-      registerInRegistry(ResourceNames.BROADCAST_GROUP + configuration.getName(), control);
+      BroadcastEndpointFactory endpointFactory = configuration.getEndpointFactory();
+      BaseBroadcastGroupControl control = null;
+      if (endpointFactory instanceof UDPBroadcastEndpointFactory) {
+         control = new BroadcastGroupControlImpl(broadcastGroup, storageManager, configuration, (UDPBroadcastEndpointFactory) endpointFactory);
+      } else if (endpointFactory instanceof JGroupsFileBroadcastEndpointFactory) {
+         control = new JGroupsFileBroadcastGroupControlImpl(broadcastGroup, storageManager, configuration, (JGroupsFileBroadcastEndpointFactory) endpointFactory);
+      } else if (endpointFactory instanceof ChannelBroadcastEndpointFactory) {
+         control = new JGroupsChannelBroadcastGroupControlImpl(broadcastGroup, storageManager, configuration, (ChannelBroadcastEndpointFactory) endpointFactory);
+      } else if (endpointFactory instanceof JGroupsPropertiesBroadcastEndpointFactory) {
+         control = new JGroupsPropertiesBroadcastGroupControlImpl(broadcastGroup, storageManager, configuration, (JGroupsPropertiesBroadcastEndpointFactory) endpointFactory);
+      } else {
+         control = new BaseBroadcastGroupControlImpl(broadcastGroup, storageManager, configuration);
+      }
+      //shouldnt ever be null
+      if (control != null) {
+         registerInJMX(objectName, control);
+         registerInRegistry(ResourceNames.BROADCAST_GROUP + configuration.getName(), control);
+      }
    }
 
    @Override
@@ -382,6 +487,21 @@ public class ManagementServiceImpl implements ManagementService {
       ObjectName objectName = objectNameBuilder.getClusterConnectionObjectName(name);
       unregisterFromJMX(objectName);
       unregisterFromRegistry(ResourceNames.CORE_CLUSTER_CONNECTION + name);
+   }
+
+   @Override
+   public void registerHawtioSecurity(ArtemisMBeanServerGuard mBeanServerGuard) throws Exception {
+      ObjectName objectName = objectNameBuilder.getManagementContextObjectName();
+      HawtioSecurityControl control = new HawtioSecurityControlImpl(mBeanServerGuard, storageManager);
+      registerInJMX(objectName, control);
+      registerInRegistry(ResourceNames.MANAGEMENT_SECURITY, control);
+   }
+
+   @Override
+   public void unregisterHawtioSecurity() throws Exception {
+      ObjectName objectName = objectNameBuilder.getManagementContextObjectName();
+      unregisterFromJMX(objectName);
+      unregisterFromRegistry(ResourceNames.MANAGEMENT_SECURITY);
    }
 
    @Override
@@ -574,6 +694,7 @@ public class ManagementServiceImpl implements ManagementService {
 
       for (String resourceName : resourceNames) {
          unregisterFromRegistry(resourceName);
+         unregisterMeters(resourceName);
       }
 
       if (jmxManagementEnabled) {
@@ -691,11 +812,9 @@ public class ManagementServiceImpl implements ManagementService {
 
                notificationMessage.putStringProperty(ManagementHelper.HDR_NOTIFICATION_TYPE, new SimpleString(notification.getType().toString()));
 
-               notificationMessage.putLongProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP, System.currentTimeMillis());
-
-               if (notification.getUID() != null) {
-                  notificationMessage.putStringProperty(new SimpleString("foobar"), new SimpleString(notification.getUID()));
-               }
+               long timestamp = System.currentTimeMillis();
+               notificationMessage.putLongProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP, timestamp);
+               notificationMessage.setTimestamp(timestamp);
 
                postOffice.route(notificationMessage, false);
             }

@@ -17,6 +17,7 @@
 package org.apache.activemq.artemis.tests.integration.openwire;
 
 import org.apache.activemq.ActiveMQConnectionFactory;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -55,9 +56,9 @@ public class OpenWireDivertNonExclusiveTest extends OpenWireDivertTestBase {
 
       final SimpleString queueName2 = new SimpleString("queue2");
 
-      coreSession.createQueue(new SimpleString(forwardAddress), RoutingType.MULTICAST, queueName1, null, false);
+      coreSession.createQueue(new QueueConfiguration(queueName1).setAddress(forwardAddress).setDurable(false));
 
-      coreSession.createQueue(new SimpleString(testAddress), RoutingType.MULTICAST, queueName2, null, false);
+      coreSession.createQueue(new QueueConfiguration(queueName2).setAddress(testAddress).setDurable(false));
 
       ClientProducer producer = coreSession.createProducer(new SimpleString(testAddress));
       final int numMessages = 1;
@@ -89,7 +90,6 @@ public class OpenWireDivertNonExclusiveTest extends OpenWireDivertTestBase {
          MessageConsumer consumer1 = session.createConsumer(q1);
          MessageConsumer consumer2 = session.createConsumer(q2);
 
-         System.out.println("receiving ...");
          for (int i = 0; i < numMessages; i++) {
             Message message = consumer1.receive(TIMEOUT);
 
@@ -130,8 +130,8 @@ public class OpenWireDivertNonExclusiveTest extends OpenWireDivertTestBase {
       final SimpleString queueName1 = new SimpleString("queue1");
       final SimpleString queueName2 = new SimpleString("queue2");
 
-      coreSession.createQueue(new SimpleString(forwardAddress), RoutingType.ANYCAST, queueName1, null, false);
-      coreSession.createQueue(new SimpleString(testAddress), RoutingType.ANYCAST, queueName2, null, false);
+      coreSession.createQueue(new QueueConfiguration(queueName1).setAddress(forwardAddress).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      coreSession.createQueue(new QueueConfiguration(queueName2).setAddress(testAddress).setRoutingType(RoutingType.ANYCAST).setDurable(false));
       coreSession.close();
 
       //use openwire to receive
@@ -159,7 +159,6 @@ public class OpenWireDivertNonExclusiveTest extends OpenWireDivertTestBase {
          MessageConsumer consumer1 = session.createConsumer(q1);
          MessageConsumer consumer2 = session.createConsumer(q2);
 
-         System.out.println("receiving ...");
          for (int i = 0; i < numMessages; i++) {
             Message message = consumer1.receive(TIMEOUT);
             Assert.assertNotNull(message);

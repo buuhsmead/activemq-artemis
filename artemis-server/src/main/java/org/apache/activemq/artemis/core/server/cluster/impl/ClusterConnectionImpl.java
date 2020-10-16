@@ -32,6 +32,7 @@ import java.util.concurrent.TimeUnit;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.DiscoveryGroupConfiguration;
 import org.apache.activemq.artemis.api.core.Pair;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
@@ -45,6 +46,7 @@ import org.apache.activemq.artemis.core.client.impl.ClientSessionFactoryInternal
 import org.apache.activemq.artemis.core.client.impl.ServerLocatorImpl;
 import org.apache.activemq.artemis.core.client.impl.ServerLocatorInternal;
 import org.apache.activemq.artemis.core.client.impl.Topology;
+import org.apache.activemq.artemis.core.client.impl.TopologyManager;
 import org.apache.activemq.artemis.core.client.impl.TopologyMemberImpl;
 import org.apache.activemq.artemis.core.config.impl.ConfigurationImpl;
 import org.apache.activemq.artemis.core.postoffice.Binding;
@@ -73,7 +75,7 @@ import org.apache.activemq.artemis.utils.FutureLatch;
 import org.apache.activemq.artemis.utils.collections.TypedProperties;
 import org.jboss.logging.Logger;
 
-public final class ClusterConnectionImpl implements ClusterConnection, AfterConnectInternalListener {
+public final class ClusterConnectionImpl implements ClusterConnection, AfterConnectInternalListener, TopologyManager {
 
    private static final Logger logger = Logger.getLogger(ClusterConnectionImpl.class);
 
@@ -172,6 +174,8 @@ public final class ClusterConnectionImpl implements ClusterConnection, AfterConn
    private final int clusterNotificationAttempts;
 
    private final String storeAndForwardPrefix;
+
+   private boolean splitBrainDetection;
 
    public ClusterConnectionImpl(final ClusterManager manager,
                                 final TransportConfiguration[] staticTranspConfigs,
@@ -507,6 +511,49 @@ public final class ClusterConnectionImpl implements ClusterConnection, AfterConn
       }
    }
 
+   /** This is the implementation of TopologyManager. It is used to reject eventual updates from a split brain server.
+    *
+    * @param uniqueEventID
+    * @param nodeId
+    * @param memberInput
+    * @return
+    */
+   @Override
+   public boolean updateMember(long uniqueEventID, String nodeId, TopologyMemberImpl memberInput) {
+      if (splitBrainDetection && nodeId.equals(nodeManager.getNodeId().toString())) {
+         if (memberInput.getLive() != null && !memberInput.getLive().isSameParams(connector)) {
+            ActiveMQServerLogger.LOGGER.possibleSplitBrain(nodeId, memberInput.toString());
+         }
+         memberInput.setLive(connector);
+      }
+      return true;
+   }
+
+   /**
+    * From topologyManager
+    * @param uniqueEventID
+    * @param nodeId
+    * @return
+    */
+   @Override
+   public boolean removeMember(final long uniqueEventID, final String nodeId) {
+      if (splitBrainDetection && nodeId.equals(nodeManager.getNodeId().toString())) {
+         ActiveMQServerLogger.LOGGER.possibleSplitBrain(nodeId, nodeId);
+         return false;
+      }
+      return true;
+   }
+
+   @Override
+   public void setSplitBrainDetection(boolean splitBrainDetection) {
+      this.splitBrainDetection = splitBrainDetection;
+   }
+
+   @Override
+   public boolean isSplitBrainDetection() {
+      return splitBrainDetection;
+   }
+
    @Override
    public void onConnection(ClientSessionFactoryInternal sf) {
       TopologyMember localMember = getLocalMember();
@@ -628,7 +675,7 @@ public final class ClusterConnectionImpl implements ClusterConnection, AfterConn
 
          serverLocator.setAfterConnectionInternalListener(this);
 
-         serverLocator.setProtocolManagerFactory(ActiveMQServerSideProtocolManagerFactory.getInstance(serverLocator));
+         serverLocator.setProtocolManagerFactory(ActiveMQServerSideProtocolManagerFactory.getInstance(serverLocator, server.getStorageManager()));
 
          serverLocator.start(server.getExecutorFactory().getExecutor());
       }
@@ -721,7 +768,7 @@ public final class ClusterConnectionImpl implements ClusterConnection, AfterConn
                } else {
                   // Add binding in storage so the queue will get reloaded on startup and we can find it - it's never
                   // actually routed to at that address though
-                  queue = server.createQueue(queueName, RoutingType.MULTICAST, queueName, null, true, false, -1, false, true);
+                  queue = server.createQueue(new QueueConfiguration(queueName).setRoutingType(RoutingType.MULTICAST).setAutoCreateAddress(true).setMaxConsumers(-1).setPurgeOnNoConsumers(false));
                }
 
                // There are a few things that will behave differently when it's an internal queue
@@ -810,13 +857,15 @@ public final class ClusterConnectionImpl implements ClusterConnection, AfterConn
       targetLocator.setMaxRetryInterval(maxRetryInterval);
       targetLocator.setRetryIntervalMultiplier(retryIntervalMultiplier);
       targetLocator.setMinLargeMessageSize(minLargeMessageSize);
+      targetLocator.setCallTimeout(serverLocator.getCallTimeout());
+      targetLocator.setCallFailoverTimeout(serverLocator.getCallFailoverTimeout());
 
       // No producer flow control on the bridges by default, as we don't want to lock the queues
       targetLocator.setProducerWindowSize(this.producerWindowSize);
 
       targetLocator.setAfterConnectionInternalListener(this);
 
-      serverLocator.setProtocolManagerFactory(ActiveMQServerSideProtocolManagerFactory.getInstance(serverLocator));
+      serverLocator.setProtocolManagerFactory(ActiveMQServerSideProtocolManagerFactory.getInstance(serverLocator, server.getStorageManager()));
 
       targetLocator.setNodeID(nodeId);
 
@@ -830,7 +879,7 @@ public final class ClusterConnectionImpl implements ClusterConnection, AfterConn
       targetLocator.addIncomingInterceptor(new IncomingInterceptorLookingForExceptionMessage(manager, executorFactory.getExecutor()));
       MessageFlowRecordImpl record = new MessageFlowRecordImpl(targetLocator, eventUID, targetNodeID, connector, queueName, queue);
 
-      ClusterConnectionBridge bridge = new ClusterConnectionBridge(this, manager, targetLocator, serverLocator, initialConnectAttempts, reconnectAttempts, retryInterval, retryIntervalMultiplier, maxRetryInterval, nodeManager.getUUID(), record.getEventUID(), record.getTargetNodeID(), record.getQueueName(), record.getQueue(), executorFactory.getExecutor(), null, null, scheduledExecutor, null, useDuplicateDetection, clusterUser, clusterPassword, server, managementService.getManagementAddress(), managementService.getManagementNotificationAddress(), record, record.getConnector(), storeAndForwardPrefix);
+      ClusterConnectionBridge bridge = new ClusterConnectionBridge(this, manager, targetLocator, serverLocator, initialConnectAttempts, reconnectAttempts, retryInterval, retryIntervalMultiplier, maxRetryInterval, nodeManager.getUUID(), record.getEventUID(), record.getTargetNodeID(), record.getQueueName(), record.getQueue(), executorFactory.getExecutor(), null, null, scheduledExecutor, null, useDuplicateDetection, clusterUser, clusterPassword, server, managementService.getManagementAddress(), managementService.getManagementNotificationAddress(), record, record.getConnector(), storeAndForwardPrefix, server.getStorageManager());
 
       targetLocator.setIdentity("(Cluster-connection-bridge::" + bridge.toString() + "::" + this.toString() + ")");
 
@@ -1234,17 +1283,25 @@ public final class ClusterConnectionImpl implements ClusterConnection, AfterConn
          RemoteQueueBinding existingBinding = (RemoteQueueBinding) postOffice.getBinding(clusterName);
 
          if (existingBinding != null) {
-            if (!existingBinding.isConnected()) {
-               existingBinding.connect();
+            if (queueID.equals(existingBinding.getRemoteQueueID())) {
+               if (!existingBinding.isConnected()) {
+                  existingBinding.connect();
+                  return;
+               }
+               // Sanity check - this means the binding has already been added via another bridge, probably max
+               // hops is too high
+               // or there are multiple cluster connections for the same address
+
+               ActiveMQServerLogger.LOGGER.remoteQueueAlreadyBoundOnClusterConnection(this, clusterName);
                return;
             }
-            // Sanity check - this means the binding has already been added via another bridge, probably max
-            // hops is too high
-            // or there are multiple cluster connections for the same address
-
-            ActiveMQServerLogger.LOGGER.remoteQueueAlreadyBoundOnClusterConnection(this, clusterName);
-
-            return;
+            //this could happen during jms non-durable failover while the qname doesn't change but qid
+            //will be re-generated in backup. In that case a new remote binding will be created
+            //and put it to the map and old binding removed.
+            if (logger.isTraceEnabled()) {
+               logger.trace("Removing binding because qid changed " + queueID + " old: " + existingBinding.getRemoteQueueID());
+            }
+            removeBinding(clusterName);
          }
 
          RemoteQueueBinding binding = new RemoteQueueBindingImpl(server.getStorageManager().generateID(), queueAddress, clusterName, routingName, queueID, filterString, queue, bridge.getName(), distance + 1, messageLoadBalancingType);

@@ -28,6 +28,7 @@ import java.util.Arrays;
 import java.util.Collection;
 
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.management.QueueControl;
@@ -37,12 +38,18 @@ import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.impl.AddressInfo;
 import org.apache.activemq.artemis.core.server.impl.LastValueQueue;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
+import org.apache.activemq.artemis.tests.util.Wait;
+import org.apache.activemq.artemis.utils.RetryRule;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 @RunWith(Parameterized.class)
 public class JMSNonDestructiveTest extends JMSClientTestSupport {
+
+   @Rule
+   public RetryRule retryRule = new RetryRule(2);
 
    private static final String NON_DESTRUCTIVE_QUEUE_NAME = "NON_DESTRUCTIVE_QUEUE";
    private static final String NON_DESTRUCTIVE_EXPIRY_QUEUE_NAME = "NON_DESTRUCTIVE_EXPIRY_QUEUE";
@@ -86,19 +93,19 @@ public class JMSNonDestructiveTest extends JMSClientTestSupport {
 
       //Add Non Destructive Queue
       server.addAddressInfo(new AddressInfo(SimpleString.toSimpleString(NON_DESTRUCTIVE_QUEUE_NAME), RoutingType.ANYCAST));
-      server.createQueue(SimpleString.toSimpleString(NON_DESTRUCTIVE_QUEUE_NAME), RoutingType.ANYCAST, SimpleString.toSimpleString(NON_DESTRUCTIVE_QUEUE_NAME), null, true, false, -1, false, true);
+      server.createQueue(new QueueConfiguration(NON_DESTRUCTIVE_QUEUE_NAME).setRoutingType(RoutingType.ANYCAST));
 
       //Add Non Destructive Expiry Queue
       server.addAddressInfo(new AddressInfo(SimpleString.toSimpleString(NON_DESTRUCTIVE_EXPIRY_QUEUE_NAME), RoutingType.ANYCAST));
-      server.createQueue(SimpleString.toSimpleString(NON_DESTRUCTIVE_EXPIRY_QUEUE_NAME), RoutingType.ANYCAST, SimpleString.toSimpleString(NON_DESTRUCTIVE_EXPIRY_QUEUE_NAME), null, true, false, -1, false, true);
+      server.createQueue(new QueueConfiguration(NON_DESTRUCTIVE_EXPIRY_QUEUE_NAME).setRoutingType(RoutingType.ANYCAST));
 
       //Add Non Destructive Last Value Queue
       server.addAddressInfo(new AddressInfo(SimpleString.toSimpleString(NON_DESTRUCTIVE_LVQ_QUEUE_NAME), RoutingType.ANYCAST));
-      server.createQueue(SimpleString.toSimpleString(NON_DESTRUCTIVE_LVQ_QUEUE_NAME), RoutingType.ANYCAST, SimpleString.toSimpleString(NON_DESTRUCTIVE_LVQ_QUEUE_NAME), null, true, false, -1, false, true);
+      server.createQueue(new QueueConfiguration(NON_DESTRUCTIVE_LVQ_QUEUE_NAME).setRoutingType(RoutingType.ANYCAST));
 
       //Add  Non Destructive Last Value Queue for Tombstone Test
       server.addAddressInfo(new AddressInfo(SimpleString.toSimpleString(NON_DESTRUCTIVE_TOMBSTONE_LVQ_QUEUE_NAME), RoutingType.ANYCAST));
-      server.createQueue(SimpleString.toSimpleString(NON_DESTRUCTIVE_TOMBSTONE_LVQ_QUEUE_NAME), RoutingType.ANYCAST, SimpleString.toSimpleString(NON_DESTRUCTIVE_TOMBSTONE_LVQ_QUEUE_NAME), null, true, false, -1, false, true);
+      server.createQueue(new QueueConfiguration(NON_DESTRUCTIVE_TOMBSTONE_LVQ_QUEUE_NAME).setRoutingType(RoutingType.ANYCAST));
 
    }
 
@@ -186,9 +193,11 @@ public class JMSNonDestructiveTest extends JMSClientTestSupport {
 
       //Consume Once
       receive(consumerConnectionSupplier, NON_DESTRUCTIVE_EXPIRY_QUEUE_NAME);
-      assertEquals("Ensure Message count", 1, queueBinding.getQueue().getMessageCount());
+      Wait.assertEquals(1, queueBinding.getQueue()::getMessageCount);
 
-      Thread.sleep(500);
+      // Wait for expiration
+      Wait.waitFor(() -> queueBinding.getQueue().getMessageCount() == 0, 200); // notice the small timeout here is intended,
+                  // as it will not suceed if we disable scan as we expect the client to expire destinations
 
       //Consume Again this time we expect the message to be expired, so nothing delivered
       receiveNull(consumerConnectionSupplier, NON_DESTRUCTIVE_EXPIRY_QUEUE_NAME);

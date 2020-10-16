@@ -28,12 +28,18 @@ public interface ActiveMQServerControl {
    String CONNECTION_COUNT_DESCRIPTION = "Number of clients connected to this server";
    String TOTAL_CONNECTION_COUNT_DESCRIPTION = "Number of clients which have connected to this server since it was started";
    String ADDRESS_MEMORY_USAGE_DESCRIPTION = "Memory used by all the addresses on broker for in-memory messages";
+   String ADDRESS_MEMORY_USAGE_PERCENTAGE_DESCRIPTION = "Memory used by all the addresses on broker as a percentage of the global-max-size";
+   String DISK_STORE_USAGE_DESCRIPTION = "Percentage of total disk store used";
 
    /**
     * Returns this server's version.
     */
    @Attribute(desc = "Server's version")
    String getVersion();
+
+
+   @Attribute(desc = "Server is active")
+   boolean isActive();
 
    /**
     * Returns the number of clients connected to this server.
@@ -366,6 +372,7 @@ public interface ActiveMQServerControl {
     * Returns the priority of the thread used to scan message expiration.
     */
    @Attribute(desc = "Priority of the thread used to scan message expiration")
+   @Deprecated
    long getMessageExpiryThreadPriority();
 
    /**
@@ -442,10 +449,31 @@ public interface ActiveMQServerControl {
    long getAddressMemoryUsage();
 
    /**
-    * Returns the memory used by all the addresses on broker as a percentage of global maximum limit
+    * Returns the percentage of total disk store use
     */
-   @Attribute(desc = "Memory used by all the addresses on broker as a percentage of global maximum limit")
+   @Attribute(desc = DISK_STORE_USAGE_DESCRIPTION)
+   double getDiskStoreUsage();
+
+   /**
+    * Returns the memory used by all the addresses on broker as a percentage of the global-max-size
+    */
+   @Attribute(desc = ADDRESS_MEMORY_USAGE_PERCENTAGE_DESCRIPTION)
    int getAddressMemoryUsagePercentage();
+
+   @Attribute(desc = "Returns the HA Policy of this broker as a String")
+   String getHAPolicy();
+
+   /**
+    * Returns the runtime size of the authentication cache
+    */
+   @Attribute(desc = "The runtime size of the authentication cache")
+   long getAuthenticationCacheSize();
+
+   /**
+    * Returns the runtime size of the authorization cache
+    */
+   @Attribute(desc = "The runtime size of the authorization cache")
+   long getAuthorizationCacheSize();
 
    // Operations ----------------------------------------------------
    @Operation(desc = "Isolate the broker", impact = MBeanOperationInfo.ACTION)
@@ -492,6 +520,7 @@ public interface ActiveMQServerControl {
     * @param name        name of the queue
     * @param routingType The routing type used for this address, MULTICAST or ANYCAST
     */
+   @Deprecated
    @Operation(desc = "Create a queue with the specified address", impact = MBeanOperationInfo.ACTION)
    void createQueue(@Parameter(name = "address", desc = "Address of the queue") String address,
                     @Parameter(name = "name", desc = "Name of the queue") String name,
@@ -526,6 +555,7 @@ public interface ActiveMQServerControl {
     * @param durable     whether the queue is durable
     * @param routingType The routing type used for this address, MULTICAST or ANYCAST
     */
+   @Deprecated
    @Operation(desc = "Create a queue with the specified address, name and durability", impact = MBeanOperationInfo.ACTION)
    void createQueue(@Parameter(name = "address", desc = "Address of the queue") String address,
                     @Parameter(name = "name", desc = "Name of the queue") String name,
@@ -544,6 +574,7 @@ public interface ActiveMQServerControl {
     * @param filter  of the queue
     * @param durable whether the queue is durable
     */
+   @Deprecated
    @Operation(desc = "Create a queue", impact = MBeanOperationInfo.ACTION)
    void createQueue(@Parameter(name = "address", desc = "Address of the queue") String address,
                     @Parameter(name = "name", desc = "Name of the queue") String name,
@@ -563,6 +594,7 @@ public interface ActiveMQServerControl {
     * @param durable     whether the queue is durable
     * @param routingType The routing type used for this address, MULTICAST or ANYCAST
     */
+   @Deprecated
    @Operation(desc = "Create a queue", impact = MBeanOperationInfo.ACTION)
    void createQueue(@Parameter(name = "address", desc = "Address of the queue") String address,
                     @Parameter(name = "name", desc = "Name of the queue") String name,
@@ -592,6 +624,7 @@ public interface ActiveMQServerControl {
     * @return a textual summary of the queue
     * @throws Exception
     */
+   @Deprecated
    @Operation(desc = "Create a queue", impact = MBeanOperationInfo.ACTION)
    String createQueue(@Parameter(name = "address", desc = "Address of the queue") String address,
                       @Parameter(name = "routingType", desc = "The routing type used for this address, MULTICAST or ANYCAST") String routingType,
@@ -633,6 +666,7 @@ public interface ActiveMQServerControl {
     * @return a textual summary of the queue
     * @throws Exception
     */
+   @Deprecated
    @Operation(desc = "Create a queue", impact = MBeanOperationInfo.ACTION)
    String createQueue(@Parameter(name = "address", desc = "Address of the queue") String address,
                       @Parameter(name = "routingType", desc = "The routing type used for this address, MULTICAST or ANYCAST") String routingType,
@@ -676,6 +710,7 @@ public interface ActiveMQServerControl {
     * @return a textual summary of the queue
     * @throws Exception
     */
+   @Deprecated
    @Operation(desc = "Create a queue", impact = MBeanOperationInfo.ACTION)
    String createQueue(@Parameter(name = "address", desc = "Address of the queue") String address,
                       @Parameter(name = "routingType", desc = "The routing type used for this address, MULTICAST or ANYCAST") String routingType,
@@ -721,6 +756,7 @@ public interface ActiveMQServerControl {
     * @return a textual summary of the queue
     * @throws Exception
     */
+   @Deprecated
    @Operation(desc = "Create a queue", impact = MBeanOperationInfo.ACTION)
    String createQueue(@Parameter(name = "address", desc = "Address of the queue") String address,
                       @Parameter(name = "routingType", desc = "The routing type used for this address, MULTICAST or ANYCAST") String routingType,
@@ -762,6 +798,7 @@ public interface ActiveMQServerControl {
     * @return a textual summary of the queue
     * @throws Exception
     */
+   @Deprecated
    @Operation(desc = "Create a queue", impact = MBeanOperationInfo.ACTION)
    String createQueue(@Parameter(name = "address", desc = "Address of the queue") String address,
                       @Parameter(name = "routingType", desc = "The routing type used for this address, MULTICAST or ANYCAST") String routingType,
@@ -771,7 +808,42 @@ public interface ActiveMQServerControl {
                       @Parameter(name = "maxConsumers", desc = "The maximum number of consumers allowed on this queue at any one time") int maxConsumers,
                       @Parameter(name = "purgeOnNoConsumers", desc = "Delete this queue when the last consumer disconnects") boolean purgeOnNoConsumers,
                       @Parameter(name = "autoCreateAddress", desc = "Create an address with default values should a matching address not be found") boolean autoCreateAddress) throws Exception;
+   /**
+    * Create a queue.
+    * <br>
+    * This method throws a {@link org.apache.activemq.artemis.api.core.ActiveMQQueueExistsException}) exception if the queue already exists.
+    *
+    * @param queueConfiguration the configuration of the queue in JSON format
+    * @return the configuration of the created queue in JSON format
+    * @throws Exception
+    */
+   @Operation(desc = "Create a queue", impact = MBeanOperationInfo.ACTION)
+   String createQueue(@Parameter(name = "queueConfiguration", desc = "the configuration of the queue in JSON format") String queueConfiguration) throws Exception;
 
+   /**
+    * Create a queue.
+    * <br>
+    * This method throws a {@link org.apache.activemq.artemis.api.core.ActiveMQQueueExistsException}) exception if the queue already exists and {@code ignoreIfExists} is {@code false}.
+    *
+    * @param queueConfiguration the configuration of the queue in JSON format
+    * @param ignoreIfExists     whether or not to simply return without an exception if the queue exists
+    * @return the configuration of the created queue in JSON format
+    * @throws Exception
+    */
+   @Operation(desc = "Create a queue", impact = MBeanOperationInfo.ACTION)
+   String createQueue(@Parameter(name = "queueConfiguration", desc = "the configuration of the queue in JSON format") String queueConfiguration,
+                      @Parameter(name = "ignoreIfExists", desc = "whether or not to try to create the queue if it exists already") boolean ignoreIfExists) throws Exception;
+
+
+   /**
+    * Update a queue.
+    *
+    * @param queueConfiguration the configuration of the queue in JSON format
+    * @return the configuration of the created queue in JSON format
+    * @throws Exception
+    */
+   @Operation(desc = "Update a queue", impact = MBeanOperationInfo.ACTION)
+   String updateQueue(@Parameter(name = "queueConfiguration", desc = "the configuration of the queue in JSON format") String queueConfiguration) throws Exception;
 
    /**
     * Update a queue.
@@ -821,6 +893,7 @@ public interface ActiveMQServerControl {
     * @return
     * @throws Exception
     */
+   @Deprecated
    @Operation(desc = "Update a queue", impact = MBeanOperationInfo.ACTION)
    String updateQueue(@Parameter(name = "name", desc = "Name of the queue") String name,
                       @Parameter(name = "routingType", desc = "The routing type used for this address, MULTICAST or ANYCAST") String routingType,
@@ -847,6 +920,7 @@ public interface ActiveMQServerControl {
     * @return
     * @throws Exception
     */
+   @Deprecated
    @Operation(desc = "Update a queue", impact = MBeanOperationInfo.ACTION)
    String updateQueue(@Parameter(name = "name", desc = "Name of the queue") String name,
                       @Parameter(name = "routingType", desc = "The routing type used for this address, MULTICAST or ANYCAST") String routingType,
@@ -880,6 +954,7 @@ public interface ActiveMQServerControl {
     * @return
     * @throws Exception
     */
+   @Deprecated
    @Operation(desc = "Update a queue", impact = MBeanOperationInfo.ACTION)
    String updateQueue(@Parameter(name = "name", desc = "Name of the queue") String name,
                       @Parameter(name = "routingType", desc = "The routing type used for this address, MULTICAST or ANYCAST") String routingType,
@@ -915,6 +990,7 @@ public interface ActiveMQServerControl {
     * @return
     * @throws Exception
     */
+   @Deprecated
    @Operation(desc = "Update a queue", impact = MBeanOperationInfo.ACTION)
    String updateQueue(@Parameter(name = "name", desc = "Name of the queue") String name,
                       @Parameter(name = "routingType", desc = "The routing type used for this address, MULTICAST or ANYCAST") String routingType,
@@ -942,6 +1018,7 @@ public interface ActiveMQServerControl {
     * @param name    name of the queue
     * @param filter  of the queue
     */
+   @Deprecated
    @Operation(desc = "Deploy a queue", impact = MBeanOperationInfo.ACTION)
    void deployQueue(@Parameter(name = "address", desc = "Address of the queue") String address,
                     @Parameter(name = "name", desc = "Name of the queue") String name,
@@ -959,6 +1036,7 @@ public interface ActiveMQServerControl {
     * @param filter  of the queue
     * @param durable whether the queue is durable
     */
+   @Deprecated
    @Operation(desc = "Deploy a queue", impact = MBeanOperationInfo.ACTION)
    void deployQueue(@Parameter(name = "address", desc = "Address of the queue") String address,
                     @Parameter(name = "name", desc = "Name of the queue") String name,
@@ -1387,6 +1465,129 @@ public interface ActiveMQServerControl {
                            @Parameter(desc = "factor by which to modify the redelivery delay slightly to avoid collisions", name = "redeliveryCollisionAvoidanceFactor") double redeliveryCollisionAvoidanceFactor,
                            @Parameter(desc = "the number of messages to preserve for future queues created on the matching address", name = "retroactiveMessageCount") long retroactiveMessageCount) throws Exception;
 
+   /**
+    * adds a new address setting for a specific address
+    */
+   @Operation(desc = "Add address settings for addresses matching the addressMatch", impact = MBeanOperationInfo.ACTION)
+   void addAddressSettings(@Parameter(desc = "an address match", name = "addressMatch") String addressMatch,
+                           @Parameter(desc = "the dead letter address setting", name = "DLA") String DLA,
+                           @Parameter(desc = "the expiry address setting", name = "expiryAddress") String expiryAddress,
+                           @Parameter(desc = "the expiry delay setting", name = "expiryDelay") long expiryDelay,
+                           @Parameter(desc = "are any queues created for this address a last value queue", name = "lastValueQueue") boolean lastValueQueue,
+                           @Parameter(desc = "the delivery attempts", name = "deliveryAttempts") int deliveryAttempts,
+                           @Parameter(desc = "the max size in bytes", name = "maxSizeBytes") long maxSizeBytes,
+                           @Parameter(desc = "the page size in bytes", name = "pageSizeBytes") int pageSizeBytes,
+                           @Parameter(desc = "the max number of pages in the soft memory cache", name = "pageMaxCacheSize") int pageMaxCacheSize,
+                           @Parameter(desc = "the redelivery delay", name = "redeliveryDelay") long redeliveryDelay,
+                           @Parameter(desc = "the redelivery delay multiplier", name = "redeliveryMultiplier") double redeliveryMultiplier,
+                           @Parameter(desc = "the maximum redelivery delay", name = "maxRedeliveryDelay") long maxRedeliveryDelay,
+                           @Parameter(desc = "the redistribution delay", name = "redistributionDelay") long redistributionDelay,
+                           @Parameter(desc = "do we send to the DLA when there is no where to route the message", name = "sendToDLAOnNoRoute") boolean sendToDLAOnNoRoute,
+                           @Parameter(desc = "the policy to use when the address is full", name = "addressFullMessagePolicy") String addressFullMessagePolicy,
+                           @Parameter(desc = "when a consumer falls below this threshold in terms of messages consumed per second it will be considered 'slow'", name = "slowConsumerThreshold") long slowConsumerThreshold,
+                           @Parameter(desc = "how often (in seconds) to check for slow consumers", name = "slowConsumerCheckPeriod") long slowConsumerCheckPeriod,
+                           @Parameter(desc = "the policy to use when a slow consumer is detected", name = "slowConsumerPolicy") String slowConsumerPolicy,
+                           @Parameter(desc = "allow jms queues to be created automatically", name = "autoCreateJmsQueues") boolean autoCreateJmsQueues,
+                           @Parameter(desc = "allow auto-created jms queues to be deleted automatically", name = "autoDeleteJmsQueues") boolean autoDeleteJmsQueues,
+                           @Parameter(desc = "allow jms topics to be created automatically", name = "autoCreateJmsTopics") boolean autoCreateJmsTopics,
+                           @Parameter(desc = "allow auto-created jms topics to be deleted automatically", name = "autoDeleteJmsTopics") boolean autoDeleteJmsTopics,
+                           @Parameter(desc = "allow queues to be created automatically", name = "autoCreateQueues") boolean autoCreateQueues,
+                           @Parameter(desc = "allow auto-created queues to be deleted automatically", name = "autoDeleteQueues") boolean autoDeleteQueues,
+                           @Parameter(desc = "allow addresses to be created automatically", name = "autoCreateAddresses") boolean autoCreateAddresses,
+                           @Parameter(desc = "allow auto-created addresses to be deleted automatically", name = "autoDeleteAddresses") boolean autoDeleteAddresses,
+                           @Parameter(desc = "how to deal with queues deleted from XML at runtime", name = "configDeleteQueues") String configDeleteQueues,
+                           @Parameter(desc = "how to deal with addresses deleted from XML at runtime", name = "configDeleteAddresses") String configDeleteAddresses,
+                           @Parameter(desc = "used with `BLOCK`, the max size an address can reach before messages are rejected; works in combination with `max-size-bytes` for AMQP clients only", name = "maxSizeBytesRejectThreshold") long maxSizeBytesRejectThreshold,
+                           @Parameter(desc = "last-value-key value if none is set on the queue", name = "defaultLastValueKey") String defaultLastValueKey,
+                           @Parameter(desc = "non-destructive value if none is set on the queue", name = "defaultNonDestructive") boolean defaultNonDestructive,
+                           @Parameter(desc = "exclusive value if none is set on the queue", name = "defaultExclusiveQueue") boolean defaultExclusiveQueue,
+                           @Parameter(desc = "group-rebalance value if none is set on the queue", name = "defaultGroupRebalance") boolean defaultGroupRebalance,
+                           @Parameter(desc = "group-buckets value if none is set on the queue", name = "defaultGroupBuckets") int defaultGroupBuckets,
+                           @Parameter(desc = "group-first-key value if none is set on the queue", name = "defaultGroupFirstKey") String defaultGroupFirstKey,
+                           @Parameter(desc = "max-consumers value if none is set on the queue", name = "defaultMaxConsumers") int defaultMaxConsumers,
+                           @Parameter(desc = "purge-on-no-consumers value if none is set on the queue", name = "defaultPurgeOnNoConsumers") boolean defaultPurgeOnNoConsumers,
+                           @Parameter(desc = "consumers-before-dispatch value if none is set on the queue", name = "defaultConsumersBeforeDispatch") int defaultConsumersBeforeDispatch,
+                           @Parameter(desc = "delay-before-dispatch value if none is set on the queue", name = "defaultDelayBeforeDispatch") long defaultDelayBeforeDispatch,
+                           @Parameter(desc = "routing-type value if none is set on the queue", name = "defaultQueueRoutingType") String defaultQueueRoutingType,
+                           @Parameter(desc = "routing-type value if none is set on the address", name = "defaultAddressRoutingType") String defaultAddressRoutingType,
+                           @Parameter(desc = "consumer-window-size value if none is set on the queue", name = "defaultConsumerWindowSize") int defaultConsumerWindowSize,
+                           @Parameter(desc = "ring-size value if none is set on the queue", name = "defaultRingSize") long defaultRingSize,
+                           @Parameter(desc = "allow created queues to be deleted automatically", name = "autoDeleteCreatedQueues") boolean autoDeleteCreatedQueues,
+                           @Parameter(desc = "delay for deleting auto-created queues", name = "autoDeleteQueuesDelay") long autoDeleteQueuesDelay,
+                           @Parameter(desc = "the message count the queue must be at or below before it can be auto deleted", name = "autoDeleteQueuesMessageCount") long autoDeleteQueuesMessageCount,
+                           @Parameter(desc = "delay for deleting auto-created addresses", name = "autoDeleteAddressesDelay") long autoDeleteAddressesDelay,
+                           @Parameter(desc = "factor by which to modify the redelivery delay slightly to avoid collisions", name = "redeliveryCollisionAvoidanceFactor") double redeliveryCollisionAvoidanceFactor,
+                           @Parameter(desc = "the number of messages to preserve for future queues created on the matching address", name = "retroactiveMessageCount") long retroactiveMessageCount,
+                           @Parameter(desc = "allow dead-letter address & queue to be created automatically", name = "autoCreateDeadLetterResources") boolean autoCreateDeadLetterResources,
+                           @Parameter(desc = "prefix to use on auto-create dead-letter queue", name = "deadLetterQueuePrefix") String deadLetterQueuePrefix,
+                           @Parameter(desc = "suffix to use on auto-create dead-letter queue", name = "deadLetterQueueSuffix") String deadLetterQueueSuffix,
+                           @Parameter(desc = "allow expiry address & queue to be created automatically", name = "autoCreateExpiryResources") boolean autoCreateExpiryResources,
+                           @Parameter(desc = "prefix to use on auto-create expiry queue", name = "expiryQueuePrefix") String expiryQueuePrefix,
+                           @Parameter(desc = "suffix to use on auto-create expiry queue", name = "expiryQueueSuffix") String expiryQueueSuffix) throws Exception;
+
+   /**
+    * adds a new address setting for a specific address
+    */
+   @Operation(desc = "Add address settings for addresses matching the addressMatch", impact = MBeanOperationInfo.ACTION)
+   void addAddressSettings(@Parameter(desc = "an address match", name = "addressMatch") String addressMatch,
+                           @Parameter(desc = "the dead letter address setting", name = "DLA") String DLA,
+                           @Parameter(desc = "the expiry address setting", name = "expiryAddress") String expiryAddress,
+                           @Parameter(desc = "the expiry delay setting", name = "expiryDelay") long expiryDelay,
+                           @Parameter(desc = "are any queues created for this address a last value queue", name = "lastValueQueue") boolean lastValueQueue,
+                           @Parameter(desc = "the delivery attempts", name = "maxDeliveryAttempts") int maxDeliveryAttempts,
+                           @Parameter(desc = "the max size in bytes", name = "maxSizeBytes") long maxSizeBytes,
+                           @Parameter(desc = "the page size in bytes", name = "pageSizeBytes") int pageSizeBytes,
+                           @Parameter(desc = "the max number of pages in the soft memory cache", name = "pageCacheMaxSize") int pageCacheMaxSize,
+                           @Parameter(desc = "the redelivery delay", name = "redeliveryDelay") long redeliveryDelay,
+                           @Parameter(desc = "the redelivery delay multiplier", name = "redeliveryMultiplier") double redeliveryMultiplier,
+                           @Parameter(desc = "the maximum redelivery delay", name = "maxRedeliveryDelay") long maxRedeliveryDelay,
+                           @Parameter(desc = "the redistribution delay", name = "redistributionDelay") long redistributionDelay,
+                           @Parameter(desc = "do we send to the DLA when there is no where to route the message", name = "sendToDLAOnNoRoute") boolean sendToDLAOnNoRoute,
+                           @Parameter(desc = "the policy to use when the address is full", name = "addressFullMessagePolicy") String addressFullMessagePolicy,
+                           @Parameter(desc = "when a consumer falls below this threshold in terms of messages consumed per second it will be considered 'slow'", name = "slowConsumerThreshold") long slowConsumerThreshold,
+                           @Parameter(desc = "how often (in seconds) to check for slow consumers", name = "slowConsumerCheckPeriod") long slowConsumerCheckPeriod,
+                           @Parameter(desc = "the policy to use when a slow consumer is detected", name = "slowConsumerPolicy") String slowConsumerPolicy,
+                           @Parameter(desc = "allow jms queues to be created automatically", name = "autoCreateJmsQueues") boolean autoCreateJmsQueues,
+                           @Parameter(desc = "allow auto-created jms queues to be deleted automatically", name = "autoDeleteJmsQueues") boolean autoDeleteJmsQueues,
+                           @Parameter(desc = "allow jms topics to be created automatically", name = "autoCreateJmsTopics") boolean autoCreateJmsTopics,
+                           @Parameter(desc = "allow auto-created jms topics to be deleted automatically", name = "autoDeleteJmsTopics") boolean autoDeleteJmsTopics,
+                           @Parameter(desc = "allow queues to be created automatically", name = "autoCreateQueues") boolean autoCreateQueues,
+                           @Parameter(desc = "allow auto-created queues to be deleted automatically", name = "autoDeleteQueues") boolean autoDeleteQueues,
+                           @Parameter(desc = "allow addresses to be created automatically", name = "autoCreateAddresses") boolean autoCreateAddresses,
+                           @Parameter(desc = "allow auto-created addresses to be deleted automatically", name = "autoDeleteAddresses") boolean autoDeleteAddresses,
+                           @Parameter(desc = "how to deal with queues deleted from XML at runtime", name = "configDeleteQueues") String configDeleteQueues,
+                           @Parameter(desc = "how to deal with addresses deleted from XML at runtime", name = "configDeleteAddresses") String configDeleteAddresses,
+                           @Parameter(desc = "used with `BLOCK`, the max size an address can reach before messages are rejected; works in combination with `max-size-bytes` for AMQP clients only", name = "maxSizeBytesRejectThreshold") long maxSizeBytesRejectThreshold,
+                           @Parameter(desc = "last-value-key value if none is set on the queue", name = "defaultLastValueKey") String defaultLastValueKey,
+                           @Parameter(desc = "non-destructive value if none is set on the queue", name = "defaultNonDestructive") boolean defaultNonDestructive,
+                           @Parameter(desc = "exclusive value if none is set on the queue", name = "defaultExclusiveQueue") boolean defaultExclusiveQueue,
+                           @Parameter(desc = "group-rebalance value if none is set on the queue", name = "defaultGroupRebalance") boolean defaultGroupRebalance,
+                           @Parameter(desc = "group-buckets value if none is set on the queue", name = "defaultGroupBuckets") int defaultGroupBuckets,
+                           @Parameter(desc = "group-first-key value if none is set on the queue", name = "defaultGroupFirstKey") String defaultGroupFirstKey,
+                           @Parameter(desc = "max-consumers value if none is set on the queue", name = "defaultMaxConsumers") int defaultMaxConsumers,
+                           @Parameter(desc = "purge-on-no-consumers value if none is set on the queue", name = "defaultPurgeOnNoConsumers") boolean defaultPurgeOnNoConsumers,
+                           @Parameter(desc = "consumers-before-dispatch value if none is set on the queue", name = "defaultConsumersBeforeDispatch") int defaultConsumersBeforeDispatch,
+                           @Parameter(desc = "delay-before-dispatch value if none is set on the queue", name = "defaultDelayBeforeDispatch") long defaultDelayBeforeDispatch,
+                           @Parameter(desc = "routing-type value if none is set on the queue", name = "defaultQueueRoutingType") String defaultQueueRoutingType,
+                           @Parameter(desc = "routing-type value if none is set on the address", name = "defaultAddressRoutingType") String defaultAddressRoutingType,
+                           @Parameter(desc = "consumer-window-size value if none is set on the queue", name = "defaultConsumerWindowSize") int defaultConsumerWindowSize,
+                           @Parameter(desc = "ring-size value if none is set on the queue", name = "defaultRingSize") long defaultRingSize,
+                           @Parameter(desc = "allow created queues to be deleted automatically", name = "autoDeleteCreatedQueues") boolean autoDeleteCreatedQueues,
+                           @Parameter(desc = "delay for deleting auto-created queues", name = "autoDeleteQueuesDelay") long autoDeleteQueuesDelay,
+                           @Parameter(desc = "the message count the queue must be at or below before it can be auto deleted", name = "autoDeleteQueuesMessageCount") long autoDeleteQueuesMessageCount,
+                           @Parameter(desc = "delay for deleting auto-created addresses", name = "autoDeleteAddressesDelay") long autoDeleteAddressesDelay,
+                           @Parameter(desc = "factor by which to modify the redelivery delay slightly to avoid collisions", name = "redeliveryCollisionAvoidanceFactor") double redeliveryCollisionAvoidanceFactor,
+                           @Parameter(desc = "the number of messages to preserve for future queues created on the matching address", name = "retroactiveMessageCount") long retroactiveMessageCount,
+                           @Parameter(desc = "allow dead-letter address & queue to be created automatically", name = "autoCreateDeadLetterResources") boolean autoCreateDeadLetterResources,
+                           @Parameter(desc = "prefix to use on auto-create dead-letter queue", name = "deadLetterQueuePrefix") String deadLetterQueuePrefix,
+                           @Parameter(desc = "suffix to use on auto-create dead-letter queue", name = "deadLetterQueueSuffix") String deadLetterQueueSuffix,
+                           @Parameter(desc = "allow expiry address & queue to be created automatically", name = "autoCreateExpiryResources") boolean autoCreateExpiryResources,
+                           @Parameter(desc = "prefix to use on auto-create expiry queue", name = "expiryQueuePrefix") String expiryQueuePrefix,
+                           @Parameter(desc = "suffix to use on auto-create expiry queue", name = "expiryQueueSuffix") String expiryQueueSuffix,
+                           @Parameter(desc = "the minimum expiry delay setting", name = "minExpiryDelay") long minExpiryDelay,
+                           @Parameter(desc = "the maximum expiry delay setting", name = "maxExpiryDelay") long maxExpiryDelay,
+                           @Parameter(desc = "whether or not to enable metrics", name = "enableMetrics") boolean enableMetrics) throws Exception;
+
    @Operation(desc = "Remove address settings", impact = MBeanOperationInfo.ACTION)
    void removeAddressSettings(@Parameter(desc = "an address match", name = "addressMatch") String addressMatch) throws Exception;
 
@@ -1447,6 +1648,17 @@ public interface ActiveMQServerControl {
                      @Parameter(name = "filterString", desc = "Filter of the divert") String filterString,
                      @Parameter(name = "transformerClassName", desc = "Class name of the divert's transformer") String transformerClassName,
                      @Parameter(name = "transformerPropertiesAsJSON", desc = "Configuration properties of the divert's transformer in JSON form") String transformerPropertiesAsJSON,
+                     @Parameter(name = "routingType", desc = "How should the routing-type on the diverted messages be set?") String routingType) throws Exception;
+
+   /**
+    * update a divert
+    */
+   @Operation(desc = "Update a divert", impact = MBeanOperationInfo.ACTION)
+   void updateDivert(@Parameter(name = "name", desc = "Name of the queue") String name,
+                     @Parameter(name = "forwardingAddress", desc = "Address to divert to") String forwardingAddress,
+                     @Parameter(name = "filterString", desc = "Filter of the divert") String filterString,
+                     @Parameter(name = "transformerClassName", desc = "Class name of the divert's transformer") String transformerClassName,
+                     @Parameter(name = "transformerProperties", desc = "Configuration properties of the divert's transformer") Map<String, String> transformerProperties,
                      @Parameter(name = "routingType", desc = "How should the routing-type on the diverted messages be set?") String routingType) throws Exception;
 
    @Operation(desc = "Destroy a Divert", impact = MBeanOperationInfo.ACTION)
@@ -1628,7 +1840,7 @@ public interface ActiveMQServerControl {
     * List the information about a user or all users if no username is supplied (only applicable when using the JAAS PropertiesLoginModule).
     *
     * @param username
-    * @return JSON array of user & role information
+    * @return JSON array of user and role information
     * @throws Exception
     */
    @Operation(desc = "list info about a user or all users if no username is supplied (only applicable when using the JAAS PropertiesLoginModule)", impact = MBeanOperationInfo.ACTION)
@@ -1642,6 +1854,7 @@ public interface ActiveMQServerControl {
     */
    @Operation(desc = "remove a user (only applicable when using the JAAS PropertiesLoginModule)", impact = MBeanOperationInfo.ACTION)
    void removeUser(@Parameter(name = "username", desc = "Name of the user") String username) throws Exception;
+
    /**
     * Set new properties on an existing user (only applicable when using the JAAS PropertiesLoginModule).
     *
@@ -1654,5 +1867,20 @@ public interface ActiveMQServerControl {
    void resetUser(@Parameter(name = "username", desc = "Name of the user") String username,
                   @Parameter(name = "password", desc = "User's password") String password,
                   @Parameter(name = "roles", desc = "User's role (comma separated)") String roles) throws Exception;
+   /**
+    * Set new properties on an existing user (only applicable when using the JAAS PropertiesLoginModule).
+    *
+    * @param username
+    * @param password
+    * @param roles
+    * @param plaintext
+    * @throws Exception
+    */
+
+   @Operation(desc = "set new properties on an existing user (only applicable when using the JAAS PropertiesLoginModule)", impact = MBeanOperationInfo.ACTION)
+   void resetUser(@Parameter(name = "username", desc = "Name of the user") String username,
+                  @Parameter(name = "password", desc = "User's password") String password,
+                  @Parameter(name = "roles", desc = "User's role (comma separated)") String roles,
+                  @Parameter(name = "plaintext", desc = "whether or not to store the password in plaintext or hash it") boolean plaintext) throws Exception;
 }
 

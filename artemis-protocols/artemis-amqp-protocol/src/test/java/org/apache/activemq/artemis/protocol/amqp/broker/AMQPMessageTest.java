@@ -31,6 +31,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -103,13 +104,13 @@ public class AMQPMessageTest {
    @Test
    public void testCreateMessageFromEncodedByteArrayData() {
       // Constructor 1
-      AMQPMessage decoded = new AMQPMessage(0, encodedProtonMessage, null);
+      AMQPStandardMessage decoded = new AMQPStandardMessage(0, encodedProtonMessage, null);
 
       assertTrue(decoded.isDurable());
       assertEquals(TEST_TO_ADDRESS, decoded.getAddress());
 
       // Constructor 2
-      decoded = new AMQPMessage(0, encodedProtonMessage, null, null);
+      decoded = new AMQPStandardMessage(0, encodedProtonMessage, null, null);
 
       assertTrue(decoded.isDurable());
       assertEquals(TEST_TO_ADDRESS, decoded.getAddress());
@@ -117,7 +118,7 @@ public class AMQPMessageTest {
 
    @Test
    public void testCreateMessageFromEncodedReadableBuffer() {
-      AMQPMessage decoded = new AMQPMessage(0, ReadableBuffer.ByteBufferReader.wrap(encodedProtonMessage), null, null);
+      AMQPStandardMessage decoded = new AMQPStandardMessage(0, ReadableBuffer.ByteBufferReader.wrap(encodedProtonMessage), null, null);
 
       assertEquals(true, decoded.getHeader().getDurable());
       assertEquals(TEST_TO_ADDRESS, decoded.getAddress());
@@ -125,7 +126,7 @@ public class AMQPMessageTest {
 
    @Test
    public void testCreateMessageFromEncodedByteArrayDataWithExtraProperties() {
-      AMQPMessage decoded = new AMQPMessage(0, encodedProtonMessage, new TypedProperties(), null);
+      AMQPStandardMessage decoded = new AMQPStandardMessage(0, encodedProtonMessage, new TypedProperties(), null);
 
       assertEquals(true, decoded.getHeader().getDurable());
       assertEquals(TEST_TO_ADDRESS, decoded.getAddress());
@@ -137,7 +138,7 @@ public class AMQPMessageTest {
       MessageImpl protonMessage = createProtonMessage();
       ActiveMQBuffer encoded = encodeMessageAsPersistedBuffer(protonMessage);
 
-      AMQPMessage message = new AMQPMessage(0);
+      AMQPStandardMessage message = new AMQPStandardMessage(0);
       try {
          message.getProtonMessage();
          fail("Should throw NPE due to not being initialized yet");
@@ -147,7 +148,7 @@ public class AMQPMessageTest {
       final long persistedSize = (long) encoded.readableBytes();
 
       // Now reload from encoded data
-      message.reloadPersistence(encoded);
+      message.reloadPersistence(encoded, null);
 
       assertEquals(persistedSize, message.getPersistSize());
       assertEquals(persistedSize - Integer.BYTES, message.getPersistentSize());
@@ -156,11 +157,107 @@ public class AMQPMessageTest {
       assertEquals(TEST_TO_ADDRESS, message.getAddress());
    }
 
+   @Test
+   public void testHasScheduledDeliveryTimeReloadPersistence() {
+      final long scheduledTime = System.currentTimeMillis();
+      MessageImpl protonMessage = createProtonMessage();
+      MessageAnnotations annotations = protonMessage.getMessageAnnotations();
+      annotations.getValue().put(AMQPMessageSupport.SCHEDULED_DELIVERY_TIME, scheduledTime);
+      ActiveMQBuffer encoded = encodeMessageAsPersistedBuffer(protonMessage);
+
+      AMQPMessage message = new AMQPStandardMessage(0);
+      try {
+         message.getProtonMessage();
+         fail("Should throw NPE due to not being initialized yet");
+      } catch (NullPointerException npe) {
+      }
+
+      Assert.assertEquals(AMQPMessage.MessageDataScanningStatus.NOT_SCANNED, message.messageDataScanned());
+
+      // Now reload from encoded data
+      message.reloadPersistence(encoded, null);
+
+      Assert.assertEquals(AMQPMessage.MessageDataScanningStatus.RELOAD_PERSISTENCE, message.messageDataScanned());
+
+      assertTrue(message.hasScheduledDeliveryTime());
+
+      Assert.assertEquals(AMQPMessage.MessageDataScanningStatus.RELOAD_PERSISTENCE, message.messageDataScanned());
+
+      message.getHeader();
+
+      Assert.assertEquals(AMQPMessage.MessageDataScanningStatus.SCANNED, message.messageDataScanned());
+
+      assertTrue(message.hasScheduledDeliveryTime());
+   }
+
+   @Test
+   public void testHasScheduledDeliveryDelayReloadPersistence() {
+      final long scheduledDelay = 100000;
+      MessageImpl protonMessage = createProtonMessage();
+      MessageAnnotations annotations = protonMessage.getMessageAnnotations();
+      annotations.getValue().put(AMQPMessageSupport.SCHEDULED_DELIVERY_DELAY, scheduledDelay);
+      ActiveMQBuffer encoded = encodeMessageAsPersistedBuffer(protonMessage);
+
+      AMQPMessage message = new AMQPStandardMessage(0);
+      try {
+         message.getProtonMessage();
+         fail("Should throw NPE due to not being initialized yet");
+      } catch (NullPointerException npe) {
+      }
+
+      Assert.assertEquals(AMQPMessage.MessageDataScanningStatus.NOT_SCANNED, message.messageDataScanned());
+
+      // Now reload from encoded data
+      message.reloadPersistence(encoded, null);
+
+      Assert.assertEquals(AMQPMessage.MessageDataScanningStatus.RELOAD_PERSISTENCE, message.messageDataScanned());
+
+      assertTrue(message.hasScheduledDeliveryTime());
+
+      Assert.assertEquals(AMQPMessage.MessageDataScanningStatus.RELOAD_PERSISTENCE, message.messageDataScanned());
+
+      message.getHeader();
+
+      Assert.assertEquals(AMQPMessage.MessageDataScanningStatus.SCANNED, message.messageDataScanned());
+
+      assertTrue(message.hasScheduledDeliveryTime());
+   }
+
+   @Test
+   public void testNoScheduledDeliveryTimeOrDelayReloadPersistence() {
+      MessageImpl protonMessage = createProtonMessage();
+      ActiveMQBuffer encoded = encodeMessageAsPersistedBuffer(protonMessage);
+
+      AMQPMessage message = new AMQPStandardMessage(0);
+      try {
+         message.getProtonMessage();
+         fail("Should throw NPE due to not being initialized yet");
+      } catch (NullPointerException npe) {
+      }
+
+      Assert.assertEquals(AMQPMessage.MessageDataScanningStatus.NOT_SCANNED, message.messageDataScanned());
+
+      // Now reload from encoded data
+      message.reloadPersistence(encoded, null);
+
+      Assert.assertEquals(AMQPMessage.MessageDataScanningStatus.RELOAD_PERSISTENCE, message.messageDataScanned());
+
+      assertFalse(message.hasScheduledDeliveryTime());
+
+      Assert.assertEquals(AMQPMessage.MessageDataScanningStatus.RELOAD_PERSISTENCE, message.messageDataScanned());
+
+      message.getHeader();
+
+      Assert.assertEquals(AMQPMessage.MessageDataScanningStatus.SCANNED, message.messageDataScanned());
+
+      assertFalse(message.hasScheduledDeliveryTime());
+   }
+
    //----- Test Memory Estimate access ---------------------------------------//
 
    @Test
    public void testGetMemoryEstimate() {
-      AMQPMessage decoded = new AMQPMessage(0, encodedProtonMessage, new TypedProperties(), null);
+      AMQPStandardMessage decoded = new AMQPStandardMessage(0, encodedProtonMessage, new TypedProperties(), null);
 
       int estimate = decoded.getMemoryEstimate();
       assertTrue(encodedProtonMessage.length < decoded.getMemoryEstimate());
@@ -190,7 +287,7 @@ public class AMQPMessageTest {
 
 
       for (int testTry = 0; testTry < 100; testTry++) {
-         AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+         AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
          Thread[] threads = new Thread[100];
 
          CountDownLatch latchAlign = new CountDownLatch(threads.length);
@@ -237,7 +334,7 @@ public class AMQPMessageTest {
    @Test
    public void testGetConnectionID() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(null, decoded.getConnectionID());
    }
@@ -245,7 +342,7 @@ public class AMQPMessageTest {
    @Test
    public void testSetConnectionID() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       final String ID = UUID.randomUUID().toString();
 
@@ -257,7 +354,7 @@ public class AMQPMessageTest {
    @Test
    public void testGetConnectionIDFromProperties() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       final String ID = UUID.randomUUID().toString();
 
@@ -272,7 +369,7 @@ public class AMQPMessageTest {
    @Test
    public void testGetLastValueFromMessageWithNone() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertNull(decoded.getLastValueProperty());
    }
@@ -282,7 +379,7 @@ public class AMQPMessageTest {
       SimpleString lastValue = new SimpleString("last-address");
 
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertNull(decoded.getLastValueProperty());
       decoded.setLastValueProperty(lastValue);
@@ -294,7 +391,7 @@ public class AMQPMessageTest {
    @Test
    public void getUserIDWhenNoPropertiesExists() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertNull(decoded.getUserID());
       decoded.setUserID(UUID.randomUUID().toString());
@@ -306,7 +403,7 @@ public class AMQPMessageTest {
       final String ID = UUID.randomUUID().toString();
 
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertNull(decoded.getUserID());
       assertNull(decoded.getProperties());
@@ -324,7 +421,7 @@ public class AMQPMessageTest {
 
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setProperties(new Properties());
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertNull(decoded.getUserID());
       assertNotNull(decoded.getProperties());
@@ -345,7 +442,7 @@ public class AMQPMessageTest {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setProperties(new Properties());
       protonMessage.setMessageId(ID);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertNotNull(decoded.getUserID());
       assertNotNull(decoded.getProperties());
@@ -366,7 +463,7 @@ public class AMQPMessageTest {
    @Test
    public void testGetDuplicateProperty() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(null, decoded.getDuplicateProperty());
    }
@@ -381,7 +478,7 @@ public class AMQPMessageTest {
       protonMessage.setHeader(new Header());
       protonMessage.setAddress(ADDRESS);
 
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(ADDRESS, decoded.getAddress());
    }
@@ -394,7 +491,7 @@ public class AMQPMessageTest {
       protonMessage.setHeader(new Header());
       protonMessage.setAddress(ADDRESS);
 
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(ADDRESS, decoded.getAddressSimpleString().toString());
    }
@@ -402,7 +499,7 @@ public class AMQPMessageTest {
    @Test
    public void testGetAddressFromMessageWithNoValueSet() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertNull(decoded.getAddress());
       assertNull(decoded.getAddressSimpleString());
@@ -416,7 +513,7 @@ public class AMQPMessageTest {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setAddress(ADDRESS);
 
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(ADDRESS, decoded.getAddress());
       decoded.setAddress(NEW_ADDRESS);
@@ -431,7 +528,7 @@ public class AMQPMessageTest {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setAddress(ADDRESS);
 
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(ADDRESS, decoded.getAddress());
       decoded.setAddress(NEW_ADDRESS);
@@ -449,7 +546,7 @@ public class AMQPMessageTest {
       protonMessage.setHeader(new Header());
       protonMessage.setDurable(true);
 
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
       assertTrue(decoded.isDurable());
    }
 
@@ -459,21 +556,21 @@ public class AMQPMessageTest {
       protonMessage.setHeader(new Header());
       protonMessage.setDurable(false);
 
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
       assertFalse(decoded.isDurable());
    }
 
    @Test
    public void testIsDurableFromMessageWithNoValueSet() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
       assertFalse(decoded.isDurable());
    }
 
    @Test
    public void testIsDuranleReturnsTrueOnceUpdated() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
       assertFalse(decoded.isDurable());
       decoded.setDurable(true);
       assertTrue(decoded.isDurable());
@@ -483,7 +580,7 @@ public class AMQPMessageTest {
    public void testNonDurableMessageReencodedToDurable() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setHeader(new Header());
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
       assertFalse(decoded.isDurable());
 
       // Underlying message data not updated yet
@@ -500,7 +597,7 @@ public class AMQPMessageTest {
    @Test
    public void testMessageWithNoHeaderGetsOneWhenDurableSetAndReencoded() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
       assertFalse(decoded.isDurable());
 
       // Underlying message data not updated yet
@@ -521,7 +618,7 @@ public class AMQPMessageTest {
    @Test
    public void testGetRoutingTypeFromMessageWithoutIt() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertNull(decoded.getRoutingType());
    }
@@ -531,7 +628,7 @@ public class AMQPMessageTest {
       RoutingType type = RoutingType.ANYCAST;
 
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertNull(decoded.getRoutingType());
       decoded.setRoutingType(type);
@@ -543,7 +640,7 @@ public class AMQPMessageTest {
       RoutingType type = RoutingType.ANYCAST;
 
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertNull(decoded.getRoutingType());
       decoded.setRoutingType(type);
@@ -558,7 +655,7 @@ public class AMQPMessageTest {
       MessageAnnotations annotations = new MessageAnnotations(new HashMap<>());
       annotations.getValue().put(AMQPMessageSupport.ROUTING_TYPE, RoutingType.ANYCAST.getType());
       protonMessage.setMessageAnnotations(annotations);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(RoutingType.ANYCAST, decoded.getRoutingType());
       decoded.setRoutingType(null);
@@ -574,7 +671,7 @@ public class AMQPMessageTest {
       MessageAnnotations annotations = new MessageAnnotations(new HashMap<>());
       annotations.getValue().put(AMQPMessageSupport.ROUTING_TYPE, RoutingType.ANYCAST.getType());
       protonMessage.setMessageAnnotations(annotations);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(RoutingType.ANYCAST, decoded.getRoutingType());
    }
@@ -585,7 +682,7 @@ public class AMQPMessageTest {
       MessageAnnotations annotations = new MessageAnnotations(new HashMap<>());
       annotations.getValue().put(AMQPMessageSupport.ROUTING_TYPE, RoutingType.MULTICAST.getType());
       protonMessage.setMessageAnnotations(annotations);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(RoutingType.MULTICAST, decoded.getRoutingType());
    }
@@ -596,7 +693,7 @@ public class AMQPMessageTest {
       MessageAnnotations annotations = new MessageAnnotations(new HashMap<>());
       annotations.getValue().put(AMQPMessageSupport.JMS_DEST_TYPE_MSG_ANNOTATION, AMQPMessageSupport.QUEUE_TYPE);
       protonMessage.setMessageAnnotations(annotations);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(RoutingType.ANYCAST, decoded.getRoutingType());
    }
@@ -607,7 +704,7 @@ public class AMQPMessageTest {
       MessageAnnotations annotations = new MessageAnnotations(new HashMap<>());
       annotations.getValue().put(AMQPMessageSupport.JMS_DEST_TYPE_MSG_ANNOTATION, AMQPMessageSupport.TEMP_QUEUE_TYPE);
       protonMessage.setMessageAnnotations(annotations);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(RoutingType.ANYCAST, decoded.getRoutingType());
    }
@@ -618,7 +715,7 @@ public class AMQPMessageTest {
       MessageAnnotations annotations = new MessageAnnotations(new HashMap<>());
       annotations.getValue().put(AMQPMessageSupport.JMS_DEST_TYPE_MSG_ANNOTATION, AMQPMessageSupport.TOPIC_TYPE);
       protonMessage.setMessageAnnotations(annotations);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(RoutingType.MULTICAST, decoded.getRoutingType());
    }
@@ -629,7 +726,7 @@ public class AMQPMessageTest {
       MessageAnnotations annotations = new MessageAnnotations(new HashMap<>());
       annotations.getValue().put(AMQPMessageSupport.JMS_DEST_TYPE_MSG_ANNOTATION, AMQPMessageSupport.TEMP_TOPIC_TYPE);
       protonMessage.setMessageAnnotations(annotations);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(RoutingType.MULTICAST, decoded.getRoutingType());
    }
@@ -640,7 +737,7 @@ public class AMQPMessageTest {
       MessageAnnotations annotations = new MessageAnnotations(new HashMap<>());
       annotations.getValue().put(AMQPMessageSupport.JMS_DEST_TYPE_MSG_ANNOTATION, (byte) 32);
       protonMessage.setMessageAnnotations(annotations);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertNull(decoded.getRoutingType());
    }
@@ -654,7 +751,7 @@ public class AMQPMessageTest {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setHeader(new Header());
       protonMessage.setGroupId(GROUP_ID);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(GROUP_ID, decoded.getGroupID().toString());
    }
@@ -663,14 +760,14 @@ public class AMQPMessageTest {
    public void testGetGroupIDFromMessageWithNoGroupId() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setProperties(new Properties());
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
       assertNull(decoded.getGroupID());
    }
 
    @Test
    public void testGetGroupIDFromMessageWithNoProperties() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
       assertNull(decoded.getGroupID());
    }
 
@@ -683,7 +780,7 @@ public class AMQPMessageTest {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setHeader(new Header());
       protonMessage.setReplyTo(REPLY_TO);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(REPLY_TO, decoded.getReplyTo().toString());
    }
@@ -692,14 +789,14 @@ public class AMQPMessageTest {
    public void testGetReplyToFromMessageWithNoReplyTo() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setProperties(new Properties());
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
       assertNull(decoded.getReplyTo());
    }
 
    @Test
    public void testGetReplyToFromMessageWithNoProperties() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
       assertNull(decoded.getReplyTo());
    }
 
@@ -709,7 +806,7 @@ public class AMQPMessageTest {
 
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setProperties(new Properties());
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
       assertNull(decoded.getReplyTo());
 
       decoded.setReplyTo(new SimpleString(REPLY_TO));
@@ -724,7 +821,7 @@ public class AMQPMessageTest {
       final String REPLY_TO = "address-1";
 
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
       assertNull(decoded.getReplyTo());
 
       decoded.setReplyTo(new SimpleString(REPLY_TO));
@@ -741,7 +838,7 @@ public class AMQPMessageTest {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setProperties(new Properties());
       protonMessage.setReplyTo(REPLY_TO);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
       assertEquals(REPLY_TO, decoded.getReplyTo().toString());
 
       decoded.setReplyTo(null);
@@ -759,7 +856,7 @@ public class AMQPMessageTest {
 
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setUserId(USER_NAME.getBytes(StandardCharsets.UTF_8));
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(USER_NAME, decoded.getAMQPUserID());
    }
@@ -767,7 +864,7 @@ public class AMQPMessageTest {
    @Test
    public void testGetUserIDFromMessageWithNoProperties() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertNull(decoded.getAMQPUserID());
    }
@@ -776,7 +873,7 @@ public class AMQPMessageTest {
    public void testGetUserIDFromMessageWithNoUserID() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setProperties(new Properties());
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertNull(decoded.getAMQPUserID());
    }
@@ -790,7 +887,7 @@ public class AMQPMessageTest {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setHeader(new Header());
       protonMessage.setPriority(PRIORITY);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(PRIORITY, decoded.getPriority());
    }
@@ -798,27 +895,27 @@ public class AMQPMessageTest {
    @Test
    public void testGetPriorityFromMessageWithNoHeader() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
-      assertEquals(AMQPMessage.DEFAULT_MESSAGE_PRIORITY, decoded.getPriority());
+      assertEquals(AMQPStandardMessage.DEFAULT_MESSAGE_PRIORITY, decoded.getPriority());
    }
 
    @Test
    public void testGetPriorityFromMessageWithNoPrioritySet() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setHeader(new Header());
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
-      assertEquals(AMQPMessage.DEFAULT_MESSAGE_PRIORITY, decoded.getPriority());
+      assertEquals(AMQPStandardMessage.DEFAULT_MESSAGE_PRIORITY, decoded.getPriority());
    }
 
    @Test
    public void testSetPriorityOnMessageWithHeader() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setHeader(new Header());
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
-      assertEquals(AMQPMessage.DEFAULT_MESSAGE_PRIORITY, decoded.getPriority());
+      assertEquals(AMQPStandardMessage.DEFAULT_MESSAGE_PRIORITY, decoded.getPriority());
 
       decoded.setPriority((byte) 9);
       decoded.reencode();
@@ -830,9 +927,9 @@ public class AMQPMessageTest {
    @Test
    public void testSetPriorityOnMessageWithoutHeader() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
-      assertEquals(AMQPMessage.DEFAULT_MESSAGE_PRIORITY, decoded.getPriority());
+      assertEquals(AMQPStandardMessage.DEFAULT_MESSAGE_PRIORITY, decoded.getPriority());
 
       decoded.setPriority((byte) 9);
       decoded.reencode();
@@ -846,7 +943,7 @@ public class AMQPMessageTest {
    @Test
    public void testGetExpirationFromMessageWithNoHeader() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(0, decoded.getExpiration());
    }
@@ -855,7 +952,7 @@ public class AMQPMessageTest {
    public void testGetExpirationFromMessageWithNoTTLInHeader() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setHeader(new Header());
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(0, decoded.getExpiration());
    }
@@ -865,7 +962,7 @@ public class AMQPMessageTest {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setHeader(new Header());
       protonMessage.setProperties(new Properties());
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(0, decoded.getExpiration());
    }
@@ -877,7 +974,7 @@ public class AMQPMessageTest {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setHeader(new Header());
       protonMessage.setTtl(ttl);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertTrue(decoded.getExpiration() > System.currentTimeMillis());
    }
@@ -890,7 +987,7 @@ public class AMQPMessageTest {
       Properties properties = new Properties();
       properties.setAbsoluteExpiryTime(expirationTime);
       protonMessage.setProperties(properties);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(expirationTime.getTime(), decoded.getExpiration());
    }
@@ -903,7 +1000,7 @@ public class AMQPMessageTest {
       Properties properties = new Properties();
       properties.setAbsoluteExpiryTime(expirationTime);
       protonMessage.setProperties(properties);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(0, decoded.getExpiration());
    }
@@ -919,7 +1016,7 @@ public class AMQPMessageTest {
       Properties properties = new Properties();
       properties.setAbsoluteExpiryTime(expirationTime);
       protonMessage.setProperties(properties);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(expirationTime.getTime(), decoded.getExpiration());
    }
@@ -929,7 +1026,7 @@ public class AMQPMessageTest {
       final Date expirationTime = new Date(System.currentTimeMillis());
 
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(0, decoded.getExpiration());
       decoded.setExpiration(expirationTime.getTime());
@@ -944,7 +1041,7 @@ public class AMQPMessageTest {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setProperties(new Properties());
       protonMessage.setExpiryTime(originalExpirationTime.getTime());
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(originalExpirationTime.getTime(), decoded.getExpiration());
       decoded.setExpiration(expirationTime.getTime());
@@ -959,7 +1056,7 @@ public class AMQPMessageTest {
       final Date expirationTime = new Date(System.currentTimeMillis());
 
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(0, decoded.getExpiration());
       decoded.setExpiration(expirationTime.getTime());
@@ -976,7 +1073,7 @@ public class AMQPMessageTest {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setProperties(new Properties());
       protonMessage.setExpiryTime(expirationTime.getTime());
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(expirationTime.getTime(), decoded.getExpiration());
       decoded.setExpiration(-1);
@@ -990,7 +1087,7 @@ public class AMQPMessageTest {
    @Test
    public void testSetExpirationToClearDoesNotAddPropertiesWhenNonePresent() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(0, decoded.getExpiration());
       decoded.setExpiration(-1);
@@ -1008,7 +1105,7 @@ public class AMQPMessageTest {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setHeader(new Header());
       protonMessage.setTtl(ttl);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertTrue(decoded.getExpiration() > System.currentTimeMillis());
 
@@ -1030,7 +1127,7 @@ public class AMQPMessageTest {
       Properties properties = new Properties();
       properties.setCreationTime(timestamp);
       protonMessage.setProperties(properties);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(timestamp.getTime(), decoded.getTimestamp());
    }
@@ -1039,7 +1136,7 @@ public class AMQPMessageTest {
    public void testGetTimestampFromMessageWithNoCreateTimeSet() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setHeader(new Header());
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(0L, decoded.getTimestamp());
    }
@@ -1047,7 +1144,7 @@ public class AMQPMessageTest {
    @Test
    public void testGetTimestampFromMessageWithNoHeader() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(0L, decoded.getTimestamp());
    }
@@ -1056,7 +1153,7 @@ public class AMQPMessageTest {
    public void testSetTimestampOnMessage() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
       protonMessage.setProperties(new Properties());
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(0L, decoded.getTimestamp());
 
@@ -1072,7 +1169,7 @@ public class AMQPMessageTest {
    @Test
    public void testSetTimestampOnMessageWithNoPropertiesSection() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(0L, decoded.getTimestamp());
 
@@ -1096,7 +1193,7 @@ public class AMQPMessageTest {
       MessageAnnotations annotations = new MessageAnnotations(new HashMap<>());
       annotations.getValue().put(AMQPMessageSupport.SCHEDULED_DELIVERY_TIME, scheduledTime);
       protonMessage.setMessageAnnotations(annotations);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(scheduledTime, decoded.getScheduledDeliveryTime().longValue());
    }
@@ -1111,7 +1208,7 @@ public class AMQPMessageTest {
       annotations.getValue().put(AMQPMessageSupport.SCHEDULED_DELIVERY_DELAY, scheduledDelay);
       annotations.getValue().put(AMQPMessageSupport.SCHEDULED_DELIVERY_TIME, scheduledTime);
       protonMessage.setMessageAnnotations(annotations);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(scheduledTime, decoded.getScheduledDeliveryTime().longValue());
    }
@@ -1124,7 +1221,7 @@ public class AMQPMessageTest {
       MessageAnnotations annotations = new MessageAnnotations(new HashMap<>());
       annotations.getValue().put(AMQPMessageSupport.SCHEDULED_DELIVERY_DELAY, scheduledDelay);
       protonMessage.setMessageAnnotations(annotations);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertTrue(decoded.getScheduledDeliveryTime().longValue() > System.currentTimeMillis());
    }
@@ -1132,7 +1229,7 @@ public class AMQPMessageTest {
    @Test
    public void testGetScheduledDeliveryTimeWhenMessageHasNoSetValue() {
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
       assertEquals(0, decoded.getScheduledDeliveryTime().longValue());
    }
 
@@ -1141,7 +1238,7 @@ public class AMQPMessageTest {
       final long scheduledTime = System.currentTimeMillis() + 5000;
 
       MessageImpl protonMessage = (MessageImpl) Message.Factory.create();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(0, decoded.getScheduledDeliveryTime().longValue());
       decoded.setScheduledDeliveryTime(scheduledTime);
@@ -1161,7 +1258,7 @@ public class AMQPMessageTest {
       MessageAnnotations annotations = new MessageAnnotations(new HashMap<>());
       annotations.getValue().put(AMQPMessageSupport.SCHEDULED_DELIVERY_TIME, scheduledTime);
       protonMessage.setMessageAnnotations(annotations);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(scheduledTime, decoded.getScheduledDeliveryTime().longValue());
 
@@ -1180,7 +1277,7 @@ public class AMQPMessageTest {
       MessageAnnotations annotations = new MessageAnnotations(new HashMap<>());
       annotations.getValue().put(AMQPMessageSupport.SCHEDULED_DELIVERY_DELAY, scheduledDelay);
       protonMessage.setMessageAnnotations(annotations);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertTrue(decoded.getScheduledDeliveryTime().longValue() > System.currentTimeMillis());
 
@@ -1200,7 +1297,7 @@ public class AMQPMessageTest {
       annotations.getValue().put(AMQPMessageSupport.SCHEDULED_DELIVERY_DELAY, scheduledDelay);
       annotations.getValue().put(AMQPMessageSupport.SCHEDULED_DELIVERY_TIME, scheduledTime);
       protonMessage.setMessageAnnotations(annotations);
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertEquals(scheduledTime, decoded.getScheduledDeliveryTime().longValue());
 
@@ -1214,7 +1311,7 @@ public class AMQPMessageTest {
 
    @Test
    public void testGetAnnotation() {
-      AMQPMessage message = new AMQPMessage(0, encodedProtonMessage, null);
+      AMQPStandardMessage message = new AMQPStandardMessage(0, encodedProtonMessage, null);
 
       Object result = message.getAnnotation(new SimpleString(TEST_MESSAGE_ANNOTATION_KEY));
       String stringResult = message.getAnnotationString(new SimpleString(TEST_MESSAGE_ANNOTATION_KEY));
@@ -1224,7 +1321,7 @@ public class AMQPMessageTest {
 
    @Test
    public void testRemoveAnnotation() {
-      AMQPMessage message = new AMQPMessage(0, encodedProtonMessage, null);
+      AMQPStandardMessage message = new AMQPStandardMessage(0, encodedProtonMessage, null);
 
       assertNotNull(message.getAnnotation(new SimpleString(TEST_MESSAGE_ANNOTATION_KEY)));
       message.removeAnnotation(new SimpleString(TEST_MESSAGE_ANNOTATION_KEY));
@@ -1237,7 +1334,7 @@ public class AMQPMessageTest {
 
    @Test
    public void testSetAnnotation() {
-      AMQPMessage message = new AMQPMessage(0, encodedProtonMessage, null);
+      AMQPStandardMessage message = new AMQPStandardMessage(0, encodedProtonMessage, null);
 
       final SimpleString newAnnotation = new SimpleString("testSetAnnotation");
       final String newValue = "newValue";
@@ -1255,7 +1352,7 @@ public class AMQPMessageTest {
    @Test
    public void testGetProtonMessage() {
       MessageImpl protonMessage = createProtonMessage();
-      AMQPMessage message = new AMQPMessage(0, encodeMessage(protonMessage), null, null);
+      AMQPStandardMessage message = new AMQPStandardMessage(0, encodeMessage(protonMessage), null, null);
 
       assertProtonMessageEquals(protonMessage, message.getProtonMessage());
 
@@ -1268,7 +1365,7 @@ public class AMQPMessageTest {
    @Test
    public void testGetHeader() {
       MessageImpl protonMessage = createProtonMessage();
-      AMQPMessage message = new AMQPMessage(0, encodeMessage(protonMessage), null, null);
+      AMQPStandardMessage message = new AMQPStandardMessage(0, encodeMessage(protonMessage), null, null);
 
       Header decoded = message.getHeader();
       assertNotSame(decoded, protonMessage.getHeader());
@@ -1286,7 +1383,7 @@ public class AMQPMessageTest {
    @Test
    public void testGetProperties() {
       MessageImpl protonMessage = createProtonMessage();
-      AMQPMessage message = new AMQPMessage(0, encodeMessage(protonMessage), null, null);
+      AMQPStandardMessage message = new AMQPStandardMessage(0, encodeMessage(protonMessage), null, null);
 
       Properties decoded = message.getProperties();
       assertNotSame(decoded, protonMessage.getProperties());
@@ -1308,7 +1405,7 @@ public class AMQPMessageTest {
       deliveryAnnotations.getValue().put(Symbol.valueOf(UUID.randomUUID().toString()), "test-1");
       protonMessage.setDeliveryAnnotations(deliveryAnnotations);
 
-      AMQPMessage message = new AMQPMessage(0, encodeMessage(protonMessage), null, null);
+      AMQPStandardMessage message = new AMQPStandardMessage(0, encodeMessage(protonMessage), null, null);
 
       DeliveryAnnotations decoded = message.getDeliveryAnnotations();
       assertNotSame(decoded, protonMessage.getDeliveryAnnotations());
@@ -1324,7 +1421,7 @@ public class AMQPMessageTest {
    @Test
    public void testGetMessageAnnotations() {
       MessageImpl protonMessage = createProtonMessage();
-      AMQPMessage message = new AMQPMessage(0, encodeMessage(protonMessage), null, null);
+      AMQPStandardMessage message = new AMQPStandardMessage(0, encodeMessage(protonMessage), null, null);
 
       MessageAnnotations decoded = message.getMessageAnnotations();
       assertNotSame(decoded, protonMessage.getMessageAnnotations());
@@ -1340,7 +1437,7 @@ public class AMQPMessageTest {
    @Test
    public void testGetApplicationProperties() {
       MessageImpl protonMessage = createProtonMessage();
-      AMQPMessage message = new AMQPMessage(0, encodeMessage(protonMessage), null, null);
+      AMQPStandardMessage message = new AMQPStandardMessage(0, encodeMessage(protonMessage), null, null);
 
       ApplicationProperties decoded = message.getApplicationProperties();
       assertNotSame(decoded, protonMessage.getApplicationProperties());
@@ -1356,7 +1453,7 @@ public class AMQPMessageTest {
    @Test
    public void testGetBody() {
       MessageImpl protonMessage = createProtonMessage();
-      AMQPMessage message = new AMQPMessage(0, encodeMessage(protonMessage), null, null);
+      AMQPStandardMessage message = new AMQPStandardMessage(0, encodeMessage(protonMessage), null, null);
 
       Object body = message.getBody();
       assertTrue(body instanceof AmqpValue);
@@ -1375,7 +1472,7 @@ public class AMQPMessageTest {
       footer.getValue().put(Symbol.valueOf(UUID.randomUUID().toString()), "test-1");
       protonMessage.setFooter(footer);
 
-      AMQPMessage message = new AMQPMessage(0, encodeMessage(protonMessage), null, null);
+      AMQPStandardMessage message = new AMQPStandardMessage(0, encodeMessage(protonMessage), null, null);
 
       Footer decoded = message.getFooter();
       assertNotSame(decoded, protonMessage.getFooter());
@@ -1393,7 +1490,7 @@ public class AMQPMessageTest {
    @Test
    public void testApplicationPropertiesReencodeAfterUpdate() {
       MessageImpl protonMessage = createProtonMessage();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertProtonMessageEquals(protonMessage, decoded.getProtonMessage());
 
@@ -1411,7 +1508,7 @@ public class AMQPMessageTest {
       final SimpleString TEST_ANNOTATION = new SimpleString("testMessageAnnotationsReencodeAfterUpdate");
 
       MessageImpl protonMessage = createProtonMessage();
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertProtonMessageEquals(protonMessage, decoded.getProtonMessage());
 
@@ -1432,7 +1529,7 @@ public class AMQPMessageTest {
       byte[] value = RandomUtil.randomBytes();
       SimpleString name = SimpleString.toSimpleString("myProperty");
 
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       assertNull(decoded.getExtraProperties());
       assertNull(decoded.getExtraBytesProperty(name));
@@ -1451,7 +1548,7 @@ public class AMQPMessageTest {
 
       byte[] original = RandomUtil.randomBytes();
       SimpleString name = SimpleString.toSimpleString("myProperty");
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
       decoded.setAddress("someAddress");
       decoded.setMessageID(33);
       decoded.putExtraBytesProperty(name, original);
@@ -1463,7 +1560,7 @@ public class AMQPMessageTest {
       try {
          decoded.getPersister().encode(buffer, decoded);
          Assert.assertEquals(AMQPMessagePersisterV2.getInstance().getID(), buffer.readByte()); // the journal reader will read 1 byte to find the persister
-         AMQPMessage readMessage = (AMQPMessage)decoded.getPersister().decode(buffer, null);
+         AMQPStandardMessage readMessage = (AMQPStandardMessage)decoded.getPersister().decode(buffer, null, null);
          Assert.assertEquals(33, readMessage.getMessageID());
          Assert.assertEquals("someAddress", readMessage.getAddress());
          assertArrayEquals(original, readMessage.getExtraBytesProperty(name));
@@ -1473,7 +1570,7 @@ public class AMQPMessageTest {
 
       {
          ICoreMessage embeddedMessage = EmbedMessageUtil.embedAsCoreMessage(decoded);
-         AMQPMessage readMessage = (AMQPMessage) EmbedMessageUtil.extractEmbedded(embeddedMessage);
+         AMQPStandardMessage readMessage = (AMQPStandardMessage) EmbedMessageUtil.extractEmbedded(embeddedMessage, null);
          Assert.assertEquals(33, readMessage.getMessageID());
          Assert.assertEquals("someAddress", readMessage.getAddress());
          assertArrayEquals(original, readMessage.getExtraBytesProperty(name));
@@ -1511,9 +1608,9 @@ public class AMQPMessageTest {
 
       ReadableBuffer readable = new NettyReadable(encodedBytes);
 
-      AMQPMessage message = null;
+      AMQPStandardMessage message = null;
       try {
-         message = new AMQPMessage(0, readable, null, null);
+         message = new AMQPStandardMessage(0, readable, null, null);
       } catch (Exception decodeError) {
          fail("Should not have encountered an exception on partial decode: " + decodeError.getMessage());
       }
@@ -1552,9 +1649,9 @@ public class AMQPMessageTest {
 
       ReadableBuffer readable = new NettyReadable(encodedBytes);
 
-      AMQPMessage message = null;
+      AMQPStandardMessage message = null;
       try {
-         message = new AMQPMessage(0, readable, null, null);
+         message = new AMQPStandardMessage(0, readable, null, null);
       } catch (Exception decodeError) {
          fail("Should not have encountered an exception on partial decode: " + decodeError.getMessage());
       }
@@ -1592,9 +1689,9 @@ public class AMQPMessageTest {
 
       ReadableBuffer readable = new NettyReadable(encodedBytes);
 
-      AMQPMessage message = null;
+      AMQPStandardMessage message = null;
       try {
-         message = new AMQPMessage(0, readable, null, null);
+         message = new AMQPStandardMessage(0, readable, null, null);
       } catch (Exception decodeError) {
          fail("Should not have encountered an exception on partial decode: " + decodeError.getMessage());
       }
@@ -1614,9 +1711,9 @@ public class AMQPMessageTest {
 
    @Test
    public void testCopyMessage() {
-      AMQPMessage message = new AMQPMessage(0, encodedProtonMessage, null, null);
+      AMQPStandardMessage message = new AMQPStandardMessage(0, encodedProtonMessage, null, null);
       message.setMessageID(127);
-      AMQPMessage copy = (AMQPMessage) message.copy();
+      AMQPStandardMessage copy = (AMQPStandardMessage) message.copy();
 
       assertEquals(message.getMessageID(), copy.getMessageID());
       assertProtonMessageEquals(message.getProtonMessage(), copy.getProtonMessage());
@@ -1624,9 +1721,9 @@ public class AMQPMessageTest {
 
    @Test
    public void testCopyMessageWithNewArtemisMessageID() {
-      AMQPMessage message = new AMQPMessage(0, encodedProtonMessage, null, null);
+      AMQPStandardMessage message = new AMQPStandardMessage(0, encodedProtonMessage, null, null);
       message.setMessageID(127);
-      AMQPMessage copy = (AMQPMessage) message.copy(255);
+      AMQPStandardMessage copy = (AMQPStandardMessage) message.copy(255);
 
       assertNotEquals(message.getMessageID(), copy.getMessageID());
       assertProtonMessageEquals(message.getProtonMessage(), copy.getProtonMessage());
@@ -1639,9 +1736,9 @@ public class AMQPMessageTest {
       deliveryAnnotations.getValue().put(Symbol.valueOf("testCopyMessageRemovesMessageAnnotations"), "1");
       protonMessage.setDeliveryAnnotations(deliveryAnnotations);
 
-      AMQPMessage message = new AMQPMessage(0, encodeMessage(protonMessage), null, null);
+      AMQPStandardMessage message = new AMQPStandardMessage(0, encodeMessage(protonMessage), null, null);
       message.setMessageID(127);
-      AMQPMessage copy = (AMQPMessage) message.copy();
+      AMQPStandardMessage copy = (AMQPStandardMessage) message.copy();
 
       assertEquals(message.getMessageID(), copy.getMessageID());
       assertProtonMessageEquals(message.getProtonMessage(), copy.getProtonMessage());
@@ -1650,14 +1747,14 @@ public class AMQPMessageTest {
 
    @Test
    public void testDecodeCopyUpdateReencodeAndThenDecodeAgain() {
-      AMQPMessage message = new AMQPMessage(0, encodedProtonMessage, null, null);
+      AMQPStandardMessage message = new AMQPStandardMessage(0, encodedProtonMessage, null, null);
 
       // Sanity checks
       assertTrue(message.isDurable());
       assertEquals(TEST_STRING_BODY, ((AmqpValue) message.getBody()).getValue());
 
       // Copy the message
-      message = (AMQPMessage) message.copy();
+      message = (AMQPStandardMessage) message.copy();
 
       // Sanity checks
       assertTrue(message.isDurable());
@@ -1681,13 +1778,13 @@ public class AMQPMessageTest {
    @Test
    public void testSendBuffer() {
       ByteBuf buffer = Unpooled.buffer(255);
-      AMQPMessage message = new AMQPMessage(0, encodedProtonMessage, null, null);
+      AMQPStandardMessage message = new AMQPStandardMessage(0, encodedProtonMessage, null, null);
 
       message.sendBuffer(buffer, 1);
 
       assertNotNull(buffer);
 
-      AMQPMessage copy = new AMQPMessage(0, new NettyReadable(buffer), null, null);
+      AMQPStandardMessage copy = new AMQPStandardMessage(0, new NettyReadable(buffer), null, null);
 
       assertProtonMessageEquals(message.getProtonMessage(), copy.getProtonMessage());
    }
@@ -1696,7 +1793,7 @@ public class AMQPMessageTest {
 
    @Test
    public void testGetSendBuffer() {
-      AMQPMessage message = new AMQPMessage(0, encodedProtonMessage, null, null);
+      AMQPStandardMessage message = new AMQPStandardMessage(0, encodedProtonMessage, null, null);
 
       ReadableBuffer buffer = message.getSendBuffer(1);
       assertNotNull(buffer);
@@ -1704,20 +1801,20 @@ public class AMQPMessageTest {
 
       assertTrue(Arrays.equals(encodedProtonMessage, buffer.array()));
 
-      AMQPMessage copy = new AMQPMessage(0, buffer, null, null);
+      AMQPStandardMessage copy = new AMQPStandardMessage(0, buffer, null, null);
 
       assertProtonMessageEquals(message.getProtonMessage(), copy.getProtonMessage());
    }
 
    @Test
    public void testGetSendBufferAddsDeliveryCountOnlyToSendMessage() {
-      AMQPMessage message = new AMQPMessage(0, encodedProtonMessage, null, null);
+      AMQPStandardMessage message = new AMQPStandardMessage(0, encodedProtonMessage, null, null);
 
       ReadableBuffer buffer = message.getSendBuffer(7);
       assertNotNull(buffer);
       message.reencode(); // Ensures Header is current if accidentally updated
 
-      AMQPMessage copy = new AMQPMessage(0, buffer, null, null);
+      AMQPStandardMessage copy = new AMQPStandardMessage(0, buffer, null, null);
 
       MessageImpl originalsProtonMessage = message.getProtonMessage();
       MessageImpl copyProtonMessage = copy.getProtonMessage();
@@ -1730,13 +1827,13 @@ public class AMQPMessageTest {
    @Test
    public void testGetSendBufferAddsDeliveryCountOnlyToSendMessageOriginalHadNoHeader() {
       MessageImpl protonMessage = (MessageImpl) Proton.message();
-      AMQPMessage message = new AMQPMessage(0, encodeMessage(protonMessage), null, null);
+      AMQPStandardMessage message = new AMQPStandardMessage(0, encodeMessage(protonMessage), null, null);
 
       ReadableBuffer buffer = message.getSendBuffer(7);
       assertNotNull(buffer);
       message.reencode(); // Ensures Header is current if accidentally updated
 
-      AMQPMessage copy = new AMQPMessage(0, buffer, null, null);
+      AMQPStandardMessage copy = new AMQPStandardMessage(0, buffer, null, null);
 
       MessageImpl originalsProtonMessage = message.getProtonMessage();
       MessageImpl copyProtonMessage = copy.getProtonMessage();
@@ -1752,12 +1849,12 @@ public class AMQPMessageTest {
       DeliveryAnnotations deliveryAnnotations = new DeliveryAnnotations(new HashMap<>());
       deliveryAnnotations.getValue().put(Symbol.valueOf("testGetSendBufferRemoveDeliveryAnnotations"), "X");
       protonMessage.setDeliveryAnnotations(deliveryAnnotations);
-      AMQPMessage message = new AMQPMessage(0, encodeMessage(protonMessage), null, null);
+      AMQPStandardMessage message = new AMQPStandardMessage(0, encodeMessage(protonMessage), null, null);
 
       ReadableBuffer buffer = message.getSendBuffer(1);
       assertNotNull(buffer);
 
-      AMQPMessage copy = new AMQPMessage(0, buffer, null, null);
+      AMQPStandardMessage copy = new AMQPStandardMessage(0, buffer, null, null);
 
       MessageImpl copyProtonMessage = copy.getProtonMessage();
       assertProtonMessageNotEquals(message.getProtonMessage(), copyProtonMessage);
@@ -1770,13 +1867,13 @@ public class AMQPMessageTest {
       DeliveryAnnotations deliveryAnnotations = new DeliveryAnnotations(new HashMap<>());
       deliveryAnnotations.getValue().put(Symbol.valueOf("testGetSendBufferRemoveDeliveryAnnotations"), "X");
       protonMessage.setDeliveryAnnotations(deliveryAnnotations);
-      AMQPMessage message = new AMQPMessage(0, encodeMessage(protonMessage), null, null);
+      AMQPStandardMessage message = new AMQPStandardMessage(0, encodeMessage(protonMessage), null, null);
 
       ReadableBuffer buffer = message.getSendBuffer(7);
       assertNotNull(buffer);
       message.reencode(); // Ensures Header is current if accidentally updated
 
-      AMQPMessage copy = new AMQPMessage(0, buffer, null, null);
+      AMQPStandardMessage copy = new AMQPStandardMessage(0, buffer, null, null);
 
       MessageImpl originalsProtonMessage = message.getProtonMessage();
       MessageImpl copyProtonMessage = copy.getProtonMessage();
@@ -1909,7 +2006,7 @@ public class AMQPMessageTest {
          protonMessage.setFooter(foot);
       }
 
-      AMQPMessage message = new AMQPMessage(0, encodeMessage(protonMessage), null, null);
+      AMQPStandardMessage message = new AMQPStandardMessage(0, encodeMessage(protonMessage), null, null);
 
       message.reencode();
 
@@ -1937,18 +2034,18 @@ public class AMQPMessageTest {
       deliveryAnnotations.getValue().put(Symbol.getSymbol(annotationKey), annotationValue);
       protonMessage.setDeliveryAnnotations(deliveryAnnotations);
 
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       ReadableBuffer sendBuffer = decoded.getSendBuffer(1);
       assertEquals(decoded.getEncodeSize(), sendBuffer.capacity());
-      AMQPMessage msgFromSendBuffer = new AMQPMessage(0, sendBuffer, null, null);
+      AMQPStandardMessage msgFromSendBuffer = new AMQPStandardMessage(0, sendBuffer, null, null);
       assertEquals("someNiceLocal", msgFromSendBuffer.getAddress());
       assertNull(msgFromSendBuffer.getDeliveryAnnotations());
 
       // again with higher deliveryCount
       ReadableBuffer sendBuffer2 = decoded.getSendBuffer(5);
       assertEquals(decoded.getEncodeSize(), sendBuffer2.capacity());
-      AMQPMessage msgFromSendBuffer2 = new AMQPMessage(0, sendBuffer2, null, null);
+      AMQPStandardMessage msgFromSendBuffer2 = new AMQPStandardMessage(0, sendBuffer2, null, null);
       assertEquals("someNiceLocal", msgFromSendBuffer2.getAddress());
       assertNull(msgFromSendBuffer2.getDeliveryAnnotations());
    }
@@ -1964,7 +2061,7 @@ public class AMQPMessageTest {
       protonMessage.setProperties(properties);
       protonMessage.setBody(new AmqpValue("Sample payload"));
 
-      AMQPMessage decoded = encodeAndDecodeMessage(protonMessage);
+      AMQPStandardMessage decoded = encodeAndDecodeMessage(protonMessage);
 
       DeliveryAnnotations newDeliveryAnnotations = new DeliveryAnnotations(new HashMap<>());
       final String annotationKey = "annotationKey";
@@ -1974,7 +2071,7 @@ public class AMQPMessageTest {
 
       ReadableBuffer sendBuffer = decoded.getSendBuffer(1);
       assertEquals(decoded.getEncodeSize(), sendBuffer.capacity());
-      AMQPMessage msgFromSendBuffer = new AMQPMessage(0, sendBuffer, null, null);
+      AMQPStandardMessage msgFromSendBuffer = new AMQPStandardMessage(0, sendBuffer, null, null);
       assertEquals("someNiceLocal", msgFromSendBuffer.getAddress());
       assertNotNull(msgFromSendBuffer.getDeliveryAnnotations());
       assertEquals(1, msgFromSendBuffer.getDeliveryAnnotations().getValue().size());
@@ -1989,7 +2086,7 @@ public class AMQPMessageTest {
 
       ReadableBuffer sendBuffer2 = decoded.getSendBuffer(5);
       assertEquals(decoded.getEncodeSize(), sendBuffer2.capacity());
-      AMQPMessage msgFromSendBuffer2 = new AMQPMessage(0, sendBuffer2, null, null);
+      AMQPStandardMessage msgFromSendBuffer2 = new AMQPStandardMessage(0, sendBuffer2, null, null);
       assertEquals("someNiceLocal", msgFromSendBuffer2.getAddress());
       assertNotNull(msgFromSendBuffer2.getDeliveryAnnotations());
       assertEquals(1, msgFromSendBuffer2.getDeliveryAnnotations().getValue().size());
@@ -2010,10 +2107,10 @@ public class AMQPMessageTest {
       properties.setTo(TEST_TO_ADDRESS);
       properties.setMessageId(UUID.randomUUID());
 
-      MessageAnnotations annotations = new MessageAnnotations(new HashMap<>());
+      MessageAnnotations annotations = new MessageAnnotations(new LinkedHashMap<>());
       annotations.getValue().put(Symbol.valueOf(TEST_MESSAGE_ANNOTATION_KEY), TEST_MESSAGE_ANNOTATION_VALUE);
 
-      ApplicationProperties applicationProperties = new ApplicationProperties(new HashMap<>());
+      ApplicationProperties applicationProperties = new ApplicationProperties(new LinkedHashMap<>());
       applicationProperties.getValue().put(TEST_APPLICATION_PROPERTY_KEY, TEST_APPLICATION_PROPERTY_VALUE);
 
       AmqpValue body = new AmqpValue(TEST_STRING_BODY);
@@ -2359,13 +2456,13 @@ public class AMQPMessageTest {
       return bytes;
    }
 
-   private AMQPMessage encodeAndDecodeMessage(MessageImpl message) {
+   private AMQPStandardMessage encodeAndDecodeMessage(MessageImpl message) {
       ByteBuf nettyBuffer = Unpooled.buffer(1500);
 
       message.encode(new NettyWritable(nettyBuffer));
       byte[] bytes = new byte[nettyBuffer.writerIndex()];
       nettyBuffer.readBytes(bytes);
 
-      return new AMQPMessage(0, bytes, null);
+      return new AMQPStandardMessage(0, bytes, null);
    }
 }

@@ -23,7 +23,7 @@ import java.util.Set;
 import java.util.function.Predicate;
 
 import io.netty.buffer.ByteBuf;
-import org.apache.activemq.artemis.core.message.impl.CoreMessageObjectPools;
+import org.apache.activemq.artemis.core.persistence.CoreMessageObjectPools;
 import org.apache.activemq.artemis.core.persistence.Persister;
 
 /**
@@ -179,11 +179,22 @@ public interface Message {
 
    byte STREAM_TYPE = 6;
 
-   /** The message will contain another message persisted through {@link org.apache.activemq.artemis.spi.core.protocol.EmbedMessageUtil}*/
+   /** The message will contain another message persisted through {@literal org.apache.activemq.artemis.spi.core.protocol.EmbedMessageUtil}*/
    byte EMBEDDED_TYPE = 7;
+
+   /** This is to embedd Large Messages from other protocol */
+   byte LARGE_EMBEDDED_TYPE = 8;
 
    default void clearInternalProperties() {
       // only on core
+   }
+
+   /**
+    * Search for the existence of the property: an implementor can save
+    * the message to be decoded, if possible.
+    */
+   default boolean hasScheduledDeliveryTime() {
+      return getScheduledDeliveryTime() != null;
    }
 
    default RoutingType getRoutingType() {
@@ -247,13 +258,6 @@ public interface Message {
       return this;
    }
 
-   /** Context can be used by the application server to inject extra control, like a protocol specific on the server.
-    * There is only one per Object, use it wisely!
-    *
-    * Note: the intent of this was to replace PageStore reference on Message, but it will be later increased by adidn a ServerPojo
-    * */
-   RefCountMessageListener getContext();
-
    default SimpleString getGroupID() {
       return null;
    }
@@ -286,8 +290,6 @@ public interface Message {
    SimpleString getReplyTo();
 
    Message setReplyTo(SimpleString address);
-
-   Message setContext(RefCountMessageListener context);
 
    /** The buffer will belong to this message, until release is called. */
    Message setBuffer(ByteBuf buffer);
@@ -446,7 +448,7 @@ public interface Message {
 
    void persist(ActiveMQBuffer targetRecord);
 
-   void reloadPersistence(ActiveMQBuffer record);
+   void reloadPersistence(ActiveMQBuffer record, CoreMessageObjectPools pools);
 
    default void releaseBuffer() {
       ByteBuf buffer = getBuffer();
@@ -461,25 +463,9 @@ public interface Message {
    }
 
    default void referenceOriginalMessage(final Message original, String originalQueue) {
-      String queueOnMessage = original.getAnnotationString(Message.HDR_ORIGINAL_QUEUE);
-
-      if (queueOnMessage != null) {
-         setAnnotation(Message.HDR_ORIGINAL_QUEUE, queueOnMessage);
-      } else if (originalQueue != null) {
-         setAnnotation(Message.HDR_ORIGINAL_QUEUE, originalQueue);
-      }
-
-      Object originalID = original.getAnnotation(Message.HDR_ORIG_MESSAGE_ID);
-
-      if (originalID != null) {
-         setAnnotation(Message.HDR_ORIGINAL_ADDRESS, original.getAnnotationString(Message.HDR_ORIGINAL_ADDRESS));
-
-         setAnnotation(Message.HDR_ORIG_MESSAGE_ID, originalID);
-      } else {
-         setAnnotation(Message.HDR_ORIGINAL_ADDRESS, original.getAddress());
-
-         setAnnotation(Message.HDR_ORIG_MESSAGE_ID, original.getMessageID());
-      }
+      setBrokerProperty(Message.HDR_ORIGINAL_QUEUE, originalQueue);
+      setBrokerProperty(Message.HDR_ORIGINAL_ADDRESS, original.getAddress());
+      setBrokerProperty(Message.HDR_ORIG_MESSAGE_ID, original.getMessageID());
 
       // reset expiry
       setExpiration(0);
@@ -612,6 +598,10 @@ public interface Message {
 
    Long getLongProperty(SimpleString key) throws ActiveMQPropertyConversionException;
 
+   default Object getObjectPropertyForFilter(SimpleString key) {
+      return getObjectProperty(key);
+   }
+
    Object getObjectProperty(SimpleString key);
 
    default Object removeAnnotation(SimpleString key) {
@@ -635,6 +625,17 @@ public interface Message {
       return this;
    }
 
+   /** To be called by the broker on ocasions such as DLQ and expiry.
+    * When the broker is adding additional properties. */
+   default Message setBrokerProperty(SimpleString key, Object value) {
+      putObjectProperty(key, value);
+      return this;
+   }
+
+   default Object getBrokerProperty(SimpleString key) {
+      return getObjectProperty(key);
+   }
+
    Short getShortProperty(SimpleString key) throws ActiveMQPropertyConversionException;
 
    Float getFloatProperty(SimpleString key) throws ActiveMQPropertyConversionException;
@@ -655,6 +656,16 @@ public interface Message {
    int getEncodeSize();
 
    /**
+    * Return an estimate of the size of the message on the wire.
+    * for LargeMessages this will contain whatever is needed to encode properties and the body size of large messages.
+    * For AMQP this will return the whole body size of the message as the body will contain all the data including properties.
+    * @return
+    */
+   default long getWholeMessageSize() {
+      return getEncodeSize();
+   }
+
+   /**
     * Returns all the names of the properties for this message.
     */
    Set<SimpleString> getPropertyNames();
@@ -663,13 +674,28 @@ public interface Message {
 
    int getRefCount();
 
-   int incrementRefCount() throws Exception;
+   int getUsage();
 
-   int decrementRefCount() throws Exception;
+   int getDurableCount();
 
-   int incrementDurableRefCount();
+   /** this method indicates usage by components such as large message or page cache.
+    *  This method will cause large messages to be held longer after the ack happened for instance.
+    */
+   int usageUp();
 
-   int decrementDurableRefCount();
+   /**
+    * @see #usageUp()
+    * @return
+    */
+   int usageDown();
+
+   int refUp();
+
+   int refDown();
+
+   int durableUp();
+
+   int durableDown();
 
    /**
     * @return Returns the message in Map form, useful when encoding to JSON

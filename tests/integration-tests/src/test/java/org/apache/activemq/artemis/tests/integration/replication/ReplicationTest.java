@@ -37,6 +37,7 @@ import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ActiveMQExceptionType;
 import org.apache.activemq.artemis.api.core.ActiveMQNotConnectedException;
 import org.apache.activemq.artemis.api.core.Interceptor;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
@@ -88,6 +89,7 @@ import org.apache.activemq.artemis.tests.util.TransportConfigurationUtils;
 import org.apache.activemq.artemis.utils.ActiveMQThreadFactory;
 import org.apache.activemq.artemis.utils.ExecutorFactory;
 import org.apache.activemq.artemis.utils.actors.OrderedExecutorFactory;
+import org.apache.activemq.artemis.utils.collections.SparseArrayLinkedList;
 import org.apache.activemq.artemis.utils.critical.EmptyCriticalAnalyzer;
 import org.junit.After;
 import org.junit.Assert;
@@ -292,7 +294,7 @@ public final class ReplicationTest extends ActiveMQTestBase {
       ClientSessionFactory sf = createSessionFactory(locator);
       final ClientSession session = sf.createSession();
       final ClientSession session2 = sf.createSession();
-      session.createQueue(ADDRESS, ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(ADDRESS));
 
       final ClientProducer producer = session.createProducer(ADDRESS);
 
@@ -649,6 +651,15 @@ public final class ReplicationTest extends ActiveMQTestBase {
       }
 
       @Override
+      public boolean tryAppendUpdateRecord(long id,
+                                           byte recordType,
+                                           Persister persister,
+                                           Object record,
+                                           boolean sync) throws Exception {
+         return true;
+      }
+
+      @Override
       public void appendUpdateRecord(long id,
                                      byte recordType,
                                      Persister persister,
@@ -656,6 +667,16 @@ public final class ReplicationTest extends ActiveMQTestBase {
                                      boolean sync,
                                      IOCompletion callback) throws Exception {
 
+      }
+
+      @Override
+      public boolean tryAppendUpdateRecord(long id,
+                                           byte recordType,
+                                           Persister persister,
+                                           Object record,
+                                           boolean sync,
+                                           IOCompletion callback) throws Exception {
+         return true;
       }
 
       @Override
@@ -729,6 +750,11 @@ public final class ReplicationTest extends ActiveMQTestBase {
       }
 
       @Override
+      public boolean tryAppendDeleteRecord(long id, boolean sync) throws Exception {
+         return true;
+      }
+
+      @Override
       public void appendDeleteRecordTransactional(final long txID,
                                                   final long id,
                                                   final byte[] record) throws Exception {
@@ -775,6 +801,11 @@ public final class ReplicationTest extends ActiveMQTestBase {
       }
 
       @Override
+      public boolean tryAppendUpdateRecord(long id, byte recordType, byte[] record, boolean sync) throws Exception {
+         return true;
+      }
+
+      @Override
       public void appendUpdateRecord(final long id,
                                      final byte recordType,
                                      final EncodingSupport record,
@@ -806,6 +837,15 @@ public final class ReplicationTest extends ActiveMQTestBase {
 
       @Override
       public JournalLoadInformation load(final LoaderCallback reloadManager) throws Exception {
+
+         return new JournalLoadInformation();
+      }
+
+      @Override
+      public JournalLoadInformation load(final SparseArrayLinkedList<RecordInfo> committedRecords,
+                                         final List<PreparedTransactionInfo> preparedTransactions,
+                                         final TransactionFailureCallback transactionFailure,
+                                         final boolean fixbadtx) throws Exception {
 
          return new JournalLoadInformation();
       }
@@ -863,6 +903,11 @@ public final class ReplicationTest extends ActiveMQTestBase {
       public void appendDeleteRecord(final long id,
                                      final boolean sync,
                                      final IOCompletion completionCallback) throws Exception {
+      }
+
+      @Override
+      public boolean tryAppendDeleteRecord(long id, boolean sync, IOCompletion completionCallback) throws Exception {
+         return true;
       }
 
       @Override

@@ -26,11 +26,11 @@ import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
+import org.apache.activemq.artemis.api.core.management.AddressControl;
 import org.apache.activemq.artemis.api.core.management.ObjectNameBuilder;
 import org.apache.activemq.artemis.core.config.BridgeConfiguration;
 import org.apache.activemq.artemis.core.config.ClusterConnectionConfiguration;
 import org.apache.activemq.artemis.core.config.Configuration;
-import org.apache.activemq.artemis.core.config.DivertConfiguration;
 import org.apache.activemq.artemis.core.management.impl.ActiveMQServerControlImpl;
 import org.apache.activemq.artemis.core.messagecounter.MessageCounterManager;
 import org.apache.activemq.artemis.core.paging.PagingManager;
@@ -94,6 +94,8 @@ public interface ManagementService extends NotificationService, ActiveMQComponen
 
    void registerAddress(AddressInfo addressInfo) throws Exception;
 
+   void registerAddressMeters(AddressInfo addressInfo, AddressControl addressControl) throws Exception;
+
    void unregisterAddress(SimpleString address) throws Exception;
 
    void registerQueue(Queue queue, SimpleString address, StorageManager storageManager) throws Exception;
@@ -104,7 +106,7 @@ public interface ManagementService extends NotificationService, ActiveMQComponen
 
    void unregisterAcceptors();
 
-   void registerDivert(Divert divert, DivertConfiguration config) throws Exception;
+   void registerDivert(Divert divert) throws Exception;
 
    void unregisterDivert(SimpleString name, SimpleString address) throws Exception;
 
@@ -130,4 +132,8 @@ public interface ManagementService extends NotificationService, ActiveMQComponen
    Object[] getResources(Class<?> resourceType);
 
    ICoreMessage handleMessage(Message message) throws Exception;
+
+   void registerHawtioSecurity(ArtemisMBeanServerGuard securityMBean) throws Exception;
+
+   void unregisterHawtioSecurity() throws Exception;
 }

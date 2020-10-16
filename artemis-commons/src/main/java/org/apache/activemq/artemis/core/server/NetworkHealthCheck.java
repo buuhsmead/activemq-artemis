@@ -33,6 +33,7 @@ import java.util.concurrent.TimeUnit;
 
 import org.apache.activemq.artemis.logs.ActiveMQUtilLogger;
 import org.apache.activemq.artemis.utils.ActiveMQThreadFactory;
+import org.apache.activemq.artemis.utils.Env;
 import org.apache.activemq.artemis.utils.collections.ConcurrentHashSet;
 import org.jboss.logging.Logger;
 
@@ -45,13 +46,13 @@ public class NetworkHealthCheck extends ActiveMQScheduledComponent {
    private static final Logger logger = Logger.getLogger(NetworkHealthCheck.class);
 
    private final Set<ActiveMQComponent> componentList = new ConcurrentHashSet<>();
-   private final Set<InetAddress> addresses = new ConcurrentHashSet<>();
+   private final Set<String> addresses = new ConcurrentHashSet<>();
    private final Set<URL> urls = new ConcurrentHashSet<>();
    private NetworkInterface networkInterface;
 
    public static final String IPV6_DEFAULT_COMMAND = "ping6 -c 1 %2$s";
 
-   public static final String IPV4_DEFAULT_COMMAND = "ping -c 1 -t %d %s";
+   public static final String IPV4_DEFAULT_COMMAND = Env.isMacOs() ? "ping -c 1 -t %d %s" : "ping -c 1 -w %d %s";
 
    private String ipv4Command = IPV4_DEFAULT_COMMAND;
 
@@ -103,7 +104,7 @@ public class NetworkHealthCheck extends ActiveMQScheduledComponent {
       return this;
    }
 
-   public Set<InetAddress> getAddresses() {
+   public Set<String> getAddresses() {
       return addresses;
    }
 
@@ -126,7 +127,8 @@ public class NetworkHealthCheck extends ActiveMQScheduledComponent {
          for (String address : addresses) {
             if (!address.trim().isEmpty()) {
                try {
-                  this.addAddress(InetAddress.getByName(address.trim()));
+                  String strAddress = address.trim();
+                  this.addAddress(strAddress);
                } catch (Exception e) {
                   ActiveMQUtilLogger.LOGGER.failedToParseAddressList(e, addressList);
                }
@@ -203,22 +205,23 @@ public class NetworkHealthCheck extends ActiveMQScheduledComponent {
       return this;
    }
 
-   public NetworkHealthCheck addAddress(InetAddress address) {
-      if (!check(address)) {
-         ActiveMQUtilLogger.LOGGER.addressWasntReacheable(address.toString());
+   public NetworkHealthCheck addAddress(String straddress) {
+      InetAddress address = internalCheck(straddress);
+      if (address == null) {
+         ActiveMQUtilLogger.LOGGER.addressWasntReacheable(straddress);
       }
 
-      if (!ignoreLoopback && address.isLoopbackAddress()) {
-         ActiveMQUtilLogger.LOGGER.addressloopback(address.toString());
+      if (!ignoreLoopback && address != null && address.isLoopbackAddress()) {
+         ActiveMQUtilLogger.LOGGER.addressloopback(straddress);
       } else {
-         addresses.add(address);
+         addresses.add(straddress);
          checkStart();
       }
       return this;
    }
 
-   public NetworkHealthCheck removeAddress(InetAddress address) {
-      addresses.remove(address);
+   public NetworkHealthCheck removeAddress(String straddress) {
+      addresses.remove(straddress);
       return this;
    }
 
@@ -266,7 +269,11 @@ public class NetworkHealthCheck extends ActiveMQScheduledComponent {
 
    private void checkStart() {
       if (!isStarted() && (!addresses.isEmpty() || !urls.isEmpty()) && !componentList.isEmpty()) {
-         start();
+         try {
+            this.run(); // run the first check immediately, this is to immediately shutdown the server if there's no net
+         } finally {
+            start();
+         }
       }
    }
 
@@ -310,7 +317,7 @@ public class NetworkHealthCheck extends ActiveMQScheduledComponent {
          return true;
       }
 
-      for (InetAddress address : addresses) {
+      for (String address : addresses) {
          if (check(address)) {
             return true;
          }
@@ -325,23 +332,37 @@ public class NetworkHealthCheck extends ActiveMQScheduledComponent {
       return false;
    }
 
-   public boolean check(InetAddress address) {
-      if (address == null) {
+   public boolean check(String straddress) {
+      if (straddress == null) {
          return false;
       }
 
+      return internalCheck(straddress) != null;
+   }
+
+   private InetAddress internalCheck(String straddress) {
       try {
-         if (!hasCustomPingCommand() && isReachable(address)) {
-            if (logger.isTraceEnabled()) {
-               logger.tracef(address + " OK");
-            }
-            return true;
+         InetAddress address = InetAddress.getByName(straddress);
+         address = InetAddress.getByName(address.getHostName());
+         if (check(address)) {
+            return address;
          } else {
-            return purePing(address);
+            return null;
          }
       } catch (Exception e) {
-         ActiveMQUtilLogger.LOGGER.failedToCheckAddress(e, address.toString());
-         return false;
+         ActiveMQUtilLogger.LOGGER.failedToCheckAddress(e, straddress);
+         return null;
+      }
+   }
+
+   public boolean check(InetAddress address) throws IOException, InterruptedException {
+      if (!hasCustomPingCommand() && isReachable(address)) {
+         if (logger.isTraceEnabled()) {
+            logger.tracef(address + " OK");
+         }
+         return true;
+      } else {
+         return purePing(address);
       }
    }
 

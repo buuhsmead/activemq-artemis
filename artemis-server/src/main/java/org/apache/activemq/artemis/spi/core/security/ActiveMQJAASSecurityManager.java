@@ -30,10 +30,10 @@ import org.apache.activemq.artemis.core.config.impl.SecurityConfiguration;
 import org.apache.activemq.artemis.core.security.CheckType;
 import org.apache.activemq.artemis.core.security.Role;
 import org.apache.activemq.artemis.core.server.ActiveMQServerLogger;
+import org.apache.activemq.artemis.logs.AuditLogger;
 import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
 import org.apache.activemq.artemis.spi.core.security.jaas.JaasCallbackHandler;
 import org.apache.activemq.artemis.spi.core.security.jaas.RolePrincipal;
-import org.apache.activemq.artemis.spi.core.security.jaas.UserPrincipal;
 import org.jboss.logging.Logger;
 
 import static org.apache.activemq.artemis.core.remoting.CertificateUtil.getCertsFromConnection;
@@ -44,7 +44,7 @@ import static org.apache.activemq.artemis.core.remoting.CertificateUtil.getCerts
  * The {@link Subject} returned by the login context is expecting to have a set of {@link RolePrincipal} for each
  * role of the user.
  */
-public class ActiveMQJAASSecurityManager implements ActiveMQSecurityManager3 {
+public class ActiveMQJAASSecurityManager implements ActiveMQSecurityManager5 {
 
    private static final Logger logger = Logger.getLogger(ActiveMQJAASSecurityManager.class);
 
@@ -90,63 +90,40 @@ public class ActiveMQJAASSecurityManager implements ActiveMQSecurityManager3 {
 
    @Override
    public boolean validateUser(String user, String password) {
-      throw new UnsupportedOperationException("Invoke validateUser(String, String, X509Certificate[]) instead");
+      throw new UnsupportedOperationException("Invoke validateUser(String, String, RemotingConnection, String) instead");
    }
 
    @Override
-   public String validateUser(final String user, final String password, RemotingConnection remotingConnection) {
+   public Subject authenticate(final String user, final String password, RemotingConnection remotingConnection, final String securityDomain) {
       try {
-         return getUserFromSubject(getAuthenticatedSubject(user, password, remotingConnection));
+         return getAuthenticatedSubject(user, password, remotingConnection, securityDomain);
       } catch (LoginException e) {
          if (logger.isDebugEnabled()) {
             logger.debug("Couldn't validate user", e);
          }
          return null;
       }
-   }
-
-   public String getUserFromSubject(Subject subject) {
-      String validatedUser = "";
-      Set<UserPrincipal> users = subject.getPrincipals(UserPrincipal.class);
-
-      // should only ever be 1 UserPrincipal
-      for (UserPrincipal userPrincipal : users) {
-         validatedUser = userPrincipal.getName();
-      }
-      return validatedUser;
    }
 
    @Override
    public boolean validateUserAndRole(String user, String password, Set<Role> roles, CheckType checkType) {
-      throw new UnsupportedOperationException("Invoke validateUserAndRole(String, String, Set<Role>, CheckType, String, RemotingConnection) instead");
+      throw new UnsupportedOperationException("Invoke validateUserAndRole(String, String, Set<Role>, CheckType, String, RemotingConnection, String) instead");
    }
 
    @Override
-   public String validateUserAndRole(final String user,
-                                     final String password,
-                                     final Set<Role> roles,
-                                     final CheckType checkType,
-                                     final String address,
-                                     final RemotingConnection remotingConnection) {
-      Subject localSubject;
-      try {
-         localSubject = getAuthenticatedSubject(user, password, remotingConnection);
-      } catch (LoginException e) {
-         if (logger.isDebugEnabled()) {
-            logger.debug("Couldn't validate user", e);
-         }
-         return null;
-      }
-
+   public boolean authorize(final Subject subject,
+                            final Set<Role> roles,
+                            final CheckType checkType,
+                            final String address) {
       boolean authorized = false;
 
-      if (localSubject != null) {
+      if (subject != null) {
          Set<RolePrincipal> rolesWithPermission = getPrincipalsInRole(checkType, roles);
 
          // Check the caller's roles
          Set<Principal> rolesForSubject = new HashSet<>();
          try {
-            rolesForSubject.addAll(localSubject.getPrincipals(Class.forName(rolePrincipalClass).asSubclass(Principal.class)));
+            rolesForSubject.addAll(subject.getPrincipals(Class.forName(rolePrincipalClass).asSubclass(Principal.class)));
          } catch (Exception e) {
             ActiveMQServerLogger.LOGGER.failedToFindRolesForTheSubject(e);
          }
@@ -167,16 +144,13 @@ public class ActiveMQJAASSecurityManager implements ActiveMQSecurityManager3 {
          }
       }
 
-      if (authorized) {
-         return getUserFromSubject(localSubject);
-      } else {
-         return null;
-      }
+      return authorized;
    }
 
    private Subject getAuthenticatedSubject(final String user,
                                            final String password,
-                                           final RemotingConnection remotingConnection) throws LoginException {
+                                           final RemotingConnection remotingConnection,
+                                           final String securityDomain) throws LoginException {
       LoginContext lc;
       ClassLoader currentLoader = Thread.currentThread().getContextClassLoader();
       ClassLoader thisLoader = this.getClass().getClassLoader();
@@ -184,12 +158,27 @@ public class ActiveMQJAASSecurityManager implements ActiveMQSecurityManager3 {
          if (thisLoader != currentLoader) {
             Thread.currentThread().setContextClassLoader(thisLoader);
          }
-         if (certificateConfigurationName != null && certificateConfigurationName.length() > 0 && getCertsFromConnection(remotingConnection) != null) {
+         if (securityDomain != null) {
+            lc = new LoginContext(securityDomain, null, new JaasCallbackHandler(user, password, remotingConnection), null);
+         } else if (certificateConfigurationName != null && certificateConfigurationName.length() > 0 && getCertsFromConnection(remotingConnection) != null) {
             lc = new LoginContext(certificateConfigurationName, null, new JaasCallbackHandler(user, password, remotingConnection), certificateConfiguration);
          } else {
             lc = new LoginContext(configurationName, null, new JaasCallbackHandler(user, password, remotingConnection), configuration);
          }
-         lc.login();
+         try {
+            lc.login();
+            if (AuditLogger.isAnyLoggingEnabled() && remotingConnection != null) {
+               remotingConnection.setAuditSubject(lc.getSubject());
+            }
+            if (AuditLogger.isResourceLoggingEnabled()) {
+               AuditLogger.userSuccesfullyLoggedInAudit(lc.getSubject());
+            }
+         } catch (LoginException e) {
+            if (AuditLogger.isResourceLoggingEnabled()) {
+               AuditLogger.userFailedLoggedInAudit(lc.getSubject(), e.getMessage());
+            }
+            throw e;
+         }
          return lc.getSubject();
       } finally {
          if (thisLoader != currentLoader) {
@@ -307,5 +296,4 @@ public class ActiveMQJAASSecurityManager implements ActiveMQSecurityManager3 {
 
       return instance;
    }
-
 }

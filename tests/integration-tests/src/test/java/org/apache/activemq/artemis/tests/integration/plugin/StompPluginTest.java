@@ -51,8 +51,8 @@ import static org.apache.activemq.artemis.tests.integration.plugin.MethodCalledV
 import java.net.URI;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -67,7 +67,6 @@ import org.apache.activemq.artemis.core.server.ServerSession;
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerPlugin;
 import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
 import org.apache.activemq.artemis.spi.core.protocol.SessionCallback;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.integration.stomp.StompTestBase;
 import org.apache.activemq.artemis.tests.integration.stomp.util.ClientStompFrame;
 import org.apache.activemq.artemis.tests.integration.stomp.util.StompClientConnection;
@@ -81,7 +80,6 @@ import org.junit.runners.Parameterized;
 
 public class StompPluginTest extends StompTestBase {
 
-   private static final transient IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
    public static final String CLIENT_ID = "myclientid";
 
    private StompClientConnectionV12 conn;
@@ -103,7 +101,6 @@ public class StompPluginTest extends StompTestBase {
    public void tearDown() throws Exception {
       try {
          boolean connected = conn != null && conn.isConnected();
-         log.debug("Connection 1.2 : " + connected);
          if (connected) {
             conn.disconnect();
          }
@@ -112,7 +109,7 @@ public class StompPluginTest extends StompTestBase {
       }
    }
 
-   private final Map<String, AtomicInteger> methodCalls = new HashMap<>();
+   private final Map<String, AtomicInteger> methodCalls = new ConcurrentHashMap<>();
    private final MethodCalledVerifier verifier = new MethodCalledVerifier(methodCalls);
    private final AtomicBoolean stompBeforeCreateSession = new AtomicBoolean();
    private final AtomicBoolean stompBeforeRemoveSession = new AtomicBoolean();

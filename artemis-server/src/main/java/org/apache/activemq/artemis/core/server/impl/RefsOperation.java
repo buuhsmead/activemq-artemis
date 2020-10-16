@@ -23,7 +23,6 @@ import java.util.List;
 import java.util.Map;
 
 import org.apache.activemq.artemis.api.core.Message;
-import org.apache.activemq.artemis.core.paging.cursor.NonExistentPage;
 import org.apache.activemq.artemis.core.paging.cursor.PagedReference;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
 import org.apache.activemq.artemis.core.server.ActiveMQServerLogger;
@@ -134,19 +133,18 @@ public class RefsOperation extends TransactionOperationAbstract {
             for (MessageReference ref : ackedRefs) {
                Message message = ref.getMessage();
                if (message.isDurable()) {
-                  int durableRefCount = message.incrementDurableRefCount();
+                  int durableRefCount = ref.getQueue().durableUp(ref.getMessage());
 
                   if (durableRefCount == 1) {
                      storageManager.storeMessageTransactional(ackedTX.getID(), message);
                   }
-                  Queue queue = ref.getQueue();
 
                   storageManager.storeReferenceTransactional(ackedTX.getID(), queue.getID(), message.getMessageID());
 
                   ackedTX.setContainsPersistent();
                }
 
-               message.incrementRefCount();
+               ref.getQueue().refUp(ref);
             }
             ackedTX.commit(true);
          } catch (Exception e) {
@@ -190,7 +188,7 @@ public class RefsOperation extends TransactionOperationAbstract {
          for (MessageReference refmsg : pagedMessagesToPostACK) {
             ((PagedReference)refmsg).removePendingFlag();
             if (((PagedReference) refmsg).isLargeMessage()) {
-               decrementRefCount(refmsg);
+               refmsg.getQueue().refDown(refmsg);
             }
          }
       }
@@ -199,17 +197,6 @@ public class RefsOperation extends TransactionOperationAbstract {
    private void clearLingerRef(MessageReference ref) {
       if (!ref.hasConsumerId() && lingerSessionId != null) {
          ref.getQueue().removeLingerSession(lingerSessionId);
-      }
-   }
-
-   private void decrementRefCount(MessageReference refmsg) {
-      try {
-         refmsg.getMessage().decrementRefCount();
-      } catch (NonExistentPage e) {
-         // This could happen on after commit, since the page could be deleted on file earlier by another thread
-         logger.debug(e);
-      } catch (Exception e) {
-         ActiveMQServerLogger.LOGGER.failedToDecrementMessageReferenceCount(e);
       }
    }
 

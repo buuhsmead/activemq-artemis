@@ -62,7 +62,7 @@ public class DefaultsFileConfigurationTest extends ConfigurationImplTest {
 
       Assert.assertEquals(Collections.emptyList(), conf.getClusterConfigurations());
 
-      Assert.assertEquals(Collections.emptyList(), conf.getQueueConfigurations());
+      Assert.assertEquals(Collections.emptyList(), conf.getQueueConfigs());
 
       Assert.assertEquals(Collections.emptyList(), conf.getAddressConfigurations());
 
@@ -127,8 +127,6 @@ public class DefaultsFileConfigurationTest extends ConfigurationImplTest {
       Assert.assertEquals(ActiveMQDefaultConfiguration.getDefaultMessageExpiryScanPeriod(), conf.getMessageExpiryScanPeriod());
 
       Assert.assertEquals(ActiveMQDefaultConfiguration.getDefaultAddressQueueScanPeriod(), conf.getAddressQueueScanPeriod());
-
-      Assert.assertEquals(ActiveMQDefaultConfiguration.getDefaultMessageExpiryThreadPriority(), conf.getMessageExpiryThreadPriority());
 
       Assert.assertTrue(conf.getHAPolicyConfiguration() instanceof LiveOnlyPolicyConfiguration);
 

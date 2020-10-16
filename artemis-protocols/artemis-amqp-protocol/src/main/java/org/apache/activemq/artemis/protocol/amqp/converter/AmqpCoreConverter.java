@@ -54,6 +54,7 @@ import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -64,7 +65,7 @@ import javax.jms.JMSException;
 
 import org.apache.activemq.artemis.api.core.ActiveMQPropertyConversionException;
 import org.apache.activemq.artemis.api.core.ICoreMessage;
-import org.apache.activemq.artemis.core.message.impl.CoreMessageObjectPools;
+import org.apache.activemq.artemis.core.persistence.CoreMessageObjectPools;
 import org.apache.activemq.artemis.jms.client.ActiveMQDestination;
 import org.apache.activemq.artemis.protocol.amqp.broker.AMQPMessage;
 import org.apache.activemq.artemis.protocol.amqp.converter.jms.ServerJMSMessage;
@@ -477,7 +478,8 @@ public class AmqpCoreConverter {
       } else if (value instanceof Decimal32) {
          msg.setFloatProperty(key, ((Decimal32) value).floatValue());
       } else if (value instanceof Binary) {
-         msg.setStringProperty(key, value.toString());
+         Binary bin = (Binary) value;
+         msg.setObjectProperty(key, Arrays.copyOfRange(bin.getArray(), bin.getArrayOffset(), bin.getLength()));
       } else {
          msg.setObjectProperty(key, value);
       }

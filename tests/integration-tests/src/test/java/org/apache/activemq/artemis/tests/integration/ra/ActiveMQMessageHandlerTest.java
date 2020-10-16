@@ -45,7 +45,6 @@ import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
 import org.apache.activemq.artemis.ra.ActiveMQResourceAdapter;
 import org.apache.activemq.artemis.ra.inflow.ActiveMQActivation;
 import org.apache.activemq.artemis.ra.inflow.ActiveMQActivationSpec;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.junit.Test;
 
 public class ActiveMQMessageHandlerTest extends ActiveMQRATestBase {
@@ -72,6 +71,79 @@ public class ActiveMQMessageHandlerTest extends ActiveMQRATestBase {
       qResourceAdapter.endpointActivation(endpointFactory, spec);
       ClientSession session = locator.createSessionFactory().createSession();
       ClientProducer clientProducer = session.createProducer(MDBQUEUEPREFIXED);
+      ClientMessage message = session.createMessage(true);
+      message.getBodyBuffer().writeString("teststring");
+      clientProducer.send(message);
+      session.close();
+      latch.await(5, TimeUnit.SECONDS);
+
+      assertNotNull(endpoint.lastMessage);
+      assertEquals(endpoint.lastMessage.getCoreMessage().getBodyBuffer().readString(), "teststring");
+
+      qResourceAdapter.endpointDeactivation(endpointFactory, spec);
+
+      qResourceAdapter.stop();
+   }
+
+   @Test
+   public void testDurableTopicSubscriptionWith1xPrefixesOnSpec() throws Exception {
+      internalTestDurableTopicSubscriptionWith1xPrefixes(false, true);
+   }
+
+   @Test
+   public void testDurableTopicSubscriptionWith1xPrefixesOnRA() throws Exception {
+      internalTestDurableTopicSubscriptionWith1xPrefixes(true, true);
+   }
+
+   @Test
+   public void testDurableTopicSubscriptionWith1xPrefixesOnSpecWithoutBrokerPrefixes() throws Exception {
+      internalTestDurableTopicSubscriptionWith1xPrefixes(false, false);
+   }
+
+   @Test
+   public void testDurableTopicSubscriptionWith1xPrefixesOnRAWithoutBrokerPrefixes() throws Exception {
+      internalTestDurableTopicSubscriptionWith1xPrefixes(true, false);
+   }
+
+   public void internalTestDurableTopicSubscriptionWith1xPrefixes(boolean ra, boolean definePrefixesOnBroker) throws Exception {
+      if (definePrefixesOnBroker) {
+         server.getRemotingService().createAcceptor("test", "tcp://localhost:61617?anycastPrefix=jms.queue.;multicastPrefix=jms.topic.").start();
+      }
+      ActiveMQResourceAdapter qResourceAdapter = newResourceAdapter();
+      if (ra) {
+         qResourceAdapter.setEnable1xPrefixes(true);
+      }
+      MyBootstrapContext ctx = new MyBootstrapContext();
+      qResourceAdapter.start(ctx);
+      ActiveMQActivationSpec spec = new ActiveMQActivationSpec();
+      spec.setSetupAttempts(1);
+      spec.setSetupInterval(500L);
+      spec.setResourceAdapter(qResourceAdapter);
+      spec.setUseJNDI(false);
+      spec.setDestinationType("javax.jms.Topic");
+      spec.setDestination("jms.topic.MyTopic");
+      if (!ra) {
+         spec.setEnable1xPrefixes(true);
+      }
+      spec.setSubscriptionDurability("Durable");
+      spec.setClientId("myClientId");
+      spec.setSubscriptionName("mySubscriptionName");
+      qResourceAdapter.setConnectorClassName(NETTY_CONNECTOR_FACTORY);
+      String port = "61616";
+      if (definePrefixesOnBroker) {
+         port = "61617";
+      }
+      qResourceAdapter.setConnectionParameters("host=localhost;port=" + port);
+      CountDownLatch latch = new CountDownLatch(1);
+      DummyMessageEndpoint endpoint = new DummyMessageEndpoint(latch);
+      DummyMessageEndpointFactory endpointFactory = new DummyMessageEndpointFactory(endpoint, false);
+      qResourceAdapter.endpointActivation(endpointFactory, spec);
+      ClientSession session = locator.createSessionFactory().createSession();
+      String topic = "MyTopic";
+      if (!definePrefixesOnBroker) {
+         topic = "jms.topic." + topic;
+      }
+      ClientProducer clientProducer = session.createProducer(topic);
       ClientMessage message = session.createMessage(true);
       message.getBodyBuffer().writeString("teststring");
       clientProducer.send(message);
@@ -948,7 +1020,7 @@ public class ActiveMQMessageHandlerTest extends ActiveMQRATestBase {
             latch.countDown();
             if (pause && messages.getAndIncrement() % 2 == 0) {
                try {
-                  IntegrationTestLogger.LOGGER.info("pausing for 2 secs");
+                  instanceLog.debug("pausing for 2 secs");
                   Thread.sleep(2000);
                } catch (InterruptedException e) {
                   interrupted.incrementAndGet();

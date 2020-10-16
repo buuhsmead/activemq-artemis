@@ -23,6 +23,7 @@ import java.util.Map;
 import org.apache.activemq.artemis.core.config.FileDeploymentManager;
 import org.apache.activemq.artemis.core.config.impl.FileConfiguration;
 import org.apache.activemq.artemis.core.config.impl.LegacyJMSConfiguration;
+import org.apache.activemq.artemis.core.server.ActivateCallback;
 import org.apache.activemq.artemis.core.server.ActiveMQComponent;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ServiceComponent;
@@ -33,6 +34,7 @@ import org.apache.activemq.artemis.spi.core.security.ActiveMQSecurityManager;
 public class FileBroker implements Broker {
 
    private final String configurationUrl;
+   private ActivateCallback activateCallback;
 
    private boolean started;
 
@@ -40,9 +42,10 @@ public class FileBroker implements Broker {
 
    private Map<String, ActiveMQComponent> components;
 
-   public FileBroker(ServerDTO broker, ActiveMQSecurityManager security) {
+   public FileBroker(ServerDTO broker, ActiveMQSecurityManager security, ActivateCallback activateCallback) {
       this.securityManager = security;
       this.configurationUrl = broker.configuration;
+      this.activateCallback = activateCallback;
    }
 
    @Override
@@ -51,18 +54,9 @@ public class FileBroker implements Broker {
          return;
       }
 
-      //todo if we start to pullout more configs from the main config then we should pull out the configuration objects from factories if available
-      FileConfiguration configuration = new FileConfiguration();
-
-      LegacyJMSConfiguration legacyJMSConfiguration = new LegacyJMSConfiguration(configuration);
-
-      FileDeploymentManager fileDeploymentManager = new FileDeploymentManager(configurationUrl);
-      fileDeploymentManager.addDeployable(configuration).addDeployable(legacyJMSConfiguration);
-      fileDeploymentManager.readConfiguration();
-
-      createDirectories(configuration);
-
-      components = fileDeploymentManager.buildService(securityManager, ManagementFactory.getPlatformMBeanServer());
+      if (components == null) {
+         createComponents();
+      }
 
       ArrayList<ActiveMQComponent> componentsByStartOrder = getComponentsByStartOrder(components);
       ActiveMQBootstrapLogger.LOGGER.serverStarting();
@@ -110,6 +104,22 @@ public class FileBroker implements Broker {
 
    public Map<String, ActiveMQComponent> getComponents() {
       return components;
+   }
+
+   @Override
+   public void createComponents() throws Exception {
+      //todo if we start to pullout more configs from the main config then we should pull out the configuration objects from factories if available
+      FileConfiguration configuration = new FileConfiguration();
+
+      LegacyJMSConfiguration legacyJMSConfiguration = new LegacyJMSConfiguration(configuration);
+
+      FileDeploymentManager fileDeploymentManager = new FileDeploymentManager(configurationUrl);
+      fileDeploymentManager.addDeployable(configuration).addDeployable(legacyJMSConfiguration);
+      fileDeploymentManager.readConfiguration();
+
+      createDirectories(configuration);
+
+      components = fileDeploymentManager.buildService(securityManager, ManagementFactory.getPlatformMBeanServer(), activateCallback);
    }
 
    /*

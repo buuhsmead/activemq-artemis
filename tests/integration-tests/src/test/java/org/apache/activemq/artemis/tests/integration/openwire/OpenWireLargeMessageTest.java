@@ -25,6 +25,7 @@ import javax.jms.Queue;
 import javax.jms.Session;
 import java.util.Map;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.paging.PagingStore;
@@ -49,8 +50,8 @@ public class OpenWireLargeMessageTest extends BasicOpenWireTest {
    public void setUp() throws Exception {
       this.realStore = true;
       super.setUp();
-      server.createQueue(lmAddress, RoutingType.ANYCAST, lmAddress, null, true, false);
-      server.createQueue(lmDropAddress, RoutingType.ANYCAST, lmDropAddress, null, true, false);
+      server.createQueue(new QueueConfiguration(lmAddress).setRoutingType(RoutingType.ANYCAST));
+      server.createQueue(new QueueConfiguration(lmDropAddress).setRoutingType(RoutingType.ANYCAST));
    }
 
    @Test
@@ -75,7 +76,7 @@ public class OpenWireLargeMessageTest extends BasicOpenWireTest {
       addressSettingsMap.put("#", new AddressSettings().setAutoCreateQueues(false).setAutoCreateAddresses(false).setDeadLetterAddress(new SimpleString("ActiveMQ.DLQ")).setAutoCreateAddresses(true));
       addressSettingsMap.put(lmDropAddress.toString(),
                              new AddressSettings()
-                                .setMaxSizeBytes(15 * 1024 * 1024)
+                                .setMaxSizeBytes(100 * 1024)
                                 .setAddressFullMessagePolicy(AddressFullMessagePolicy.DROP)
                                 .setMessageCounterHistoryDayLimit(10)
                                 .setRedeliveryDelay(0)

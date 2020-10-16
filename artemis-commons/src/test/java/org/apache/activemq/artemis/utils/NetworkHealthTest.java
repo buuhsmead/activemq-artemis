@@ -152,12 +152,10 @@ public class NetworkHealthTest {
          public void run() {
             super.run();
             latch.countDown();
-            System.out.println("Check");
          }
       });
       check.addComponent(component);
-      InetAddress address = InetAddress.getByName("127.0.0.1");
-      check.addAddress(address);
+      check.addAddress("127.0.0.1");
 
       component.stop();
 
@@ -325,6 +323,16 @@ public class NetworkHealthTest {
 
       Assert.assertEquals(1, isReacheable.get());
       Assert.assertEquals(0, purePing.get());
+   }
+
+   @Test(timeout = 30_000)
+   public void testPurePingTimeout() throws Exception {
+      NetworkHealthCheck check = new NetworkHealthCheck(null, 100, 2000);
+
+      long time = System.currentTimeMillis();
+      //[RFC1166] reserves the address block 192.0.2.0/24 for test.
+      Assert.assertFalse(check.purePing(InetAddress.getByName("192.0.2.0")));
+      Assert.assertTrue(System.currentTimeMillis() - time >= 2000);
    }
 
 }

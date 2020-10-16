@@ -26,6 +26,8 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
+import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
+import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.Pair;
 import org.apache.activemq.artemis.api.core.SimpleString;
@@ -46,6 +48,7 @@ import org.apache.activemq.artemis.core.persistence.QueueBindingInfo;
 import org.apache.activemq.artemis.core.persistence.AddressQueueStatus;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
 import org.apache.activemq.artemis.core.persistence.config.PersistedAddressSetting;
+import org.apache.activemq.artemis.core.persistence.config.PersistedDivertConfiguration;
 import org.apache.activemq.artemis.core.persistence.config.PersistedRoles;
 import org.apache.activemq.artemis.core.persistence.impl.PageCountPending;
 import org.apache.activemq.artemis.core.postoffice.Binding;
@@ -224,7 +227,8 @@ public class NullStorageManager implements StorageManager {
    }
 
    @Override
-   public void deleteMessage(final long messageID) throws Exception {
+   public boolean deleteMessage(final long messageID) throws Exception {
+      return true;
    }
 
    @Override
@@ -236,7 +240,8 @@ public class NullStorageManager implements StorageManager {
    }
 
    @Override
-   public void updateScheduledDeliveryTime(final MessageReference ref) throws Exception {
+   public boolean updateScheduledDeliveryTime(final MessageReference ref) throws Exception {
+      return true;
    }
 
    @Override
@@ -248,7 +253,8 @@ public class NullStorageManager implements StorageManager {
    }
 
    @Override
-   public void updateDeliveryCount(final MessageReference ref) throws Exception {
+   public boolean updateDeliveryCount(final MessageReference ref) throws Exception {
+      return true;
    }
 
    @Override
@@ -296,6 +302,11 @@ public class NullStorageManager implements StorageManager {
       largeMessage.setMessageID(id);
 
       return largeMessage;
+   }
+
+   @Override
+   public LargeServerMessage largeMessageCreated(long id, LargeServerMessage largeMessage) throws Exception {
+      return null;
    }
 
    @Override
@@ -432,6 +443,19 @@ public class NullStorageManager implements StorageManager {
    }
 
    @Override
+   public void storeDivertConfiguration(PersistedDivertConfiguration persistedDivertConfiguration) throws Exception {
+   }
+
+   @Override
+   public void deleteDivertConfiguration(String divertName) throws Exception {
+   }
+
+   @Override
+   public List<PersistedDivertConfiguration> recoverDivertConfigurations() {
+      return null;
+   }
+
+   @Override
    public void storeSecurityRoles(final PersistedRoles persistedRoles) throws Exception {
    }
 
@@ -550,6 +574,10 @@ public class NullStorageManager implements StorageManager {
       // no-op
    }
 
+   @Override
+   public void deleteLargeMessageBody(LargeServerMessage largeServerMessage) throws ActiveMQException {
+
+   }
 
    @Override
    public boolean addToPage(PagingStore store,
@@ -566,7 +594,11 @@ public class NullStorageManager implements StorageManager {
        * <p>
        * The reasoning is that exposing the lock is more explicit and therefore `less bad`.
        */
-      return store.page(msg, tx, listCtx, null);
+      if (store != null) {
+         return store.page(msg, tx, listCtx, null);
+      } else {
+         return false;
+      }
    }
 
    @Override
@@ -582,6 +614,11 @@ public class NullStorageManager implements StorageManager {
    @Override
    public void addBytesToLargeMessage(SequentialFile appendFile, long messageID, byte[] bytes) throws Exception {
       // no-op
+   }
+
+   @Override
+   public void addBytesToLargeMessage(SequentialFile file, long messageId, ActiveMQBuffer bytes) throws Exception {
+
    }
 
    @Override

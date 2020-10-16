@@ -24,7 +24,9 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.concurrent.atomic.AtomicLong;
 
+import io.netty.util.internal.PlatformDependent;
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -37,7 +39,11 @@ import org.apache.activemq.artemis.core.management.impl.QueueControlImpl;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.utils.RandomUtil;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
+
+import static org.hamcrest.CoreMatchers.equalTo;
+import static org.hamcrest.CoreMatchers.not;
 
 import javax.management.openmbean.CompositeData;
 
@@ -52,6 +58,10 @@ public class LargeMessageCompressTest extends LargeMessageTest {
    public LargeMessageCompressTest(StoreConfiguration.StoreType storeType) {
       super(storeType);
       isCompressedTest = true;
+   }
+
+   @Override
+   protected void validateLargeMessageComplete(ActiveMQServer server) throws Exception {
    }
 
    @Override
@@ -76,7 +86,7 @@ public class LargeMessageCompressTest extends LargeMessageTest {
 
       ClientSession session = addClientSession(sf.createSession(false, false, false));
 
-      session.createTemporaryQueue(ADDRESS, ADDRESS);
+      session.createQueue(new QueueConfiguration(ADDRESS).setAddress(ADDRESS).setDurable(false).setTemporary(true));
 
       ClientProducer producer = session.createProducer(ADDRESS);
 
@@ -125,6 +135,46 @@ public class LargeMessageCompressTest extends LargeMessageTest {
    }
 
    @Test
+   public void testNoDirectByteBufLeaksOnLargeMessageCompression() throws Exception {
+      Assume.assumeThat(PlatformDependent.usedDirectMemory(), not(equalTo(Long.valueOf(-1))));
+      final int messageSize = (int) (3.5 * ActiveMQClient.DEFAULT_MIN_LARGE_MESSAGE_SIZE);
+
+      ActiveMQServer server = createServer(true, isNetty());
+
+      server.start();
+
+      ClientSessionFactory sf = createSessionFactory(locator);
+
+      ClientSession session = addClientSession(sf.createSession(false, false, false));
+
+      session.createQueue(new QueueConfiguration(ADDRESS).setAddress(ADDRESS).setDurable(false).setTemporary(true));
+
+      ClientProducer producer = session.createProducer(ADDRESS);
+
+      Message clientFile = createLargeClientMessageStreaming(session, messageSize, true);
+
+      producer.send(clientFile);
+
+      session.commit();
+
+      session.start();
+
+      ClientConsumer consumer = session.createConsumer(ADDRESS);
+      final long usedDirectMemoryBeforeReceive = PlatformDependent.usedDirectMemory();
+      ClientMessage msg1 = consumer.receive(1000);
+      Assert.assertNotNull(msg1);
+      final long usedDirectMemoryAfterReceive = PlatformDependent.usedDirectMemory();
+      Assert.assertEquals("large message compression is leaking some Netty direct ByteBuff",
+                          usedDirectMemoryBeforeReceive, usedDirectMemoryAfterReceive);
+      msg1.acknowledge();
+      session.commit();
+
+      consumer.close();
+
+      session.close();
+   }
+
+   @Test
    public void testLargeMessageCompression() throws Exception {
       final int messageSize = (int) (3.5 * ActiveMQClient.DEFAULT_MIN_LARGE_MESSAGE_SIZE);
 
@@ -136,7 +186,7 @@ public class LargeMessageCompressTest extends LargeMessageTest {
 
       ClientSession session = addClientSession(sf.createSession(false, false, false));
 
-      session.createTemporaryQueue(ADDRESS, ADDRESS);
+      session.createQueue(new QueueConfiguration(ADDRESS).setAddress(ADDRESS).setDurable(false).setTemporary(true));
 
       ClientProducer producer = session.createProducer(ADDRESS);
 
@@ -179,7 +229,7 @@ public class LargeMessageCompressTest extends LargeMessageTest {
 
       ClientSession session = addClientSession(sf.createSession(false, false, false));
 
-      session.createTemporaryQueue(ADDRESS, ADDRESS);
+      session.createQueue(new QueueConfiguration(ADDRESS).setAddress(ADDRESS).setDurable(false).setTemporary(true));
 
       ClientProducer producer = session.createProducer(ADDRESS);
 
@@ -237,7 +287,7 @@ public class LargeMessageCompressTest extends LargeMessageTest {
 
       ClientSession session = addClientSession(sf.createSession(false, false, false));
 
-      session.createTemporaryQueue(ADDRESS, ADDRESS);
+      session.createQueue(new QueueConfiguration(ADDRESS).setAddress(ADDRESS).setDurable(false).setTemporary(true));
 
       ClientProducer producer = session.createProducer(ADDRESS);
 
@@ -287,8 +337,6 @@ public class LargeMessageCompressTest extends LargeMessageTest {
    public void testHugeStreamingSpacesCompressed() throws Exception {
       final long messageSize = 1024L * 1024L;
 
-      System.out.println("Message size = " + messageSize);
-
       ActiveMQServer server = createServer(true, isNetty());
 
       server.start();
@@ -300,7 +348,7 @@ public class LargeMessageCompressTest extends LargeMessageTest {
 
       ClientSession session = addClientSession(sf.createSession(false, false, false));
 
-      session.createQueue(ADDRESS, ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(ADDRESS));
 
       ClientProducer producer = session.createProducer(ADDRESS);
 
@@ -376,7 +424,7 @@ public class LargeMessageCompressTest extends LargeMessageTest {
 
       ClientSession session = addClientSession(sf.createSession(false, false, false));
 
-      session.createQueue(ADDRESS, ADDRESS, true);
+      session.createQueue(new QueueConfiguration(ADDRESS));
 
       ClientProducer producer = session.createProducer(ADDRESS);
 

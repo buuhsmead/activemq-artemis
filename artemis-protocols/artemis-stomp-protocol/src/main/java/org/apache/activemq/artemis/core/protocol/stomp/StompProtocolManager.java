@@ -38,6 +38,7 @@ import org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ActiveMQServerLogger;
 import org.apache.activemq.artemis.core.server.ServerSession;
+import org.apache.activemq.artemis.logs.AuditLogger;
 import org.apache.activemq.artemis.spi.core.protocol.AbstractProtocolManager;
 import org.apache.activemq.artemis.spi.core.protocol.ConnectionEntry;
 import org.apache.activemq.artemis.spi.core.protocol.ProtocolManagerFactory;
@@ -154,8 +155,13 @@ public class StompProtocolManager extends AbstractProtocolManager<StompFrame, St
          }
 
          try {
-            invokeInterceptors(this.incomingInterceptors, request, conn);
+            if (AuditLogger.isAnyLoggingEnabled()) {
+               AuditLogger.setRemoteAddress(connection.getRemoteAddress());
+            }
             conn.logFrame(request, true);
+            if (invokeInterceptors(this.incomingInterceptors, request, conn) != null) {
+               return;
+            }
             conn.handleFrame(request);
          } finally {
             server.getStorageManager().clearContext();
@@ -187,7 +193,9 @@ public class StompProtocolManager extends AbstractProtocolManager<StompFrame, St
    // Public --------------------------------------------------------
 
    public boolean send(final StompConnection connection, final StompFrame frame) {
-      invokeInterceptors(this.outgoingInterceptors, frame, connection);
+      if (invokeInterceptors(this.outgoingInterceptors, frame, connection) != null) {
+         return false;
+      }
       connection.logFrame(frame, false);
 
       synchronized (connection) {
@@ -219,7 +227,7 @@ public class StompProtocolManager extends AbstractProtocolManager<StompFrame, St
       if (stompSession == null) {
          stompSession = new StompSession(connection, this, server.getStorageManager().newContext(server.getExecutorFactory().getExecutor()));
          String name = UUIDGenerator.getInstance().generateStringUUID();
-         ServerSession session = server.createSession(name, connection.getLogin(), connection.getPasscode(), ActiveMQClient.DEFAULT_MIN_LARGE_MESSAGE_SIZE, connection, !transacted, false, false, false, null, stompSession, true, server.newOperationContext(), getPrefixes());
+         ServerSession session = server.createSession(name, connection.getLogin(), connection.getPasscode(), ActiveMQClient.DEFAULT_MIN_LARGE_MESSAGE_SIZE, connection, !transacted, false, false, false, null, stompSession, true, server.newOperationContext(), getPrefixes(), getSecurityDomain());
          stompSession.setServerSession(session);
          sessions.put(id, stompSession);
       }
@@ -333,12 +341,13 @@ public class StompProtocolManager extends AbstractProtocolManager<StompFrame, St
    // Inner classes -------------------------------------------------
 
    public StompPostReceiptFunction subscribe(StompConnection connection,
-                         String subscriptionID,
-                         String durableSubscriptionName,
-                         String destination,
-                         String selector,
-                         String ack,
-                         boolean noLocal) throws Exception {
+                                             String subscriptionID,
+                                             String durableSubscriptionName,
+                                             String destination,
+                                             String selector,
+                                             String ack,
+                                             boolean noLocal,
+                                             Integer consumerWindowSize) throws Exception {
       StompSession stompSession = getSession(connection);
       stompSession.setNoLocal(noLocal);
       if (stompSession.containsSubscription(subscriptionID)) {
@@ -346,7 +355,7 @@ public class StompProtocolManager extends AbstractProtocolManager<StompFrame, St
             ". Either use unique subscription IDs or do not create multiple subscriptions for the same destination");
       }
       long consumerID = server.getStorageManager().generateID();
-      return stompSession.addSubscription(consumerID, subscriptionID, connection.getClientID(), durableSubscriptionName, destination, selector, ack);
+      return stompSession.addSubscription(consumerID, subscriptionID, connection.getClientID(), durableSubscriptionName, destination, selector, ack, consumerWindowSize);
    }
 
    public void unsubscribe(StompConnection connection,

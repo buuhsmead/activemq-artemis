@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -96,7 +97,7 @@ public class NettyReplicationStopTest extends FailoverTestBase {
 
       ClientSession session = sf.createSession(true, true);
 
-      session.createQueue(ADDRESS, ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(ADDRESS));
 
       ClientProducer producer = session.createProducer(ADDRESS);
 
@@ -123,12 +124,8 @@ public class NettyReplicationStopTest extends FailoverTestBase {
 
                   ClientMessage message = session.createMessage(true).putIntProperty("i", code);
                   alignedOnSend.countDown();
-                  System.out.println("blocking!!");
                   producer.send(message);
                   codesSent.add(code);
-
-                  System.out.println("Sent!");
-
                } catch (Exception e) {
                   // that's ok;
                   e.printStackTrace(); // logging just for debug & reference

@@ -16,10 +16,14 @@
  */
 package org.apache.activemq.artemis.tests.integration.federation;
 
-import java.util.ArrayList;
-import java.util.List;
 import javax.management.MBeanServer;
 import javax.management.MBeanServerFactory;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
+import org.apache.activemq.artemis.api.core.RoutingType;
+import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ActiveMQServers;
@@ -47,9 +51,24 @@ public class FederatedTestBase extends ActiveMQTestBase {
             config.addConnectorConfiguration("server" + j, "vm://" + j);
          }
          ActiveMQServer server = addServer(ActiveMQServers.newActiveMQServer(config, mBeanServer, false));
+
          servers.add(server);
          server.start();
+
+         configureQueues(server);
       }
+   }
+
+   protected void configureQueues(ActiveMQServer server) throws Exception {
+   }
+
+   protected void createSimpleQueue(ActiveMQServer server, String queueName) throws Exception {
+      SimpleString simpleStringQueueName = SimpleString.toSimpleString(queueName);
+      try {
+         server.createQueue(new QueueConfiguration(simpleStringQueueName).setRoutingType(RoutingType.ANYCAST).setAutoCreateAddress(true));
+      } catch (Exception ignored) {
+      }
+
    }
 
    protected int numberOfServers() {

@@ -26,6 +26,7 @@ import javax.jms.MessageProducer;
 import javax.jms.Session;
 import javax.jms.Topic;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
@@ -67,6 +68,7 @@ public class AmqpFullyQualifiedNameTest extends JMSClientTestSupport {
 
    @Test
    public void testFQQNTopicWhenQueueDoesNotExist() throws Exception {
+      server.getAddressSettingsRepository().addMatch("#", new AddressSettings().setAutoCreateQueues(false));
       Exception e = null;
       String queueName = "testQueue";
 
@@ -87,6 +89,47 @@ public class AmqpFullyQualifiedNameTest extends JMSClientTestSupport {
    }
 
    @Test
+   public void testTopicFQQNSendAndConsumeAutoCreate() throws Exception {
+      internalTopicFQQNSendAndConsume(true);
+   }
+
+   @Test
+   public void testTopicFQQNSendAndConsumeManualCreate() throws Exception {
+      internalTopicFQQNSendAndConsume(false);
+   }
+
+   private void internalTopicFQQNSendAndConsume(boolean autocreate) throws Exception {
+      if (autocreate) {
+         server.getAddressSettingsRepository().addMatch("#", new AddressSettings().setAutoCreateAddresses(true).setAutoCreateQueues(true));
+      } else {
+         server.createQueue(new QueueConfiguration(anycastQ1).setAddress(multicastAddress).setDurable(false));
+      }
+
+      try (Connection connection = createConnection(false)) {
+         connection.setClientID("FQQNconn");
+         connection.start();
+         Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
+         Topic topic = session.createTopic(CompositeAddress.toFullyQualified(multicastAddress, anycastQ1).toString());
+
+         MessageConsumer consumer1 = session.createConsumer(topic);
+         MessageConsumer consumer2 = session.createConsumer(topic);
+         MessageConsumer consumer3 = session.createConsumer(topic);
+
+         MessageProducer producer = session.createProducer(topic);
+
+         producer.send(session.createMessage());
+
+         //only 1 consumer receives the message as they're all connected to the same FQQN
+         Message m = consumer1.receive(2000);
+         assertNotNull(m);
+         m = consumer2.receiveNoWait();
+         assertNull(m);
+         m = consumer3.receiveNoWait();
+         assertNull(m);
+      }
+   }
+
+   @Test
    public void testConsumeQueueToFQQNWrongQueueAttachedToAnotherAddress() throws Exception {
 
       // Create 2 Queues: address1::queue1, address2::queue2
@@ -95,8 +138,8 @@ public class AmqpFullyQualifiedNameTest extends JMSClientTestSupport {
       String queue1 = "q1";
       String queue2 = "q2";
 
-      server.createQueue(SimpleString.toSimpleString(address1), RoutingType.ANYCAST, SimpleString.toSimpleString(queue1), null, true, false, -1, false, true);
-      server.createQueue(SimpleString.toSimpleString(address2), RoutingType.ANYCAST, SimpleString.toSimpleString(queue2), null, true, false, -1, false, true);
+      server.createQueue(new QueueConfiguration(queue1).setAddress(address1).setRoutingType(RoutingType.ANYCAST));
+      server.createQueue(new QueueConfiguration(queue2).setAddress(address2).setRoutingType(RoutingType.ANYCAST));
 
       Exception e = null;
 
@@ -127,8 +170,8 @@ public class AmqpFullyQualifiedNameTest extends JMSClientTestSupport {
       String queue1 = "q1";
       String queue2 = "q2";
 
-      server.createQueue(SimpleString.toSimpleString(address1), RoutingType.MULTICAST, SimpleString.toSimpleString(queue1), null, true, false, -1, false, true);
-      server.createQueue(SimpleString.toSimpleString(address2), RoutingType.MULTICAST, SimpleString.toSimpleString(queue2), null, true, false, -1, false, true);
+      server.createQueue(new QueueConfiguration(queue1).setAddress(address1));
+      server.createQueue(new QueueConfiguration(queue2).setAddress(address2));
 
       Exception e = null;
 
@@ -156,7 +199,7 @@ public class AmqpFullyQualifiedNameTest extends JMSClientTestSupport {
    public void testTopic() throws Exception {
 
       SimpleString queueName = new SimpleString("someAddress");
-      server.createQueue(multicastAddress, RoutingType.MULTICAST, queueName, null, false, false);
+      server.createQueue(new QueueConfiguration(queueName).setAddress(multicastAddress).setDurable(false));
       Connection connection = createConnection(false);
 
       try {
@@ -183,7 +226,7 @@ public class AmqpFullyQualifiedNameTest extends JMSClientTestSupport {
 
          Bindings bindings = server.getPostOffice().getBindingsForAddress(multicastAddress);
          for (Binding b : bindings.getBindings()) {
-            System.out.println("checking binidng " + b.getUniqueName() + " " + ((LocalQueueBinding)b).getQueue().getDeliveringMessages());
+            instanceLog.debug("checking binidng " + b.getUniqueName() + " " + ((LocalQueueBinding)b).getQueue().getDeliveringMessages());
             SimpleString qName = b.getUniqueName();
             //do FQQN query
             QueueQueryResult result = server.queueQuery(CompositeAddress.toFullyQualified(multicastAddress, qName));
@@ -204,8 +247,8 @@ public class AmqpFullyQualifiedNameTest extends JMSClientTestSupport {
 
       SimpleString queueName1 = new SimpleString("sub.queue1");
       SimpleString queueName2 = new SimpleString("sub.queue2");
-      server.createQueue(multicastAddress, RoutingType.MULTICAST, queueName1, null, false, false);
-      server.createQueue(multicastAddress, RoutingType.MULTICAST, queueName2, null, false, false);
+      server.createQueue(new QueueConfiguration(queueName1).setAddress(multicastAddress).setDurable(false));
+      server.createQueue(new QueueConfiguration(queueName2).setAddress(multicastAddress).setDurable(false));
       Connection connection = createConnection(false);
 
       try {
@@ -265,7 +308,7 @@ public class AmqpFullyQualifiedNameTest extends JMSClientTestSupport {
          producer3.send(session.createMessage());
          assertTrue(Wait.waitFor(() -> server.locateQueue(anycastQ3).getMessageCount() == 5, 2000, 200));
 
-         System.out.println("Queue is: " + q1);
+         instanceLog.debug("Queue is: " + q1);
          MessageConsumer consumer1 = session.createConsumer(q1);
          MessageConsumer consumer2 = session.createConsumer(q2);
          MessageConsumer consumer3 = session.createConsumer(q3);
@@ -313,7 +356,7 @@ public class AmqpFullyQualifiedNameTest extends JMSClientTestSupport {
     */
    @Test
    public void testQueueSpecial() throws Exception {
-      server.createQueue(anycastAddress, RoutingType.ANYCAST, anycastQ1, null, true, false, -1, false, true);
+      server.createQueue(new QueueConfiguration(anycastQ1).setAddress(anycastAddress).setRoutingType(RoutingType.ANYCAST));
 
       Connection connection = createConnection();
       Exception expectedException = null;

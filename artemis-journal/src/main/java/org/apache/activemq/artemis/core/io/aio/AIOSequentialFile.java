@@ -79,6 +79,11 @@ public class AIOSequentialFile extends AbstractSequentialFile {
    }
 
    @Override
+   public ByteBuffer map(int position, long size) throws IOException {
+      return null;
+   }
+
+   @Override
    public boolean isOpen() {
       return opened;
    }
@@ -330,19 +335,6 @@ public class AIOSequentialFile extends AbstractSequentialFile {
    @Override
    public String toString() {
       return "AIOSequentialFile:" + getFile().getAbsolutePath();
-   }
-
-   // Protected methods
-   // -----------------------------------------------------------------------------------------------------
-
-   @Override
-   protected ByteBuffer newBuffer(int size, int limit) {
-      size = factory.calculateBlockSize(size);
-      limit = factory.calculateBlockSize(limit);
-
-      ByteBuffer buffer = factory.newBuffer(size);
-      buffer.limit(limit);
-      return buffer;
    }
 
    // Private methods

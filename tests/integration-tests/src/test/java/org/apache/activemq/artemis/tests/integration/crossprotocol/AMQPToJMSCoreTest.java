@@ -23,6 +23,7 @@ import javax.jms.Session;
 import java.net.URI;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.jms.ActiveMQJMSClient;
@@ -64,7 +65,7 @@ public class AMQPToJMSCoreTest extends ActiveMQTestBase {
                                                                         .setDeadLetterAddress(new SimpleString("ActiveMQ.DLQ")));
       serverConfig.setSecurityEnabled(false);
       coreQueue = new SimpleString(queueName);
-      server.createQueue(coreQueue, RoutingType.ANYCAST, coreQueue, null, false, false);
+      server.createQueue(new QueueConfiguration(coreQueue).setRoutingType(RoutingType.ANYCAST).setDurable(false));
    }
 
    @Override
@@ -76,7 +77,6 @@ public class AMQPToJMSCoreTest extends ActiveMQTestBase {
 
    @Test
    public void testMessageDestination() throws Exception {
-      System.out.println("foo");
       AmqpClient client = new AmqpClient(new URI("tcp://127.0.0.1:61616"), null, null);
       AmqpConnection amqpconnection = client.connect();
       try {

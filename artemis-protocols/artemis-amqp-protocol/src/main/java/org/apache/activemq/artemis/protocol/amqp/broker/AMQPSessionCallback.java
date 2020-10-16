@@ -19,17 +19,19 @@ package org.apache.activemq.artemis.protocol.amqp.broker;
 import java.util.Map;
 import java.util.concurrent.Executor;
 
+import org.apache.activemq.artemis.Closeable;
 import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
 import org.apache.activemq.artemis.api.core.ActiveMQAddressExistsException;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ActiveMQQueueExistsException;
 import org.apache.activemq.artemis.api.core.ActiveMQSecurityException;
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
 import org.apache.activemq.artemis.core.io.IOCallback;
-import org.apache.activemq.artemis.core.message.impl.CoreMessageObjectPools;
+import org.apache.activemq.artemis.core.persistence.CoreMessageObjectPools;
 import org.apache.activemq.artemis.core.paging.PagingManager;
 import org.apache.activemq.artemis.core.paging.PagingStore;
 import org.apache.activemq.artemis.core.persistence.OperationContext;
@@ -61,7 +63,6 @@ import org.apache.activemq.artemis.spi.core.protocol.SessionCallback;
 import org.apache.activemq.artemis.spi.core.remoting.Connection;
 import org.apache.activemq.artemis.spi.core.remoting.ReadyListener;
 import org.apache.activemq.artemis.utils.IDGenerator;
-import org.apache.activemq.artemis.utils.RunnableEx;
 import org.apache.activemq.artemis.utils.SelectorTranslator;
 import org.apache.activemq.artemis.utils.SimpleIDGenerator;
 import org.apache.activemq.artemis.utils.UUIDGenerator;
@@ -106,8 +107,7 @@ public class AMQPSessionCallback implements SessionCallback {
 
    private final boolean directDeliver;
 
-
-   private CoreMessageObjectPools coreMessageObjectPools = new CoreMessageObjectPools();
+   private final CoreMessageObjectPools coreMessageObjectPools = new CoreMessageObjectPools();
 
    private final AddressQueryCache<AddressQueryResult> addressQueryCache = new AddressQueryCache<>();
 
@@ -129,13 +129,36 @@ public class AMQPSessionCallback implements SessionCallback {
       this.directDeliver = manager.isDirectDeliver();
    }
 
+   public StorageManager getStorageManager() {
+      return storageManager;
+   }
+
+   public CoreMessageObjectPools getCoreMessageObjectPools() {
+      return coreMessageObjectPools;
+   }
+
    @Override
    public boolean isWritable(ReadyListener callback, Object protocolContext) {
       ProtonServerSenderContext senderContext = (ProtonServerSenderContext) protocolContext;
       return transportConnection.isWritable(callback) && senderContext.getSender().getLocalState() != EndpointState.CLOSED;
    }
 
-   public void withinContext(RunnableEx run) throws Exception {
+   public void withinSessionExecutor(Runnable run) {
+      sessionExecutor.execute(() -> {
+         try {
+            withinContext(run);
+         } catch (Exception e) {
+            logger.warn(e.getMessage(), e);
+         }
+      });
+
+   }
+
+   public void addCloseable(Closeable closeable) {
+      serverSession.addCloseable(closeable);
+   }
+
+   public void withinContext(Runnable run) throws Exception {
       OperationContext context = recoverContext();
       try {
          run.run();
@@ -183,7 +206,7 @@ public class AMQPSessionCallback implements SessionCallback {
                                                         false, // boolean autoCommitAcks,
                                                         false, // boolean preAcknowledge,
                                                         true, //boolean xa,
-                                                        (String) null, this, true, operationContext, manager.getPrefixes());
+                                                        (String) null, this, true, operationContext, manager.getPrefixes(), manager.getSecurityDomain());
    }
 
    @Override
@@ -235,7 +258,7 @@ public class AMQPSessionCallback implements SessionCallback {
                                     RoutingType routingType,
                                     SimpleString filter) throws Exception {
       try {
-         serverSession.createQueue(address, queueName, routingType, filter, true, false);
+         serverSession.createQueue(new QueueConfiguration(queueName).setAddress(address).setRoutingType(routingType).setFilterString(filter).setTemporary(true).setDurable(false));
       } catch (ActiveMQSecurityException se) {
          throw ActiveMQAMQPProtocolMessageBundle.BUNDLE.securityErrorCreatingTempDestination(se.getMessage());
       }
@@ -246,7 +269,7 @@ public class AMQPSessionCallback implements SessionCallback {
                                           SimpleString queueName,
                                           SimpleString filter) throws Exception {
       try {
-         serverSession.createQueue(address, queueName, routingType, filter, false, true, 1, false, false);
+         serverSession.createQueue(new QueueConfiguration(queueName).setAddress(address).setRoutingType(routingType).setFilterString(filter).setMaxConsumers(1));
       } catch (ActiveMQSecurityException se) {
          throw ActiveMQAMQPProtocolMessageBundle.BUNDLE.securityErrorCreatingConsumer(se.getMessage());
       }
@@ -257,7 +280,9 @@ public class AMQPSessionCallback implements SessionCallback {
                                         SimpleString queueName,
                                         SimpleString filter) throws Exception {
       try {
-         serverSession.createQueue(address, queueName, routingType, filter, false, true, -1, false, false);
+         serverSession.createSharedQueue(new QueueConfiguration(queueName).setAddress(address).setRoutingType(routingType).setFilterString(filter));
+      } catch (ActiveMQQueueExistsException alreadyExists) {
+         // nothing to be done.. just ignore it. if you have many consumers all doing the same another one probably already done it
       } catch (ActiveMQSecurityException se) {
          throw ActiveMQAMQPProtocolMessageBundle.BUNDLE.securityErrorCreatingConsumer(se.getMessage());
       }
@@ -268,7 +293,7 @@ public class AMQPSessionCallback implements SessionCallback {
                                          SimpleString queueName,
                                          SimpleString filter) throws Exception {
       try {
-         serverSession.createQueue(address, queueName, routingType, filter, false, false, -1, true, true);
+         serverSession.createSharedQueue(new QueueConfiguration(queueName).setAddress(address).setRoutingType(routingType).setFilterString(filter).setDurable(false));
       } catch (ActiveMQSecurityException se) {
          throw ActiveMQAMQPProtocolMessageBundle.BUNDLE.securityErrorCreatingConsumer(se.getMessage());
       } catch (ActiveMQQueueExistsException e) {
@@ -281,7 +306,7 @@ public class AMQPSessionCallback implements SessionCallback {
 
       if (!queueQueryResult.isExists() && queueQueryResult.isAutoCreateQueues() && autoCreate) {
          try {
-            serverSession.createQueue(queueName, queueName, routingType, null, false, true, true);
+            serverSession.createQueue(new QueueConfiguration(queueName).setRoutingType(routingType).setAutoCreated(true));
          } catch (ActiveMQQueueExistsException e) {
             // The queue may have been created by another thread in the mean time.  Catch and do nothing.
          }
@@ -323,7 +348,7 @@ public class AMQPSessionCallback implements SessionCallback {
          if (manager.getServer().locateQueue(unPrefixedAddress) == null) {
             if (addressSettings.isAutoCreateQueues()) {
                try {
-                  serverSession.createQueue(address, address, routingType, null, false, true, true);
+                  serverSession.createQueue(new QueueConfiguration(address).setRoutingType(routingType).setAutoCreated(true));
                } catch (ActiveMQQueueExistsException e) {
                   // The queue may have been created by another thread in the mean time.  Catch and do nothing.
                }
@@ -425,29 +450,41 @@ public class AMQPSessionCallback implements SessionCallback {
       ((ServerConsumer) consumer).receiveCredits(-1);
    }
 
-   public void serverSend(final ProtonServerReceiverContext context,
-                          final Transaction transaction,
-                          final Receiver receiver,
-                          final Delivery delivery,
+   public AMQPStandardMessage createStandardMessage(Delivery delivery, ReadableBuffer data) {
+      return new AMQPStandardMessage(delivery.getMessageFormat(), data, null, coreMessageObjectPools);
+   }
+
+   public void serverSend(ProtonServerReceiverContext context,
+                          Transaction transaction,
+                          Receiver receiver,
+                          Delivery delivery,
                           SimpleString address,
-                          int messageFormat,
-                          ReadableBuffer data,
-                          RoutingContext routingContext) throws Exception {
-      AMQPMessage message = new AMQPMessage(messageFormat, data, null, coreMessageObjectPools);
+                          RoutingContext routingContext,
+                          AMQPMessage message) throws Exception {
+
+      context.incrementSettle();
+
+      RoutingType routingType = null;
       if (address != null) {
+         // Fixed-address producer
          message.setAddress(address);
+         routingType = context.getDefRoutingType();
       } else {
-         // Anonymous relay must set a To value
+         // Anonymous-relay producer, message must carry a To value
          address = message.getAddressSimpleString();
          if (address == null) {
             // Errors are not currently handled as required by AMQP 1.0 anonterm-v1.0
-            rejectMessage(delivery, Symbol.valueOf("failed"), "Missing 'to' field for message sent to an anonymous producer");
+            rejectMessage(context, delivery, Symbol.valueOf("failed"), "Missing 'to' field for message sent to an anonymous producer");
             return;
+         }
+
+         routingType = message.getRoutingType();
+         if (routingType == null) {
+            routingType = context.getRoutingType(receiver, address);
          }
       }
 
       //here check queue-autocreation
-      RoutingType routingType = context.getRoutingType(receiver, address);
       if (!checkAddressAndAutocreateIfPossible(address, routingType)) {
          throw ActiveMQAMQPProtocolMessageBundle.BUNDLE.addressDoesntExist();
       }
@@ -468,14 +505,16 @@ public class AMQPSessionCallback implements SessionCallback {
                throw e;
             }
          } else {
-            serverSend(context, transaction, message, delivery, receiver, routingContext);
+            message.setConnectionID(receiver.getSession().getConnection().getRemoteContainer());
+            // We need to transfer IO execution to a different thread otherwise we may deadlock netty loop
+            sessionExecutor.execute(() -> inSessionSend(context, transaction, message, delivery, receiver, routingContext));
          }
       } finally {
          resetContext(oldcontext);
       }
    }
 
-   private void rejectMessage(Delivery delivery, Symbol errorCondition, String errorMessage) {
+   private void rejectMessage(final ProtonServerReceiverContext context, Delivery delivery, Symbol errorCondition, String errorMessage) {
       ErrorCondition condition = new ErrorCondition();
       condition.setCondition(errorCondition);
       condition.setDescription(errorMessage);
@@ -485,9 +524,9 @@ public class AMQPSessionCallback implements SessionCallback {
       afterIO(new IOCallback() {
          @Override
          public void done() {
-            connection.runLater(() -> {
+            connection.runNow(() -> {
                delivery.disposition(rejected);
-               delivery.settle();
+               context.settle(delivery);
                connection.flush();
             });
          }
@@ -500,42 +539,56 @@ public class AMQPSessionCallback implements SessionCallback {
 
    }
 
-   private void serverSend(final ProtonServerReceiverContext context,
+   private void inSessionSend(final ProtonServerReceiverContext context,
                            final Transaction transaction,
                            final Message message,
                            final Delivery delivery,
                            final Receiver receiver,
-                           final RoutingContext routingContext) throws Exception {
-      message.setConnectionID(receiver.getSession().getConnection().getRemoteContainer());
-      invokeIncoming((AMQPMessage) message, (ActiveMQProtonRemotingConnection) transportConnection.getProtocolConnection());
-      serverSession.send(transaction, message, directDeliver, false, routingContext);
+                           final RoutingContext routingContext) {
+      OperationContext oldContext = recoverContext();
+      try {
+         if (invokeIncoming((AMQPMessage) message, (ActiveMQProtonRemotingConnection) transportConnection.getProtocolConnection()) == null) {
+            serverSession.send(transaction, message, directDeliver, false, routingContext);
 
-      afterIO(new IOCallback() {
-         @Override
-         public void done() {
-            connection.runLater(() -> {
-               if (delivery.getRemoteState() instanceof TransactionalState) {
-                  TransactionalState txAccepted = new TransactionalState();
-                  txAccepted.setOutcome(Accepted.getInstance());
-                  txAccepted.setTxnId(((TransactionalState) delivery.getRemoteState()).getTxnId());
+            afterIO(new IOCallback() {
+               @Override
+               public void done() {
+                  connection.runNow(() -> {
+                     if (delivery.getRemoteState() instanceof TransactionalState) {
+                        TransactionalState txAccepted = new TransactionalState();
+                        txAccepted.setOutcome(Accepted.getInstance());
+                        txAccepted.setTxnId(((TransactionalState) delivery.getRemoteState()).getTxnId());
 
-                  delivery.disposition(txAccepted);
-               } else {
-                  delivery.disposition(Accepted.getInstance());
+                        delivery.disposition(txAccepted);
+                     } else {
+                        delivery.disposition(Accepted.getInstance());
+                     }
+                     context.settle(delivery);
+                     connection.flush();
+                  });
                }
-               delivery.settle();
-               context.flow();
-               connection.flush();
-            });
-         }
 
-         @Override
-         public void onError(int errorCode, String errorMessage) {
-            connection.runNow(() -> {
-               receiver.setCondition(new ErrorCondition(AmqpError.ILLEGAL_STATE, errorCode + ":" + errorMessage));
-               connection.flush();
+               @Override
+               public void onError(int errorCode, String errorMessage) {
+                  sendError(errorCode, errorMessage, receiver);
+               }
             });
+         } else {
+            rejectMessage(context, delivery, Symbol.valueOf("failed"), "Interceptor rejected message");
          }
+      } catch (Exception e) {
+         logger.warn(e.getMessage(), e);
+         context.deliveryFailed(delivery, receiver, e);
+      } finally {
+         resetContext(oldContext);
+      }
+
+   }
+
+   private void sendError(int errorCode, String errorMessage, Receiver receiver) {
+      connection.runNow(() -> {
+         receiver.setCondition(new ErrorCondition(AmqpError.ILLEGAL_STATE, errorCode + ":" + errorMessage));
+         connection.flush();
       });
    }
 
@@ -692,12 +745,12 @@ public class AMQPSessionCallback implements SessionCallback {
       manager.getServer().getSecurityStore().check(address, checkType, session);
    }
 
-   public void invokeIncoming(AMQPMessage message, ActiveMQProtonRemotingConnection connection) {
-      protonSPI.invokeIncomingInterceptors(message, connection);
+   public String invokeIncoming(AMQPMessage message, ActiveMQProtonRemotingConnection connection) {
+      return protonSPI.invokeIncomingInterceptors(message, connection);
    }
 
-   public void invokeOutgoing(AMQPMessage message, ActiveMQProtonRemotingConnection connection) {
-      protonSPI.invokeOutgoingInterceptors(message, connection);
+   public String invokeOutgoing(AMQPMessage message, ActiveMQProtonRemotingConnection connection) {
+      return protonSPI.invokeOutgoingInterceptors(message, connection);
    }
 
    public void addProducer(ServerProducer serverProducer) {

@@ -22,15 +22,24 @@ import javax.jms.JMSException;
 import javax.jms.Message;
 import javax.jms.MessageConsumer;
 import javax.jms.MessageProducer;
+import javax.jms.Queue;
 import javax.jms.Session;
 import javax.jms.Topic;
 
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
+import org.apache.activemq.artemis.core.config.DivertConfiguration;
 import org.apache.activemq.artemis.core.config.FederationConfiguration;
+import org.apache.activemq.artemis.core.config.federation.FederationAddressPolicyConfiguration;
+import org.apache.activemq.artemis.core.postoffice.QueueBinding;
+import org.apache.activemq.artemis.core.server.ComponentConfigurationRoutingType;
+import org.apache.activemq.artemis.core.server.impl.AddressInfo;
 import org.apache.activemq.artemis.core.server.transformer.Transformer;
 import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
 import org.apache.activemq.artemis.tests.util.Wait;
+import org.apache.activemq.artemis.utils.RetryRule;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 
 /**
@@ -38,6 +47,8 @@ import org.junit.Test;
  */
 public class FederatedAddressTest extends FederatedTestBase {
 
+   @Rule
+   public RetryRule retryRule = new RetryRule(2);
 
    @Override
    @Before
@@ -170,6 +181,216 @@ public class FederatedAddressTest extends FederatedTestBase {
       verifyTransformer(address);
    }
 
+   /**
+    * Test diverts for downstream configurations
+    */
+   //Test creating address first followed by divert
+   //Test creating divert before consumer
+   //Test destroy divert at end
+   @Test
+   public void testDownstreamDivertAddressFirstAndDivertFirstDestroyDivert() throws Exception {
+      testFederatedAddressDivert(true,true, true, true);
+   }
+
+   //Test creating address first followed by divert
+   //Test creating divert before consumer
+   //Test destroy queue at end
+   @Test
+   public void testDownstreamDivertAddressFirstAndDivertFirstDestroyQueue() throws Exception {
+      testFederatedAddressDivert(true,true, true, false);
+   }
+
+   //Test creating divert first followed by address
+   //Test creating divert before consumer
+   //Test destroy divert at end
+   @Test
+   public void testDownstreamDivertAddressSecondDivertFirstDestroyDivert() throws Exception {
+      testFederatedAddressDivert(true,false, true, true);
+   }
+
+   //Test creating divert first followed by address
+   //Test creating divert before consumer
+   //Test destroy divert at end
+   @Test
+   public void testDownstreamDivertAddressSecondDivertFirstDestroyQueue() throws Exception {
+      testFederatedAddressDivert(true,false, true, false);
+   }
+
+   //Test creating address first followed by divert
+   //Test creating consumer before divert
+   //Test destroy divert at end
+   @Test
+   public void testDownstreamDivertAddressFirstDivertSecondDestroyDivert() throws Exception {
+      testFederatedAddressDivert(true,true, false, true);
+   }
+
+   //Test creating address first followed by divert
+   //Test creating consumer before divert
+   //Test destroy queue at end
+   @Test
+   public void testDownstreamDivertAddressFirstDivertSecondDestroyQueue() throws Exception {
+      testFederatedAddressDivert(true,true, false, false);
+   }
+
+   //Test creating divert first followed by address
+   //Test creating consumer before divert
+   //Test destroy divert at end
+   @Test
+   public void testDownstreamDivertAddressAndDivertSecondDestroyDivert() throws Exception {
+      testFederatedAddressDivert(true,false, false, true);
+   }
+
+   //Test creating divert first followed by address
+   //Test creating consumer before divert
+   //Test destroy queue at end
+   @Test
+   public void testDownstreamDivertAddressAndDivertSecondDestroyQueue() throws Exception {
+      testFederatedAddressDivert(true,false, false, false);
+   }
+
+   /**
+    * Test diverts for upstream configurations
+    */
+   //Test creating address first followed by divert
+   //Test creating divert before consumer
+   //Test destroy divert at end
+   @Test
+   public void testUpstreamDivertAddressAndDivertFirstDestroyDivert() throws Exception {
+      testFederatedAddressDivert(false,true, true, true);
+   }
+
+   //Test creating address first followed by divert
+   //Test creating divert before consumer
+   //Test destroy queue at end
+   @Test
+   public void testUpstreamDivertAddressAndDivertFirstDestroyQueue() throws Exception {
+      testFederatedAddressDivert(false,true, true, false);
+   }
+
+   //Test creating divert first followed by address
+   //Test creating divert before consumer
+   //Test destroy divert at end
+   @Test
+   public void testUpstreamDivertAddressSecondDivertFirstDestroyDivert() throws Exception {
+      testFederatedAddressDivert(false,false, true, true);
+   }
+
+   //Test creating divert first followed by address
+   //Test creating divert before consumer
+   //Test destroy queue at end
+   @Test
+   public void testUpstreamDivertAddressSecondDivertFirstDestroyQueue() throws Exception {
+      testFederatedAddressDivert(false,false, true, false);
+   }
+
+   //Test creating address first followed by divert
+   //Test creating consumer before divert
+   //Test destroy divert at end
+   @Test
+   public void testUpstreamDivertAddressFirstDivertSecondDestroyDivert() throws Exception {
+      testFederatedAddressDivert(false,true, false, true);
+   }
+
+   //Test creating address first followed by divert
+   //Test creating consumer before divert
+   //Test destroy queue at end
+   @Test
+   public void testUpstreamDivertAddressFirstDivertSecondDestroyQueue() throws Exception {
+      testFederatedAddressDivert(false,true, false, false);
+   }
+
+   //Test creating divert first followed by address
+   //Test creating consumer before divert
+   //Test destroy divert at end
+   @Test
+   public void testUpstreamsDivertAddressAndDivertSecondDestroyDivert() throws Exception {
+      testFederatedAddressDivert(false,false, false, true);
+   }
+
+   //Test creating divert first followed by address
+   //Test creating consumer before divert
+   //Test destroy queue at end
+   @Test
+   public void testUpstreamDivertAddressAndDivertSecondDestroyQueue() throws Exception {
+      testFederatedAddressDivert(false,false, false, false);
+   }
+
+   protected void testFederatedAddressDivert(boolean downstream, boolean addressFirst, boolean divertBeforeConsumer,
+                                             boolean destroyDivert) throws Exception {
+      String address = getName();
+      String address2 = "fedOneWayDivertTest";
+
+      if (addressFirst) {
+         getServer(0).addAddressInfo(new AddressInfo(SimpleString.toSimpleString(address), RoutingType.MULTICAST));
+      }
+
+      final FederationConfiguration federationConfiguration;
+      final int deployServer;
+      if (downstream) {
+         federationConfiguration = FederatedTestUtil.createAddressDownstreamFederationConfiguration(
+            "server0", address, getServer(1).getConfiguration().getTransportConfigurations("server1")[0]);
+         deployServer = 1;
+      } else {
+         federationConfiguration = FederatedTestUtil.createAddressUpstreamFederationConfiguration("server1", address);
+         deployServer = 0;
+      }
+
+      FederationAddressPolicyConfiguration policy = (FederationAddressPolicyConfiguration) federationConfiguration.getFederationPolicyMap().get("AddressPolicy" + address);
+      //enable listening for divert bindings
+      policy.setEnableDivertBindings(true);
+      getServer(deployServer).getConfiguration().getFederationConfigurations().add(federationConfiguration);
+      getServer(deployServer).getFederationManager().deploy();
+
+      ConnectionFactory cf1 = getCF(1);
+      ConnectionFactory cf0 = getCF(0);
+      try (Connection connection1 = cf1.createConnection(); Connection connection0 = cf0.createConnection()) {
+         connection1.start();
+         connection0.start();
+
+         Session session1 = connection1.createSession();
+         Topic topic1 = session1.createTopic(address);
+         MessageProducer producer1 = session1.createProducer(topic1);
+
+         if (divertBeforeConsumer) {
+            getServer(0).deployDivert(new DivertConfiguration().setName(address + ":" + address2)
+                   .setAddress(address).setExclusive(true).setForwardingAddress(address2)
+                   .setRoutingType(ComponentConfigurationRoutingType.ANYCAST));
+         }
+
+         Session session0 = connection0.createSession();
+         Queue queue0 = session0.createQueue(address2);
+         MessageConsumer consumer0 = session0.createConsumer(queue0);
+
+         if (!addressFirst) {
+            getServer(0).addAddressInfo(new AddressInfo(SimpleString.toSimpleString(address), RoutingType.MULTICAST));
+         }
+
+         if (!divertBeforeConsumer) {
+            getServer(0).deployDivert(new DivertConfiguration().setName(address + ":" + address2)
+                                         .setAddress(address).setExclusive(true).setForwardingAddress(address2)
+                                         .setRoutingType(ComponentConfigurationRoutingType.ANYCAST));
+         }
+
+         assertTrue(Wait.waitFor(() -> getServer(1).getPostOffice().getBindingsForAddress(SimpleString.toSimpleString(address)).getBindings().size() == 1,
+                                 1000, 100));
+         final QueueBinding remoteQueueBinding = (QueueBinding) getServer(1).getPostOffice().getBindingsForAddress(SimpleString.toSimpleString(address))
+            .getBindings().iterator().next();
+         Wait.assertEquals(1, () -> remoteQueueBinding.getQueue().getConsumerCount());
+
+         producer1.send(session1.createTextMessage("hello"));
+         assertNotNull(consumer0.receive(1000));
+
+         //Test consumer is cleaned up after divert destroyed
+         if (destroyDivert) {
+            getServer(0).destroyDivert(SimpleString.toSimpleString(address + ":" + address2));
+         //Test consumer is cleaned up after queue destroyed
+         } else {
+            getServer(0).destroyQueue(SimpleString.toSimpleString(address2), null, false);
+         }
+         assertTrue(Wait.waitFor(() -> remoteQueueBinding.getQueue().getConsumerCount() == 0, 2000, 100));
+      }
+   }
+
    private void testFederatedAddressReplication(String address) throws Exception {
 
       ConnectionFactory cf1 = getCF(1);
@@ -188,37 +409,38 @@ public class FederatedAddressTest extends FederatedTestBase {
          Topic topic0 = session0.createTopic(address);
          MessageConsumer consumer0 = session0.createConsumer(topic0);
 
-         assertTrue(Wait.waitFor(() -> getServer(1).getPostOffice().getBindingsForAddress(SimpleString.toSimpleString(address)).getBindings().size() == 1));
+         assertTrue(Wait.waitFor(() -> getServer(1).getPostOffice().getBindingsForAddress(
+            SimpleString.toSimpleString(address)).getBindings().size() == 1, 2000, 100));
 
          producer.send(session1.createTextMessage("hello"));
 
-         assertNotNull(consumer0.receive(10000));
+         assertNotNull(consumer0.receive(1000));
 
 
          producer.send(session1.createTextMessage("hello"));
 
-         assertNotNull(consumer0.receive(10000));
+         assertNotNull(consumer0.receive(1000));
 
          MessageConsumer consumer1 = session1.createConsumer(topic1);
 
          producer.send(session1.createTextMessage("hello"));
 
-         assertNotNull(consumer1.receive(10000));
-         assertNotNull(consumer0.receive(10000));
+         assertNotNull(consumer1.receive(1000));
+         assertNotNull(consumer0.receive(1000));
          consumer1.close();
 
          //Groups
          producer.send(session1.createTextMessage("hello"));
-         assertNotNull(consumer0.receive(10000));
+         assertNotNull(consumer0.receive(1000));
 
          producer.send(createTextMessage(session1, "groupA"));
 
-         assertNotNull(consumer0.receive(10000));
+         assertNotNull(consumer0.receive(1000));
          consumer1 = session1.createConsumer(topic1);
 
          producer.send(createTextMessage(session1, "groupA"));
-         assertNotNull(consumer1.receive(10000));
-         assertNotNull(consumer0.receive(10000));
+         assertNotNull(consumer1.receive(1000));
+         assertNotNull(consumer0.receive(1000));
 
       }
 
@@ -246,20 +468,17 @@ public class FederatedAddressTest extends FederatedTestBase {
 
 
          producer.send(session1.createTextMessage("hello"));
-
          assertNull(consumer0.receive(100));
 
          FederationConfiguration federationConfiguration = FederatedTestUtil.createAddressUpstreamFederationConfiguration("server1", address);
          getServer(0).getConfiguration().getFederationConfigurations().add(federationConfiguration);
          getServer(0).getFederationManager().deploy();
 
-         Wait.waitFor(() -> getServer(1).getPostOffice().getBindingsForAddress(SimpleString.toSimpleString(address)).getBindings().size() == 1);
-
+         Wait.waitFor(() -> getServer(1).getPostOffice().getBindingsForAddress(
+            SimpleString.toSimpleString(address)).getBindings().size() == 1, 2000, 100);
 
          producer.send(session1.createTextMessage("hello"));
-
-         assertNotNull(consumer0.receive(10000));
-
+         assertNotNull(consumer0.receive(1000));
       }
    }
 
@@ -386,7 +605,7 @@ public class FederatedAddressTest extends FederatedTestBase {
 
       //Set queue up on all three brokers
 //      for (int i = 0; i < 3; i++) {
-//         getServer(i).createQueue(SimpleString.toSimpleString(queueName), RoutingType.ANYCAST, SimpleString.toSimpleString(queueName), null, true, false);
+//         getServer(i).createQueue(new QueueConfiguration(queueName).setRoutingType(RoutingType.ANYCAST));
 //      }
 
       //Connect broker 0 (consumer will be here at end of chain) to broker 1

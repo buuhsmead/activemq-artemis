@@ -26,21 +26,30 @@ The `web` element has the following attributes:
 - `path` The name of the subdirectory in which to find the web application
   archives (i.e. WAR files). This is a subdirectory of the broker's home or
   instance directory.
+- `customizer` The name of customizer class to load.
 - `clientAuth` Whether or not clients should present an SSL certificate when
   they connect. Only applicable when using `https`.
 - `passwordCodec` The custom coded to use for unmasking the `keystorePassword`
-  and `truststorePassword`.
-- `keystorePath` The location on disk of the keystore. Only applicable when
+  and `trustStorePassword`.
+- `keyStorePath` The location on disk of the keystore. Only applicable when
   using `https`.
-- `keystorePassword` The password to the keystore. Only applicable when using
+- `keyStorePassword` The password to the keystore. Only applicable when using
   `https`. Can be masked using `ENC()` syntax or by defining `passwordCodec`.
   See more in the [password masking](masking-passwords.md) chapter.
-- `truststorePath` The location on disk fo the truststore. Only applicable when
+- `trustStorePath` The location on disk for the truststore. Only applicable when
   using `https`.
-- `truststorePassword` The password to the truststore. Only applicable when
+- `trustStorePassword` The password to the truststore. Only applicable when
   using `https`. Can be masked using `ENC()` syntax or by defining
   `passwordCodec`. See more in the [password masking](masking-passwords.md)
   chapter.
+- `includedTLSProtocols` A comma seperated list of included TLS protocols,
+  ie `"TLSv1,TLSv1.1,TLSv1.2"`. Only applicable when using `https`.
+- `excludedTLSProtocols` A comma seperated list of excluded TLS protocols,
+  ie `"TLSv1,TLSv1.1,TLSv1.2"`. Only applicable when using `https`.
+- `includedCipherSuites` A comma seperated list of included cipher suites.
+  Only applicable when using `https`.
+- `excludedCipherSuites` A comma seperated list of excluded cipher suites.
+  Only applicable when using `https`.
 
 Each web application should be defined in an `app` element. The `app` element
 has the following attributes:

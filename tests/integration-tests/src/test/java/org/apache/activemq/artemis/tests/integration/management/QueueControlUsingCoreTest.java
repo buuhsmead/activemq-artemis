@@ -50,6 +50,15 @@ public class QueueControlUsingCoreTest extends QueueControlTest {
          }
 
          @Override
+         public int getPreparedTransactionMessageCount() {
+            try {
+               return (Integer) proxy.invokeOperation(Integer.class, "getPreparedTransactionMessageCount");
+            } catch (Exception e) {
+               throw new RuntimeException(e.getMessage(), e);
+            }
+         }
+
+         @Override
          public void resetAllGroups() {
             try {
                proxy.invokeOperation("resetAllGroups");
@@ -88,6 +97,26 @@ public class QueueControlUsingCoreTest extends QueueControlTest {
             } catch (Exception e) {
                throw new RuntimeException(e.getMessage(), e);
             }
+         }
+
+         @Override
+         public boolean isGroupRebalance() {
+            return (Boolean) proxy.retrieveAttributeValue("groupRebalance");
+         }
+
+         @Override
+         public boolean isGroupRebalancePauseDispatch() {
+            return (Boolean) proxy.retrieveAttributeValue("groupRebalancePauseDispatch");
+         }
+
+         @Override
+         public int getGroupBuckets() {
+            return (Integer) proxy.retrieveAttributeValue("groupBuckets", Integer.class);
+         }
+
+         @Override
+         public String getGroupFirstKey() {
+            return (String) proxy.retrieveAttributeValue("groupFirstKey");
          }
 
          @Override
@@ -166,6 +195,21 @@ public class QueueControlUsingCoreTest extends QueueControlTest {
          }
 
          @Override
+         public boolean isEnabled() {
+            return  (Boolean) proxy.retrieveAttributeValue("isEnabled");
+         }
+
+         @Override
+         public void enable() throws Exception {
+            proxy.invokeOperation("enable");
+         }
+
+         @Override
+         public void disable() throws Exception {
+            proxy.invokeOperation("disable");
+         }
+
+         @Override
          public boolean isConfigurationManaged() {
             return (Boolean) proxy.retrieveAttributeValue("configurationManaged");
          }
@@ -213,11 +257,6 @@ public class QueueControlUsingCoreTest extends QueueControlTest {
          @Override
          public long getMessageCount() {
             return (Long) proxy.retrieveAttributeValue("messageCount", Long.class);
-         }
-
-         @Override
-         public float getProducedRate() {
-            return (Long) proxy.retrieveAttributeValue("producedRate", Long.class);
          }
 
          @Override
@@ -524,6 +563,15 @@ public class QueueControlUsingCoreTest extends QueueControlTest {
             return compositeDatas;
          }
 
+         @Override
+         public CompositeData[] browse(int page, int pageSize, String filter) throws Exception {
+            Map map = (Map) proxy.invokeOperation("browse", page, pageSize, filter);
+            CompositeData[] compositeDatas = (CompositeData[]) map.get(CompositeData.class.getName());
+            if (compositeDatas == null) {
+               compositeDatas = new CompositeData[0];
+            }
+            return compositeDatas;
+         }
 
          @Override
          public CompositeData[] browse(String filter) throws Exception {

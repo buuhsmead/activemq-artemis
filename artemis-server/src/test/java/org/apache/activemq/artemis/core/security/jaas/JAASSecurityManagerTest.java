@@ -16,9 +16,13 @@
  */
 package org.apache.activemq.artemis.core.security.jaas;
 
+import javax.security.auth.Subject;
+
 import org.apache.activemq.artemis.core.security.CheckType;
 import org.apache.activemq.artemis.core.security.Role;
+import org.apache.activemq.artemis.core.security.impl.SecurityStoreImpl;
 import org.apache.activemq.artemis.spi.core.security.ActiveMQJAASSecurityManager;
+import org.jboss.logging.Logger;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -37,9 +41,11 @@ import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 @RunWith(Parameterized.class)
 public class JAASSecurityManagerTest {
+   private static final Logger log = Logger.getLogger(JAASSecurityManagerTest.class);
 
    @Parameterized.Parameters(name = "newLoader=({0})")
    public static Collection<Object[]> data() {
@@ -70,7 +76,7 @@ public class JAASSecurityManagerTest {
    @Test
    public void testLoginClassloading() throws Exception {
       ClassLoader existingLoader = Thread.currentThread().getContextClassLoader();
-      System.out.println("loader: " + existingLoader);
+      log.debug("loader: " + existingLoader);
       try {
          if (usingNewLoader) {
             URLClassLoader simulatedLoader = new URLClassLoader(new URL[]{tmpDir.getRoot().toURI().toURL()}, null);
@@ -78,18 +84,17 @@ public class JAASSecurityManagerTest {
          }
          ActiveMQJAASSecurityManager securityManager = new ActiveMQJAASSecurityManager("PropertiesLogin");
 
-         String result = securityManager.validateUser("first", "secret", null);
+         Subject result = securityManager.authenticate("first", "secret", null, null);
 
          assertNotNull(result);
-         assertEquals("first", result);
+         assertEquals("first", SecurityStoreImpl.getUserFromSubject(result));
 
          Role role = new Role("programmers", true, true, true, true, true, true, true, true, true, true);
          Set<Role> roles = new HashSet<>();
          roles.add(role);
-         result = securityManager.validateUserAndRole("first", "secret", roles, CheckType.SEND, "someaddress", null);
+         boolean authorizationResult = securityManager.authorize(result, roles, CheckType.SEND, "someaddress");
 
-         assertNotNull(result);
-         assertEquals("first", result);
+         assertTrue(authorizationResult);
 
       } finally {
          Thread.currentThread().setContextClassLoader(existingLoader);

@@ -16,11 +16,6 @@
  */
 package org.apache.activemq.artemis.tests.integration.persistence.metrics;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.ToLongFunction;
-
 import javax.jms.Connection;
 import javax.jms.DeliveryMode;
 import javax.jms.Message;
@@ -29,7 +24,12 @@ import javax.jms.MessageProducer;
 import javax.jms.Session;
 import javax.jms.Topic;
 import javax.jms.TopicSession;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.ToLongFunction;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.config.Configuration;
@@ -62,9 +62,7 @@ public class JournalPendingMessageTest extends AbstractPersistentStatTestSupport
       server.getPostOffice()
             .addAddressInfo(new AddressInfo(SimpleString.toSimpleString(defaultQueueName), RoutingType.ANYCAST));
 
-      server.createQueue(SimpleString.toSimpleString(defaultQueueName), RoutingType.ANYCAST,
-            SimpleString.toSimpleString(defaultQueueName), null, true, false);
-
+      server.createQueue(new QueueConfiguration(defaultQueueName).setRoutingType(RoutingType.ANYCAST));
    }
 
    @Override
@@ -494,8 +492,7 @@ public class JournalPendingMessageTest extends AbstractPersistentStatTestSupport
 
    protected List<Queue> getQueues(final String address) throws Exception {
       final List<Queue> queues = new ArrayList<>();
-      for (Binding binding : server.getPostOffice().getDirectBindings(SimpleString.toSimpleString(address))
-            .getBindings()) {
+      for (Binding binding : server.getPostOffice().getDirectBindings(SimpleString.toSimpleString(address))) {
          if (binding.getType() == BindingType.LOCAL_QUEUE) {
             LocalQueueBinding queueBinding = (LocalQueueBinding) binding;
             queues.add(queueBinding.getQueue());

@@ -16,6 +16,7 @@
  */
 package org.apache.activemq.artemis.tests.integration.client;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
@@ -23,6 +24,7 @@ import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.apache.activemq.artemis.tests.util.Wait;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -49,16 +51,16 @@ public class AutoDeleteAddressTest extends ActiveMQTestBase {
    @Test
    public void testAutoDeleteAutoCreatedAddress() throws Exception {
       // auto-delete-addresses defaults to true
-      server.createQueue(addressA, RoutingType.ANYCAST, queueA, null, null, true, false, false, false, true, 1, false, true);
+      server.createQueue(new QueueConfiguration(queueA).setAddress(addressA).setRoutingType(RoutingType.ANYCAST).setAutoCreated(true));
       assertNotNull(server.getAddressInfo(addressA));
       cf.createSession().createConsumer(queueA).close();
-      assertNull(server.getAddressInfo(addressA));
+      Wait.assertTrue(() -> server.getAddressInfo(addressA) == null);
    }
 
    @Test
    public void testNegativeAutoDeleteAutoCreatedAddress() throws Exception {
       server.getAddressSettingsRepository().addMatch(addressA.toString(), new AddressSettings().setAutoDeleteAddresses(false));
-      server.createQueue(addressA, RoutingType.ANYCAST, queueA, null, null, true, false, false, false, true, 1, false, true);
+      server.createQueue(new QueueConfiguration(queueA).setAddress(addressA).setRoutingType(RoutingType.ANYCAST).setAutoCreated(true));
       assertNotNull(server.getAddressInfo(addressA));
       cf.createSession().createConsumer(queueA).close();
       assertNotNull(server.getAddressInfo(addressA));

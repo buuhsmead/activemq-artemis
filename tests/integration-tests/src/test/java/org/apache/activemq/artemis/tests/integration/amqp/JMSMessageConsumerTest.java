@@ -41,6 +41,7 @@ import javax.jms.TextMessage;
 import javax.jms.Topic;
 
 import org.apache.activemq.artemis.core.server.Queue;
+import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.tests.util.Wait;
 import org.apache.qpid.jms.JmsConnection;
 import org.apache.qpid.jms.policy.JmsDefaultPrefetchPolicy;
@@ -605,7 +606,7 @@ public class JMSMessageConsumerTest extends JMSClientTestSupport {
                message.acknowledge();
                done.countDown();
             } catch (JMSException ex) {
-               LOG.info("Caught exception.", ex);
+               LOG.debug("Caught exception.", ex);
             }
          }
       });
@@ -685,7 +686,7 @@ public class JMSMessageConsumerTest extends JMSClientTestSupport {
                while (count > 0) {
                   try {
                      if (++n % 1000 == 0) {
-                        System.out.println("received " + n + " messages");
+                        instanceLog.debug("received " + n + " messages");
                      }
 
                      Message m = consumer.receive(5000);
@@ -737,11 +738,11 @@ public class JMSMessageConsumerTest extends JMSClientTestSupport {
       Wait.assertEquals(0, queueView::getMessageCount);
 
       long taken = (System.currentTimeMillis() - time);
-      System.out.println("Microbenchamrk ran in " + taken + " milliseconds, sending/receiving " + numMessages);
+      instanceLog.debug("Microbenchamrk ran in " + taken + " milliseconds, sending/receiving " + numMessages);
 
       double messagesPerSecond = ((double) numMessages / (double) taken) * 1000;
 
-      System.out.println(((int) messagesPerSecond) + " messages per second");
+      instanceLog.debug(((int) messagesPerSecond) + " messages per second");
    }
 
    @Test(timeout = 60000)
@@ -775,9 +776,6 @@ public class JMSMessageConsumerTest extends JMSClientTestSupport {
 
          for (int i = 0; i < numMessages; i++) {
             Message msg = consumer.receive(5000);
-            if (msg == null) {
-               System.out.println("ProtonTest.testManyMessages");
-            }
             Assert.assertNotNull("" + i, msg);
             Assert.assertTrue("" + msg, msg instanceof TextMessage);
             String text = ((TextMessage) msg).getText();
@@ -789,12 +787,7 @@ public class JMSMessageConsumerTest extends JMSClientTestSupport {
          consumer.close();
          connection.close();
 
-         // Wait for Acks to be processed and message removed from queue.
-         Thread.sleep(500);
-
          Wait.assertEquals(0, queueView::getMessageCount);
-         long taken = (System.currentTimeMillis() - time) / 1000;
-         System.out.println("taken = " + taken);
       } finally {
          connection.close();
       }
@@ -803,6 +796,8 @@ public class JMSMessageConsumerTest extends JMSClientTestSupport {
    @Test(timeout = 30000)
    public void testTimedOutWaitingForWriteLogOnConsumer() throws Throwable {
       String name = "exampleQueue1";
+      // disable auto-delete as it causes thrashing during the test
+      server.getAddressSettingsRepository().addMatch("#", new AddressSettings().setAutoDeleteQueues(false));
 
       final int numMessages = 40;
 

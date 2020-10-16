@@ -51,6 +51,7 @@ import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
 import org.apache.activemq.artemis.api.core.ActiveMQAddressDoesNotExistException;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.JsonUtil;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
@@ -81,6 +82,7 @@ import org.apache.activemq.artemis.core.messagecounter.MessageCounterManager;
 import org.apache.activemq.artemis.core.messagecounter.impl.MessageCounterManagerImpl;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
 import org.apache.activemq.artemis.core.persistence.config.PersistedAddressSetting;
+import org.apache.activemq.artemis.core.persistence.config.PersistedDivertConfiguration;
 import org.apache.activemq.artemis.core.persistence.config.PersistedRoles;
 import org.apache.activemq.artemis.core.postoffice.Binding;
 import org.apache.activemq.artemis.core.postoffice.Bindings;
@@ -90,12 +92,14 @@ import org.apache.activemq.artemis.core.postoffice.impl.LocalQueueBinding;
 import org.apache.activemq.artemis.core.remoting.server.RemotingService;
 import org.apache.activemq.artemis.core.security.CheckType;
 import org.apache.activemq.artemis.core.security.Role;
+import org.apache.activemq.artemis.core.security.impl.SecurityStoreImpl;
 import org.apache.activemq.artemis.core.server.ActiveMQMessageBundle;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ActiveMQServerLogger;
 import org.apache.activemq.artemis.core.server.ConnectorServiceFactory;
 import org.apache.activemq.artemis.core.server.Consumer;
 import org.apache.activemq.artemis.core.server.ComponentConfigurationRoutingType;
+import org.apache.activemq.artemis.core.server.Divert;
 import org.apache.activemq.artemis.core.server.JournalType;
 import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.server.ServerConsumer;
@@ -152,9 +156,8 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
    private final NotificationBroadcasterSupport broadcaster;
 
    private final AtomicLong notifSeq = new AtomicLong(0);
-   // Static --------------------------------------------------------
 
-   // Constructors --------------------------------------------------
+   private final Object userLock = new Object();
 
    public ActiveMQServerControlImpl(final PostOffice postOffice,
                                     final Configuration configuration,
@@ -200,6 +203,21 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
       clearIO();
       try {
          return server.getVersion().getFullVersion();
+      } finally {
+         blockOnIO();
+      }
+   }
+
+   @Override
+   public boolean isActive() {
+      if (AuditLogger.isEnabled()) {
+         AuditLogger.getVersion(this.server);
+      }
+      checkStarted();
+
+      clearIO();
+      try {
+         return server.isActive();
       } finally {
          blockOnIO();
       }
@@ -708,7 +726,21 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
    }
 
    @Override
-   public int getAddressMemoryUsagePercentage() {
+   public double getDiskStoreUsage() {
+      if (AuditLogger.isEnabled()) {
+         AuditLogger.getDiskStoreUsage(this.server);
+      }
+      checkStarted();
+      clearIO();
+      try {
+         return server.getDiskStoreUsage();
+      } finally {
+         blockOnIO();
+      }
+   }
+
+   @Override
+   public int  getAddressMemoryUsagePercentage() {
       if (AuditLogger.isEnabled()) {
          AuditLogger.getAddressMemoryUsagePercentage(this.server);
       }
@@ -724,6 +756,27 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
       }
       double result = (100D * memoryUsed) / globalMaxSize;
       return (int) result;
+   }
+
+   @Override
+   public String getHAPolicy() {
+      return configuration.getHAPolicyConfiguration().getType().getName();
+   }
+
+   @Override
+   public long getAuthenticationCacheSize() {
+      if (AuditLogger.isEnabled()) {
+         AuditLogger.getAuthenticationCacheSize(this.server);
+      }
+      return ((SecurityStoreImpl)server.getSecurityStore()).getAuthenticationCacheSize();
+   }
+
+   @Override
+   public long getAuthorizationCacheSize() {
+      if (AuditLogger.isEnabled()) {
+         AuditLogger.getAuthorizationCacheSize(this.server);
+      }
+      return ((SecurityStoreImpl)server.getSecurityStore()).getAuthorizationCacheSize();
    }
 
    @Override
@@ -800,9 +853,7 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
 
    @Override
    public String createAddress(String name, String routingTypes) throws Exception {
-      if (AuditLogger.isEnabled()) {
-         AuditLogger.createAddress(this.server, name, routingTypes);
-      }
+
       checkStarted();
 
       clearIO();
@@ -813,8 +864,15 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
          }
          final AddressInfo addressInfo = new AddressInfo(new SimpleString(name), set);
          if (server.addAddressInfo(addressInfo)) {
-            return AddressInfoTextFormatter.Long.format(addressInfo, new StringBuilder()).toString();
+            String result = AddressInfoTextFormatter.Long.format(addressInfo, new StringBuilder()).toString();
+            if (AuditLogger.isResourceLoggingEnabled()) {
+               AuditLogger.createAddressSuccess(name, routingTypes);
+            }
+            return result;
          } else {
+            if (AuditLogger.isResourceLoggingEnabled()) {
+               AuditLogger.createAddressFailure(name, routingTypes);
+            }
             throw ActiveMQMessageBundle.BUNDLE.addressAlreadyExists(addressInfo.getName());
          }
       } finally {
@@ -824,9 +882,7 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
 
    @Override
    public String updateAddress(String name, String routingTypes) throws Exception {
-      if (AuditLogger.isEnabled()) {
-         AuditLogger.updateAddress(this.server, name, routingTypes);
-      }
+
       checkStarted();
 
       clearIO();
@@ -842,7 +898,13 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
             }
          }
          if (!server.updateAddressInfo(SimpleString.toSimpleString(name), routingTypeSet)) {
+            if (AuditLogger.isResourceLoggingEnabled()) {
+               AuditLogger.updateAddressFailure(name, routingTypes);
+            }
             throw ActiveMQMessageBundle.BUNDLE.addressDoesNotExist(SimpleString.toSimpleString(name));
+         }
+         if (AuditLogger.isResourceLoggingEnabled()) {
+            AuditLogger.updateAddressSuccess(name, routingTypes);
          }
          return AddressInfoTextFormatter.Long.format(server.getAddressInfo(SimpleString.toSimpleString(name)), new StringBuilder()).toString();
       } finally {
@@ -858,15 +920,18 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
 
    @Override
    public void deleteAddress(String name, boolean force) throws Exception {
-      if (AuditLogger.isEnabled()) {
-         AuditLogger.deleteAddress(this.server, name, force);
-      }
       checkStarted();
 
       clearIO();
       try {
          server.removeAddressInfo(new SimpleString(name), null, force);
+         if (AuditLogger.isResourceLoggingEnabled()) {
+            AuditLogger.deleteAddressSuccess(name);
+         }
       } catch (ActiveMQException e) {
+         if (AuditLogger.isResourceLoggingEnabled()) {
+            AuditLogger.deleteAddressFailure(name);
+         }
          throw new IllegalStateException(e.getMessage());
       } finally {
          blockOnIO();
@@ -890,10 +955,12 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
       }
       checkStarted();
 
-      SimpleString filter = filterStr == null ? null : new SimpleString(filterStr);
       clearIO();
       try {
-         server.createQueue(SimpleString.toSimpleString(address), server.getAddressSettingsRepository().getMatch(address).getDefaultQueueRoutingType(), new SimpleString(name), filter, durable, false);
+         server.createQueue(new QueueConfiguration(name)
+                            .setAddress(address)
+                            .setFilterString(filterStr)
+                            .setDurable(durable));
       } finally {
          blockOnIO();
       }
@@ -1119,10 +1186,10 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
                              boolean autoCreateAddress,
                              long ringSize) throws Exception {
       if (AuditLogger.isEnabled()) {
-         AuditLogger.createQueue(this.server, address, routingType, name, filterStr, durable,
-                  maxConsumers, purgeOnNoConsumers, exclusive, groupBuckets, lastValue,
-                  lastValueKey, nonDestructive, consumersBeforeDispatch, delayBeforeDispatch, autoDelete,
-                  autoDeleteDelay, autoDeleteMessageCount, autoCreateAddress, ringSize);
+         AuditLogger.createQueue(this.server, null, address, routingType, name, filterStr, durable,
+                  maxConsumers, purgeOnNoConsumers, exclusive, groupRebalance, groupBuckets, groupFirstKey,
+                  lastValue, lastValueKey, nonDestructive, consumersBeforeDispatch, delayBeforeDispatch,
+                  autoDelete, autoDeleteDelay, autoDeleteMessageCount, autoCreateAddress, ringSize);
       }
       checkStarted();
 
@@ -1134,10 +1201,90 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
             filter = new SimpleString(filterStr);
          }
 
-         final Queue queue = server.createQueue(SimpleString.toSimpleString(address), RoutingType.valueOf(routingType.toUpperCase()), SimpleString.toSimpleString(name), filter, durable, false, maxConsumers, purgeOnNoConsumers, exclusive, groupRebalance, groupBuckets, SimpleString.toSimpleString(groupFirstKey), lastValue, SimpleString.toSimpleString(lastValueKey), nonDestructive, consumersBeforeDispatch, delayBeforeDispatch, autoDelete, autoDeleteDelay, autoDeleteMessageCount, autoCreateAddress, ringSize);
+         final Queue queue = server.createQueue(new QueueConfiguration(name)
+                                                   .setAddress(address)
+                                                   .setRoutingType(RoutingType.valueOf(routingType.toUpperCase()))
+                                                   .setFilterString(filter)
+                                                   .setDurable(durable)
+                                                   .setMaxConsumers(maxConsumers)
+                                                   .setPurgeOnNoConsumers(purgeOnNoConsumers)
+                                                   .setExclusive(exclusive)
+                                                   .setGroupRebalance(groupRebalance)
+                                                   .setGroupBuckets(groupBuckets)
+                                                   .setGroupFirstKey(groupFirstKey)
+                                                   .setLastValue(lastValue)
+                                                   .setLastValueKey(lastValueKey)
+                                                   .setNonDestructive(nonDestructive)
+                                                   .setConsumersBeforeDispatch(consumersBeforeDispatch)
+                                                   .setDelayBeforeDispatch(delayBeforeDispatch)
+                                                   .setAutoDelete(autoDelete)
+                                                   .setAutoDeleteDelay(autoDeleteDelay)
+                                                   .setAutoDeleteMessageCount(autoDeleteMessageCount)
+                                                   .setAutoCreateAddress(autoCreateAddress)
+                                                   .setRingSize(ringSize));
+         if (AuditLogger.isResourceLoggingEnabled()) {
+            AuditLogger.createQueueSuccess( name, address, routingType);
+         }
          return QueueTextFormatter.Long.format(queue, new StringBuilder()).toString();
       } catch (ActiveMQException e) {
+         if (AuditLogger.isResourceLoggingEnabled()) {
+            AuditLogger.createQueueFailure( name, address, routingType);
+         }
          throw new IllegalStateException(e.getMessage());
+      } finally {
+         blockOnIO();
+      }
+   }
+
+   @Override
+   public String createQueue(String queueConfigurationAsJson) throws Exception {
+      return createQueue(queueConfigurationAsJson, false);
+   }
+
+   @Override
+   public String createQueue(String queueConfigurationAsJson, boolean ignoreIfExists) throws Exception {
+      if (AuditLogger.isEnabled()) {
+         AuditLogger.createQueue(this.server, null, queueConfigurationAsJson, ignoreIfExists);
+      }
+      checkStarted();
+
+      clearIO();
+
+      try {
+         // when the QueueConfiguration is passed through createQueue all of its defaults get set which we return to the caller
+         QueueConfiguration queueConfiguration = QueueConfiguration.fromJSON(queueConfigurationAsJson);
+         if (queueConfiguration == null) {
+            throw ActiveMQMessageBundle.BUNDLE.failedToParseJson(queueConfigurationAsJson);
+         }
+         server.createQueue(queueConfiguration, ignoreIfExists);
+         return queueConfiguration.toJSON();
+      } catch (ActiveMQException e) {
+         throw new IllegalStateException(e.getMessage());
+      } finally {
+         blockOnIO();
+      }
+   }
+
+   @Override
+   public String updateQueue(String queueConfigurationAsJson) throws Exception {
+
+      if (AuditLogger.isEnabled()) {
+         AuditLogger.updateQueue(this.server, queueConfigurationAsJson);
+      }
+      checkStarted();
+
+      clearIO();
+
+      try {
+         QueueConfiguration queueConfiguration = QueueConfiguration.fromJSON(queueConfigurationAsJson);
+         if (queueConfiguration == null) {
+            throw ActiveMQMessageBundle.BUNDLE.failedToParseJson(queueConfigurationAsJson);
+         }
+         final Queue queue = server.updateQueue(queueConfiguration);
+         if (queue == null) {
+            throw ActiveMQMessageBundle.BUNDLE.noSuchQueue(queueConfiguration.getName());
+         }
+         return server.locateQueue(queueConfiguration.getName()).getQueueConfiguration().toJSON();
       } finally {
          blockOnIO();
       }
@@ -1231,8 +1378,15 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
       try {
          final Queue queue = server.updateQueue(name, routingType != null ? RoutingType.valueOf(routingType) : null, filter, maxConsumers, purgeOnNoConsumers, exclusive, groupRebalance, groupBuckets, groupFirstKey, nonDestructive, consumersBeforeDispatch, delayBeforeDispatch, user);
          if (queue == null) {
+            if (AuditLogger.isResourceLoggingEnabled()) {
+               AuditLogger.updateQueueFailure(name, routingType);
+            }
             throw ActiveMQMessageBundle.BUNDLE.noSuchQueue(new SimpleString(name));
          }
+         if (AuditLogger.isResourceLoggingEnabled()) {
+            AuditLogger.updateQueueSuccess(name, routingType);
+         }
+
          return QueueTextFormatter.Long.format(queue, new StringBuilder()).toString();
       } finally {
          blockOnIO();
@@ -1361,14 +1515,24 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
    @Override
    public void destroyQueue(final String name, final boolean removeConsumers, final boolean autoDeleteAddress) throws Exception {
       if (AuditLogger.isEnabled()) {
-         AuditLogger.destroyQueue(this.server, name, removeConsumers, autoDeleteAddress);
+         AuditLogger.destroyQueue(this.server, null, name, removeConsumers, autoDeleteAddress);
       }
       checkStarted();
 
       clearIO();
       try {
          SimpleString queueName = new SimpleString(name);
-         server.destroyQueue(queueName, null, !removeConsumers, removeConsumers, autoDeleteAddress);
+         try {
+            server.destroyQueue(queueName, null, !removeConsumers, removeConsumers, autoDeleteAddress);
+         } catch (Exception e) {
+            if (AuditLogger.isResourceLoggingEnabled()) {
+               AuditLogger.destroyQueueFailure(name);
+            }
+            throw e;
+         }
+         if (AuditLogger.isResourceLoggingEnabled()) {
+            AuditLogger.destroyQueueSuccess(name);
+         }
       } finally {
          blockOnIO();
       }
@@ -1916,7 +2080,7 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
 
          for (Xid xid : xids) {
             if (XidImpl.toBase64String(xid).equals(transactionAsBase64)) {
-               Transaction transaction = resourceManager.removeTransaction(xid);
+               Transaction transaction = resourceManager.removeTransaction(xid, null);
                transaction.commit(false);
                long recordID = server.getStorageManager().storeHeuristicCompletion(xid, true);
                storageManager.waitOnOperations();
@@ -1944,7 +2108,7 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
 
          for (Xid xid : xids) {
             if (XidImpl.toBase64String(xid).equals(transactionAsBase64)) {
-               Transaction transaction = resourceManager.removeTransaction(xid);
+               Transaction transaction = resourceManager.removeTransaction(xid, null);
                transaction.rollback();
                long recordID = server.getStorageManager().storeHeuristicCompletion(xid, false);
                server.getStorageManager().waitOnOperations();
@@ -2042,7 +2206,7 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
 
       clearIO();
       try {
-         for (Binding binding : postOffice.getMatchingBindings(SimpleString.toSimpleString(address)).getBindings()) {
+         for (Binding binding : postOffice.getMatchingBindings(SimpleString.toSimpleString(address))) {
             if (binding instanceof LocalQueueBinding) {
                Queue queue = ((LocalQueueBinding) binding).getQueue();
                for (Consumer consumer : queue.getConsumers()) {
@@ -2708,6 +2872,8 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
       }
 
       return settings.add("expiryDelay", addressSettings.getExpiryDelay())
+            .add("minExpiryDelay", addressSettings.getMinExpiryDelay())
+            .add("maxExpiryDelay", addressSettings.getMaxExpiryDelay())
             .add("maxDeliveryAttempts", addressSettings.getMaxDeliveryAttempts())
             .add("pageCacheMaxSize", addressSettings.getPageCacheMaxSize())
             .add("maxSizeBytes", addressSettings.getMaxSizeBytes())
@@ -2737,6 +2903,7 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
             .add("defaultNonDestructive", addressSettings.isDefaultNonDestructive())
             .add("defaultExclusiveQueue", addressSettings.isDefaultExclusiveQueue())
             .add("defaultGroupRebalance", addressSettings.isDefaultGroupRebalance())
+            .add("defaultGroupRebalancePauseDispatch", addressSettings.isDefaultGroupRebalancePauseDispatch())
             .add("defaultGroupBuckets", addressSettings.getDefaultGroupBuckets())
             .add("defaultGroupFirstKey", addressSettings.getDefaultGroupFirstKey() == null ? "" : addressSettings.getDefaultGroupFirstKey().toString())
             .add("defaultMaxConsumers", addressSettings.getDefaultMaxConsumers())
@@ -2753,6 +2920,13 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
             .add("autoDeleteAddressesDelay", addressSettings.getAutoDeleteAddressesDelay())
             .add("redeliveryCollisionAvoidanceFactor", addressSettings.getRedeliveryCollisionAvoidanceFactor())
             .add("retroactiveMessageCount", addressSettings.getRetroactiveMessageCount())
+            .add("autoCreateDeadLetterResources", addressSettings.isAutoCreateDeadLetterResources())
+            .add("deadLetterQueuePrefix", addressSettings.getDeadLetterQueuePrefix().toString())
+            .add("deadLetterQueueSuffix", addressSettings.getDeadLetterQueueSuffix().toString())
+            .add("autoCreateExpiryResources", addressSettings.isAutoCreateExpiryResources())
+            .add("expiryQueuePrefix", addressSettings.getExpiryQueuePrefix().toString())
+            .add("expiryQueueSuffix", addressSettings.getExpiryQueueSuffix().toString())
+            .add("enableMetrics", addressSettings.isEnableMetrics())
             .build()
             .toString();
    }
@@ -2936,6 +3110,238 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
                                   final long autoDeleteAddressesDelay,
                                   final double redeliveryCollisionAvoidanceFactor,
                                   final long retroactiveMessageCount) throws Exception {
+      addAddressSettings(address,
+                         DLA,
+                         expiryAddress,
+                         expiryDelay,
+                         defaultLastValueQueue,
+                         maxDeliveryAttempts,
+                         maxSizeBytes,
+                         pageSizeBytes,
+                         pageMaxCacheSize,
+                         redeliveryDelay,
+                         redeliveryMultiplier,
+                         maxRedeliveryDelay,
+                         redistributionDelay,
+                         sendToDLAOnNoRoute,
+                         addressFullMessagePolicy,
+                         slowConsumerThreshold,
+                         slowConsumerCheckPeriod,
+                         slowConsumerPolicy,
+                         autoCreateJmsQueues,
+                         autoDeleteJmsQueues,
+                         autoCreateJmsTopics,
+                         autoDeleteJmsTopics,
+                         autoCreateQueues,
+                         autoDeleteQueues,
+                         autoCreateAddresses,
+                         autoDeleteAddresses,
+                         configDeleteQueues,
+                         configDeleteAddresses,
+                         maxSizeBytesRejectThreshold,
+                         defaultLastValueKey,
+                         defaultNonDestructive,
+                         defaultExclusiveQueue,
+                         defaultGroupRebalance,
+                         defaultGroupBuckets,
+                         defaultGroupFirstKey,
+                         defaultMaxConsumers,
+                         defaultPurgeOnNoConsumers,
+                         defaultConsumersBeforeDispatch,
+                         defaultDelayBeforeDispatch,
+                         defaultQueueRoutingType,
+                         defaultAddressRoutingType,
+                         defaultConsumerWindowSize,
+                         defaultRingSize,
+                         autoDeleteCreatedQueues,
+                         autoDeleteQueuesDelay,
+                         autoDeleteQueuesMessageCount,
+                         autoDeleteAddressesDelay,
+                         redeliveryCollisionAvoidanceFactor,
+                         retroactiveMessageCount,
+                         AddressSettings.DEFAULT_AUTO_CREATE_DEAD_LETTER_RESOURCES,
+                         AddressSettings.DEFAULT_DEAD_LETTER_QUEUE_PREFIX.toString(),
+                         AddressSettings.DEFAULT_DEAD_LETTER_QUEUE_SUFFIX.toString(),
+                         AddressSettings.DEFAULT_AUTO_CREATE_EXPIRY_RESOURCES,
+                         AddressSettings.DEFAULT_EXPIRY_QUEUE_PREFIX.toString(),
+                         AddressSettings.DEFAULT_EXPIRY_QUEUE_SUFFIX.toString());
+   }
+
+   @Override
+   public void addAddressSettings(final String address,
+                                  final String DLA,
+                                  final String expiryAddress,
+                                  final long expiryDelay,
+                                  final boolean defaultLastValueQueue,
+                                  final int maxDeliveryAttempts,
+                                  final long maxSizeBytes,
+                                  final int pageSizeBytes,
+                                  final int pageMaxCacheSize,
+                                  final long redeliveryDelay,
+                                  final double redeliveryMultiplier,
+                                  final long maxRedeliveryDelay,
+                                  final long redistributionDelay,
+                                  final boolean sendToDLAOnNoRoute,
+                                  final String addressFullMessagePolicy,
+                                  final long slowConsumerThreshold,
+                                  final long slowConsumerCheckPeriod,
+                                  final String slowConsumerPolicy,
+                                  final boolean autoCreateJmsQueues,
+                                  final boolean autoDeleteJmsQueues,
+                                  final boolean autoCreateJmsTopics,
+                                  final boolean autoDeleteJmsTopics,
+                                  final boolean autoCreateQueues,
+                                  final boolean autoDeleteQueues,
+                                  final boolean autoCreateAddresses,
+                                  final boolean autoDeleteAddresses,
+                                  final String configDeleteQueues,
+                                  final String configDeleteAddresses,
+                                  final long maxSizeBytesRejectThreshold,
+                                  final String defaultLastValueKey,
+                                  final boolean defaultNonDestructive,
+                                  final boolean defaultExclusiveQueue,
+                                  final boolean defaultGroupRebalance,
+                                  final int defaultGroupBuckets,
+                                  final String defaultGroupFirstKey,
+                                  final int defaultMaxConsumers,
+                                  final boolean defaultPurgeOnNoConsumers,
+                                  final int defaultConsumersBeforeDispatch,
+                                  final long defaultDelayBeforeDispatch,
+                                  final String defaultQueueRoutingType,
+                                  final String defaultAddressRoutingType,
+                                  final int defaultConsumerWindowSize,
+                                  final long defaultRingSize,
+                                  final boolean autoDeleteCreatedQueues,
+                                  final long autoDeleteQueuesDelay,
+                                  final long autoDeleteQueuesMessageCount,
+                                  final long autoDeleteAddressesDelay,
+                                  final double redeliveryCollisionAvoidanceFactor,
+                                  final long retroactiveMessageCount,
+                                  final boolean autoCreateDeadLetterResources,
+                                  final String deadLetterQueuePrefix,
+                                  final String deadLetterQueueSuffix,
+                                  final boolean autoCreateExpiryResources,
+                                  final String expiryQueuePrefix,
+                                  final String expiryQueueSuffix) throws Exception {
+      addAddressSettings(address,
+                         DLA,
+                         expiryAddress,
+                         expiryDelay,
+                         defaultLastValueQueue,
+                         maxDeliveryAttempts,
+                         maxSizeBytes,
+                         pageSizeBytes,
+                         pageMaxCacheSize,
+                         redeliveryDelay,
+                         redeliveryMultiplier,
+                         maxRedeliveryDelay,
+                         redistributionDelay,
+                         sendToDLAOnNoRoute,
+                         addressFullMessagePolicy,
+                         slowConsumerThreshold,
+                         slowConsumerCheckPeriod,
+                         slowConsumerPolicy,
+                         autoCreateJmsQueues,
+                         autoDeleteJmsQueues,
+                         autoCreateJmsTopics,
+                         autoDeleteJmsTopics,
+                         autoCreateQueues,
+                         autoDeleteQueues,
+                         autoCreateAddresses,
+                         autoDeleteAddresses,
+                         configDeleteQueues,
+                         configDeleteAddresses,
+                         maxSizeBytesRejectThreshold,
+                         defaultLastValueKey,
+                         defaultNonDestructive,
+                         defaultExclusiveQueue,
+                         defaultGroupRebalance,
+                         defaultGroupBuckets,
+                         defaultGroupFirstKey,
+                         defaultMaxConsumers,
+                         defaultPurgeOnNoConsumers,
+                         defaultConsumersBeforeDispatch,
+                         defaultDelayBeforeDispatch,
+                         defaultQueueRoutingType,
+                         defaultAddressRoutingType,
+                         defaultConsumerWindowSize,
+                         defaultRingSize,
+                         autoDeleteCreatedQueues,
+                         autoDeleteQueuesDelay,
+                         autoDeleteQueuesMessageCount,
+                         autoDeleteAddressesDelay,
+                         redeliveryCollisionAvoidanceFactor,
+                         retroactiveMessageCount,
+                         AddressSettings.DEFAULT_AUTO_CREATE_DEAD_LETTER_RESOURCES,
+                         AddressSettings.DEFAULT_DEAD_LETTER_QUEUE_PREFIX.toString(),
+                         AddressSettings.DEFAULT_DEAD_LETTER_QUEUE_SUFFIX.toString(),
+                         AddressSettings.DEFAULT_AUTO_CREATE_EXPIRY_RESOURCES,
+                         AddressSettings.DEFAULT_EXPIRY_QUEUE_PREFIX.toString(),
+                         AddressSettings.DEFAULT_EXPIRY_QUEUE_SUFFIX.toString(),
+                         AddressSettings.DEFAULT_MIN_EXPIRY_DELAY,
+                         AddressSettings.DEFAULT_MAX_EXPIRY_DELAY,
+                         AddressSettings.DEFAULT_ENABLE_METRICS);
+   }
+
+   @Override
+   public void addAddressSettings(final String address,
+                                  final String DLA,
+                                  final String expiryAddress,
+                                  final long expiryDelay,
+                                  final boolean defaultLastValueQueue,
+                                  final int maxDeliveryAttempts,
+                                  final long maxSizeBytes,
+                                  final int pageSizeBytes,
+                                  final int pageMaxCacheSize,
+                                  final long redeliveryDelay,
+                                  final double redeliveryMultiplier,
+                                  final long maxRedeliveryDelay,
+                                  final long redistributionDelay,
+                                  final boolean sendToDLAOnNoRoute,
+                                  final String addressFullMessagePolicy,
+                                  final long slowConsumerThreshold,
+                                  final long slowConsumerCheckPeriod,
+                                  final String slowConsumerPolicy,
+                                  final boolean autoCreateJmsQueues,
+                                  final boolean autoDeleteJmsQueues,
+                                  final boolean autoCreateJmsTopics,
+                                  final boolean autoDeleteJmsTopics,
+                                  final boolean autoCreateQueues,
+                                  final boolean autoDeleteQueues,
+                                  final boolean autoCreateAddresses,
+                                  final boolean autoDeleteAddresses,
+                                  final String configDeleteQueues,
+                                  final String configDeleteAddresses,
+                                  final long maxSizeBytesRejectThreshold,
+                                  final String defaultLastValueKey,
+                                  final boolean defaultNonDestructive,
+                                  final boolean defaultExclusiveQueue,
+                                  final boolean defaultGroupRebalance,
+                                  final int defaultGroupBuckets,
+                                  final String defaultGroupFirstKey,
+                                  final int defaultMaxConsumers,
+                                  final boolean defaultPurgeOnNoConsumers,
+                                  final int defaultConsumersBeforeDispatch,
+                                  final long defaultDelayBeforeDispatch,
+                                  final String defaultQueueRoutingType,
+                                  final String defaultAddressRoutingType,
+                                  final int defaultConsumerWindowSize,
+                                  final long defaultRingSize,
+                                  final boolean autoDeleteCreatedQueues,
+                                  final long autoDeleteQueuesDelay,
+                                  final long autoDeleteQueuesMessageCount,
+                                  final long autoDeleteAddressesDelay,
+                                  final double redeliveryCollisionAvoidanceFactor,
+                                  final long retroactiveMessageCount,
+                                  final boolean autoCreateDeadLetterResources,
+                                  final String deadLetterQueuePrefix,
+                                  final String deadLetterQueueSuffix,
+                                  final boolean autoCreateExpiryResources,
+                                  final String expiryQueuePrefix,
+                                  final String expiryQueueSuffix,
+                                  final long minExpiryDelay,
+                                  final long maxExpiryDelay,
+                                  final boolean enableMetrics) throws Exception {
       if (AuditLogger.isEnabled()) {
          AuditLogger.addAddressSettings(this.server, address, DLA, expiryAddress, expiryDelay, defaultLastValueQueue, maxDeliveryAttempts,
                   maxSizeBytes, pageSizeBytes, pageMaxCacheSize, redeliveryDelay, redeliveryMultiplier,
@@ -2947,7 +3353,9 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
                   defaultGroupFirstKey, defaultMaxConsumers, defaultPurgeOnNoConsumers, defaultConsumersBeforeDispatch,
                   defaultDelayBeforeDispatch, defaultQueueRoutingType, defaultAddressRoutingType, defaultConsumerWindowSize,
                   defaultRingSize, autoDeleteCreatedQueues, autoDeleteQueuesDelay, autoDeleteQueuesMessageCount,
-                  autoDeleteAddressesDelay, redeliveryCollisionAvoidanceFactor, retroactiveMessageCount);
+                  autoDeleteAddressesDelay, redeliveryCollisionAvoidanceFactor, retroactiveMessageCount, autoCreateDeadLetterResources,
+                  deadLetterQueuePrefix, deadLetterQueueSuffix, autoCreateExpiryResources, expiryQueuePrefix,
+                  expiryQueueSuffix, minExpiryDelay, maxExpiryDelay, enableMetrics);
       }
       checkStarted();
 
@@ -2964,6 +3372,8 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
       addressSettings.setDeadLetterAddress(DLA == null ? null : new SimpleString(DLA));
       addressSettings.setExpiryAddress(expiryAddress == null ? null : new SimpleString(expiryAddress));
       addressSettings.setExpiryDelay(expiryDelay);
+      addressSettings.setMinExpiryDelay(minExpiryDelay);
+      addressSettings.setMaxExpiryDelay(maxExpiryDelay);
       addressSettings.setDefaultLastValueQueue(defaultLastValueQueue);
       addressSettings.setMaxDeliveryAttempts(maxDeliveryAttempts);
       addressSettings.setPageCacheMaxSize(pageMaxCacheSize);
@@ -3009,6 +3419,13 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
       addressSettings.setAutoDeleteAddressesDelay(autoDeleteAddressesDelay);
       addressSettings.setRedeliveryCollisionAvoidanceFactor(redeliveryCollisionAvoidanceFactor);
       addressSettings.setRetroactiveMessageCount(retroactiveMessageCount);
+      addressSettings.setAutoCreateDeadLetterResources(autoCreateDeadLetterResources);
+      addressSettings.setDeadLetterQueuePrefix(deadLetterQueuePrefix == null ? null : new SimpleString(deadLetterQueuePrefix));
+      addressSettings.setDeadLetterQueueSuffix(deadLetterQueueSuffix == null ? null : new SimpleString(deadLetterQueueSuffix));
+      addressSettings.setAutoCreateExpiryResources(autoCreateExpiryResources);
+      addressSettings.setExpiryQueuePrefix(expiryQueuePrefix == null ? null : new SimpleString(expiryQueuePrefix));
+      addressSettings.setExpiryQueueSuffix(expiryQueueSuffix == null ? null : new SimpleString(expiryQueueSuffix));
+      addressSettings.setEnableMetrics(enableMetrics);
 
       server.getAddressSettingsRepository().addMatch(address, addressSettings);
 
@@ -3124,6 +3541,39 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
          TransformerConfiguration transformerConfiguration = transformerClassName == null ? null : new TransformerConfiguration(transformerClassName).setProperties(transformerProperties);
          DivertConfiguration config = new DivertConfiguration().setName(name).setRoutingName(routingName).setAddress(address).setForwardingAddress(forwardingAddress).setExclusive(exclusive).setFilterString(filterString).setTransformerConfiguration(transformerConfiguration).setRoutingType(ComponentConfigurationRoutingType.valueOf(routingType));
          server.deployDivert(config);
+         storageManager.storeDivertConfiguration(new PersistedDivertConfiguration(config));
+      } finally {
+         blockOnIO();
+      }
+   }
+
+   @Override
+   public void updateDivert(final String name,
+                            final String forwardingAddress,
+                            final String filterString,
+                            final String transformerClassName,
+                            final Map<String, String> transformerProperties,
+                            final String routingType) throws Exception {
+      if (AuditLogger.isEnabled()) {
+         AuditLogger.updateDivert(this.server, name, forwardingAddress, filterString,
+                                  transformerClassName, transformerProperties, routingType);
+      }
+      checkStarted();
+
+      clearIO();
+
+      try {
+         TransformerConfiguration transformerConfiguration = transformerClassName == null ? null :
+            new TransformerConfiguration(transformerClassName).setProperties(transformerProperties);
+
+         DivertConfiguration config = new DivertConfiguration().setName(name).setForwardingAddress(forwardingAddress).
+            setFilterString(filterString).setTransformerConfiguration(transformerConfiguration).
+            setRoutingType(ComponentConfigurationRoutingType.valueOf(routingType));
+
+         final Divert divert = server.updateDivert(config);
+         if (divert == null) {
+            throw ActiveMQMessageBundle.BUNDLE.divertDoesNotExist(config.getName());
+         }
       } finally {
          blockOnIO();
       }
@@ -3646,6 +4096,7 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
    }
 
    @Override
+   @Deprecated
    public long getMessageExpiryThreadPriority() {
       if (AuditLogger.isEnabled()) {
          AuditLogger.getMessageExpiryThreadPriority(this.server);
@@ -3738,18 +4189,16 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
 
    @Override
    public void addUser(String username, String password, String roles, boolean plaintext) throws Exception {
-      if (AuditLogger.isEnabled()) {
-         AuditLogger.addUser(this.server, username, "****", roles, plaintext);
+      synchronized (userLock) {
+         if (AuditLogger.isEnabled()) {
+            AuditLogger.addUser(this.server, username, "****", roles, plaintext);
+         }
+         tcclInvoke(ActiveMQServerControlImpl.class.getClassLoader(), () -> {
+            PropertiesLoginModuleConfigurator config = getPropertiesLoginModuleConfigurator();
+            config.addNewUser(username, plaintext ? password : PasswordMaskingUtil.getHashProcessor().hash(password), roles.split(","));
+            config.save();
+         });
       }
-
-      tcclInvoke(ActiveMQServerControlImpl.class.getClassLoader(), () -> internalAddUser(username, password, roles, plaintext));
-   }
-
-   private void internalAddUser(String username, String password, String roles, boolean plaintext) throws Exception {
-      PropertiesLoginModuleConfigurator config = getPropertiesLoginModuleConfigurator();
-      config.addNewUser(username, plaintext ? password : PasswordMaskingUtil.getHashProcessor().hash(password), roles.split(","));
-      config.save();
-
    }
 
    private String getSecurityDomain() {
@@ -3758,53 +4207,65 @@ public class ActiveMQServerControlImpl extends AbstractControl implements Active
 
    @Override
    public String listUser(String username) throws Exception {
-      if (AuditLogger.isEnabled()) {
-         AuditLogger.listUser(this.server, username);
-      }
-
-      return (String) tcclCall(ActiveMQServerControlImpl.class.getClassLoader(), () -> internaListUser(username));
-   }
-   private String internaListUser(String username) throws Exception {
-      PropertiesLoginModuleConfigurator config = getPropertiesLoginModuleConfigurator();
-      Map<String, Set<String>> info = config.listUser(username);
-      JsonArrayBuilder users = JsonLoader.createArrayBuilder();
-      for (Entry<String, Set<String>> entry : info.entrySet()) {
-         JsonObjectBuilder user = JsonLoader.createObjectBuilder();
-         user.add("username", entry.getKey());
-         JsonArrayBuilder roles = JsonLoader.createArrayBuilder();
-         for (String role : entry.getValue()) {
-            roles.add(role);
+      synchronized (userLock) {
+         if (AuditLogger.isEnabled()) {
+            AuditLogger.listUser(this.server, username);
          }
-         user.add("roles", roles);
-         users.add(user);
+
+         return (String) tcclCall(ActiveMQServerControlImpl.class.getClassLoader(), () -> {
+            PropertiesLoginModuleConfigurator config = getPropertiesLoginModuleConfigurator();
+            Map<String, Set<String>> info = config.listUser(username);
+            JsonArrayBuilder users = JsonLoader.createArrayBuilder();
+            for (Entry<String, Set<String>> entry : info.entrySet()) {
+               JsonObjectBuilder user = JsonLoader.createObjectBuilder();
+               user.add("username", entry.getKey());
+               JsonArrayBuilder roles = JsonLoader.createArrayBuilder();
+               for (String role : entry.getValue()) {
+                  roles.add(role);
+               }
+               user.add("roles", roles);
+               users.add(user);
+            }
+            return users.build().toString();
+         });
       }
-      return users.build().toString();
    }
 
    @Override
    public void removeUser(String username) throws Exception {
-      if (AuditLogger.isEnabled()) {
-         AuditLogger.removeUser(this.server, username);
+      synchronized (userLock) {
+         if (AuditLogger.isEnabled()) {
+            AuditLogger.removeUser(this.server, username);
+         }
+         tcclInvoke(ActiveMQServerControlImpl.class.getClassLoader(), () -> {
+            PropertiesLoginModuleConfigurator config = getPropertiesLoginModuleConfigurator();
+            config.removeUser(username);
+            config.save();
+         });
       }
-      tcclInvoke(ActiveMQServerControlImpl.class.getClassLoader(), () -> internalRemoveUser(username));
    }
-   private void internalRemoveUser(String username) throws Exception {
-      PropertiesLoginModuleConfigurator config = getPropertiesLoginModuleConfigurator();
-      config.removeUser(username);
-      config.save();
+
+   @Override
+   public void resetUser(String username, String password, String roles, boolean plaintext) throws Exception {
+      synchronized (userLock) {
+         if (AuditLogger.isEnabled()) {
+            AuditLogger.resetUser(this.server, username, "****", roles, plaintext);
+         }
+         tcclInvoke(ActiveMQServerControlImpl.class.getClassLoader(), () -> {
+            PropertiesLoginModuleConfigurator config = getPropertiesLoginModuleConfigurator();
+            // don't hash a null password even if plaintext = false
+            config.updateUser(username, password == null ? password : plaintext ? password : PasswordMaskingUtil
+               .getHashProcessor()
+               .hash(password), roles == null ? null : roles.split(","));
+            config.save();
+         });
+      }
    }
 
    @Override
    public void resetUser(String username, String password, String roles) throws Exception {
-      if (AuditLogger.isEnabled()) {
-         AuditLogger.resetUser(this.server, username, "****", roles);
-      }
-      tcclInvoke(ActiveMQServerControlImpl.class.getClassLoader(), () -> internalresetUser(username, password, roles));
-   }
-   private void internalresetUser(String username, String password, String roles) throws Exception {
-      PropertiesLoginModuleConfigurator config = getPropertiesLoginModuleConfigurator();
-      config.updateUser(username, password, roles == null ? null : roles.split(","));
-      config.save();
+      // no need to synchronize here because the method we call is synchronized
+      resetUser(username, password, roles, true);
    }
 
    private PropertiesLoginModuleConfigurator getPropertiesLoginModuleConfigurator() throws Exception {

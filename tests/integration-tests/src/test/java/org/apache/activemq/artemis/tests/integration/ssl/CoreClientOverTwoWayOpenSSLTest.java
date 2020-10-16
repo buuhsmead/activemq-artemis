@@ -20,6 +20,7 @@ import io.netty.handler.ssl.SslHandler;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ActiveMQNotConnectedException;
 import org.apache.activemq.artemis.api.core.Interceptor;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
@@ -84,7 +85,7 @@ public class CoreClientOverTwoWayOpenSSLTest extends ActiveMQTestBase {
     * keytool -export -keystore openssl-server-side-keystore.jks -file activemq-jks.cer -storepass secureexample
     * keytool -import -keystore openssl-client-side-truststore.jks -file activemq-jks.cer -storepass secureexample -keypass secureexample -noprompt
     *
-    * keytool -genkey -keystore verified-openssl-client-side-keystore.jks -storepass secureexample -keypass secureexample -dname "CN=localhost, OU=Artemis, O=ActiveMQ, L=AMQ, S=AMQ, C=AMQ" -keyalg EC -sigalg SHA256withECDSA
+    * keytool -genkey -keystore verified-openssl-client-side-keystore.jks -storepass secureexample -keypass secureexample -dname "CN=localhost, OU=Artemis, O=ActiveMQ, L=AMQ, S=AMQ, C=AMQ" -keyalg EC -sigalg SHA256withECDSA -ext san=ip:127.0.0.1
     * keytool -export -keystore verified-openssl-client-side-keystore.jks -file activemq-jks.cer -storepass secureexample
     * keytool -import -keystore verified-openssl-server-side-truststore.jks -file activemq-jks.cer -storepass secureexample -keypass secureexample -noprompt
     *
@@ -97,7 +98,7 @@ public class CoreClientOverTwoWayOpenSSLTest extends ActiveMQTestBase {
     * keytool -export -keystore openssl-server-side-keystore.jceks -file activemq-jceks.cer -storetype jceks -storepass secureexample
     * keytool -import -keystore openssl-client-side-truststore.jceks -storetype JCEKS -file activemq-jceks.cer -storepass secureexample -keypass secureexample -noprompt
     *
-    * keytool -genkey -keystore verified-openssl-client-side-keystore.jceks -storetype JCEKS -storepass secureexample -keypass secureexample -dname "CN=localhost, OU=Artemis, O=ActiveMQ, L=AMQ, S=AMQ, C=AMQ" -keyalg EC -sigalg SHA256withECDSA
+    * keytool -genkey -keystore verified-openssl-client-side-keystore.jceks -storetype JCEKS -storepass secureexample -keypass secureexample -dname "CN=localhost, OU=Artemis, O=ActiveMQ, L=AMQ, S=AMQ, C=AMQ" -keyalg EC -sigalg SHA256withECDSA -ext san=ip:127.0.0.1
     * keytool -export -keystore verified-openssl-client-side-keystore.jceks -file activemq-jceks.cer -storetype jceks -storepass secureexample
     * keytool -import -keystore verified-openssl-server-side-truststore.jceks -storetype JCEKS -file activemq-jceks.cer -storepass secureexample -keypass secureexample -noprompt
     *
@@ -121,7 +122,6 @@ public class CoreClientOverTwoWayOpenSSLTest extends ActiveMQTestBase {
          if (packet.getType() == PacketImpl.SESS_SEND) {
             try {
                if (connection.getTransportConnection() instanceof NettyConnection) {
-                  System.out.println("Passed through....");
                   NettyConnection nettyConnection = (NettyConnection) connection.getTransportConnection();
                   SslHandler sslHandler = (SslHandler) nettyConnection.getChannel().pipeline().get("ssl");
                   Assert.assertNotNull(sslHandler);
@@ -155,7 +155,7 @@ public class CoreClientOverTwoWayOpenSSLTest extends ActiveMQTestBase {
       ServerLocator locator = addServerLocator(ActiveMQClient.createServerLocatorWithoutHA(tc));
       ClientSessionFactory sf = createSessionFactory(locator);
       ClientSession session = sf.createSession(false, true, true);
-      session.createQueue(CoreClientOverTwoWayOpenSSLTest.QUEUE, CoreClientOverTwoWayOpenSSLTest.QUEUE, false);
+      session.createQueue(new QueueConfiguration(CoreClientOverTwoWayOpenSSLTest.QUEUE).setDurable(false));
       ClientProducer producer = session.createProducer(CoreClientOverTwoWayOpenSSLTest.QUEUE);
 
       ClientMessage message = createTextMessage(session, text);
@@ -194,7 +194,7 @@ public class CoreClientOverTwoWayOpenSSLTest extends ActiveMQTestBase {
       ServerLocator locator = addServerLocator(ActiveMQClient.createServerLocatorWithoutHA(tc));
       ClientSessionFactory sf = createSessionFactory(locator);
       ClientSession session = sf.createSession(false, true, true);
-      session.createQueue(CoreClientOverTwoWayOpenSSLTest.QUEUE, CoreClientOverTwoWayOpenSSLTest.QUEUE, false);
+      session.createQueue(new QueueConfiguration(CoreClientOverTwoWayOpenSSLTest.QUEUE).setDurable(false));
       ClientProducer producer = session.createProducer(CoreClientOverTwoWayOpenSSLTest.QUEUE);
 
       ClientMessage message = createTextMessage(session, text);

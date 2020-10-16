@@ -16,7 +16,6 @@
  */
 package org.apache.activemq.artemis.tests.integration.amqp;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -85,10 +84,6 @@ public class AmqpLargeMessageTest extends AmqpClientTestSupport {
    @Override
    protected void configureAMQPAcceptorParameters(Map<String, Object> params) {
       params.put("maxFrameSize", FRAME_SIZE);
-   }
-
-   @Override
-   protected void createAddressAndQueues(ActiveMQServer server) throws Exception {
    }
 
    @Override
@@ -241,7 +236,7 @@ public class AmqpLargeMessageTest extends AmqpClientTestSupport {
             if (wrapped.getBody() instanceof Data) {
                // converters can change this to AmqValue
                Data data = (Data) wrapped.getBody();
-               System.out.println("received : message: " + data.getValue().getLength());
+               instanceLog.debug("received : message: " + data.getValue().getLength());
                assertEquals(PAYLOAD, data.getValue().getLength());
             }
             message.accept();
@@ -295,7 +290,7 @@ public class AmqpLargeMessageTest extends AmqpClientTestSupport {
          MessageImpl wrapped = (MessageImpl) message.getWrappedMessage();
          if (wrapped.getBody() instanceof Data) {
             Data data = (Data) wrapped.getBody();
-            System.out.println("received : message: " + data.getValue().getLength());
+            instanceLog.debug("received : message: " + data.getValue().getLength());
             assertEquals(PAYLOAD, data.getValue().getLength());
          }
 
@@ -371,51 +366,6 @@ public class AmqpLargeMessageTest extends AmqpClientTestSupport {
    }
 
    @Test(timeout = 60000)
-   public void testSendHugeHeader() throws Exception {
-      doTestSendHugeHeader(PAYLOAD);
-   }
-
-   @Test(timeout = 60000)
-   public void testSendLargeMessageWithHugeHeader() throws Exception {
-      doTestSendHugeHeader(1024 * 1024);
-   }
-
-   public void doTestSendHugeHeader(int expectedSize) throws Exception {
-      server.getAddressSettingsRepository().addMatch("#", new AddressSettings().setDefaultAddressRoutingType(RoutingType.ANYCAST));
-
-      AmqpClient client = createAmqpClient();
-      AmqpConnection connection = addConnection(client.connect());
-      try {
-
-         connection.connect();
-
-         final int strLength = 512 * 1024;
-         AmqpSession session = connection.createSession();
-         AmqpSender sender = session.createSender(testQueueName);
-
-         AmqpMessage message = createAmqpMessage((byte) 'A', expectedSize);
-         StringBuffer buffer = new StringBuffer();
-         for (int i = 0; i < strLength; i++) {
-            buffer.append(" ");
-         }
-         message.setApplicationProperty("str", buffer.toString());
-         message.setDurable(true);
-
-         try {
-            sender.send(message);
-            fail();
-         } catch (IOException e) {
-            Assert.assertTrue(e.getCause() instanceof JMSException);
-            Assert.assertTrue(e.getMessage().contains("AMQ149005"));
-         }
-
-         session.close();
-      } finally {
-         connection.close();
-      }
-   }
-
-   @Test(timeout = 60000)
    public void testSendSmallerMessages() throws Exception {
       for (int i = 512; i <= (8 * 1024); i += 512) {
          doTestSendLargeMessage(i);
@@ -447,7 +397,7 @@ public class AmqpLargeMessageTest extends AmqpClientTestSupport {
    }
 
    public void doTestSendLargeMessage(int expectedSize) throws Exception {
-      LOG.info("doTestSendLargeMessage called with expectedSize " + expectedSize);
+      LOG.debug("doTestSendLargeMessage called with expectedSize " + expectedSize);
       byte[] payload = createLargePayload(expectedSize);
       assertEquals(expectedSize, payload.length);
 
@@ -467,12 +417,12 @@ public class AmqpLargeMessageTest extends AmqpClientTestSupport {
          producer.send(message);
          long endTime = System.currentTimeMillis();
 
-         LOG.info("Returned from send after {} ms", endTime - startTime);
+         LOG.debug("Returned from send after {} ms", endTime - startTime);
          startTime = System.currentTimeMillis();
          MessageConsumer consumer = session.createConsumer(queue);
          connection.start();
 
-         LOG.info("Calling receive");
+         LOG.debug("Calling receive");
          Message received = consumer.receive();
          assertNotNull(received);
          assertTrue(received instanceof BytesMessage);
@@ -480,7 +430,7 @@ public class AmqpLargeMessageTest extends AmqpClientTestSupport {
          assertNotNull(bytesMessage);
          endTime = System.currentTimeMillis();
 
-         LOG.info("Returned from receive after {} ms", endTime - startTime);
+         LOG.debug("Returned from receive after {} ms", endTime - startTime);
          byte[] bytesReceived = new byte[expectedSize];
          assertEquals(expectedSize, bytesMessage.readBytes(bytesReceived, expectedSize));
          assertTrue(Arrays.equals(payload, bytesReceived));
@@ -775,6 +725,7 @@ public class AmqpLargeMessageTest extends AmqpClientTestSupport {
 
          message.getWrappedMessage().setContentType("text/plain");
          message.getWrappedMessage().setBody(new Data(new Binary(messageText.getBytes(StandardCharsets.UTF_8))));
+         //message.setApplicationProperty("_AMQ_DUPL_ID", "11");
 
          sender.send(message);
          sender.close();

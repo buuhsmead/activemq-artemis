@@ -26,6 +26,7 @@ import org.apache.activemq.artemis.api.core.ActiveMQClusterSecurityException;
 import org.apache.activemq.artemis.api.core.ActiveMQConnectionTimedOutException;
 import org.apache.activemq.artemis.api.core.ActiveMQDeleteAddressException;
 import org.apache.activemq.artemis.api.core.ActiveMQDisconnectedException;
+import org.apache.activemq.artemis.api.core.ActiveMQDivertDoesNotExistException;
 import org.apache.activemq.artemis.api.core.ActiveMQDuplicateMetaDataException;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ActiveMQIOErrorException;
@@ -163,7 +164,7 @@ public interface ActiveMQMessageBundle {
    ActiveMQSecurityException unableToValidateUser(String remoteAddress, String user, String certMessage);
 
    @Message(id = 229032, value = "User: {0} does not have permission=''{1}'' on address {2}", format = Message.Format.MESSAGE_FORMAT)
-   ActiveMQSecurityException userNoPermissions(String username, CheckType checkType, String saddress);
+   ActiveMQSecurityException userNoPermissions(String username, CheckType checkType, SimpleString address);
 
    @Message(id = 229033, value = "Server and client versions incompatible")
    ActiveMQIncompatibleClientServerException incompatibleClientServer();
@@ -436,7 +437,7 @@ public interface ActiveMQMessageBundle {
    IllegalArgumentException invalidDeletionPolicyType(String val);
 
    @Message(id = 229213, value = "User: {0} does not have permission=''{1}'' for queue {2} on address {3}", format = Message.Format.MESSAGE_FORMAT)
-   ActiveMQSecurityException userNoPermissionsQueue(String username, CheckType checkType, String squeue, String saddress);
+   ActiveMQSecurityException userNoPermissionsQueue(String username, CheckType checkType, SimpleString queue, SimpleString address);
 
    @Message(id = 229214, value = "{0} must be a valid percentage value between 0 and 100 or -1 (actual value: {1})", format = Message.Format.MESSAGE_FORMAT)
    IllegalArgumentException notPercentOrMinusOne(String name, Number val);
@@ -447,7 +448,7 @@ public interface ActiveMQMessageBundle {
    @Message(id = 229216, value = "Invalid queue name: {0}", format = Message.Format.MESSAGE_FORMAT)
    ActiveMQIllegalStateException invalidQueueName(SimpleString queueName);
 
-   @Message(id = 119217, value = "Can't write to closed file: {0}", format = Message.Format.MESSAGE_FORMAT)
+   @Message(id = 119217, value = "Cannot write to closed file: {0}", format = Message.Format.MESSAGE_FORMAT)
    ActiveMQIOErrorException cannotWriteToClosedFile(SequentialFile file);
 
    @Message(id = 229218, value = "Failed to locate broker configuration URL")
@@ -482,4 +483,16 @@ public interface ActiveMQMessageBundle {
 
    @Message(id = 229228, value = "{0} must be less than or equal to 1 (actual value: {1})", format = Message.Format.MESSAGE_FORMAT)
    IllegalArgumentException lessThanOrEqualToOne(String name, Number val);
+
+   @Message(id = 229229, value = "Failed to parse JSON queue configuration: {0}", format = Message.Format.MESSAGE_FORMAT)
+   IllegalArgumentException failedToParseJson(String json);
+
+   @Message(id = 229230, value = "Failed to bind acceptor {0} to {1}", format = Message.Format.MESSAGE_FORMAT)
+   IllegalStateException failedToBind(String acceptor, String hostPort, @Cause Exception e);
+
+   @Message(id = 229231, value = "Divert Does Not Exist: {0}", format = Message.Format.MESSAGE_FORMAT)
+   ActiveMQDivertDoesNotExistException divertDoesNotExist(String divert);
+
+   @Message(id = 229232, value = "Cannot create consumer on {0}. Session is closed.", format = Message.Format.MESSAGE_FORMAT)
+   ActiveMQIllegalStateException cannotCreateConsumerOnClosedSession(SimpleString queueName);
 }

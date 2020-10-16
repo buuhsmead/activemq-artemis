@@ -16,14 +16,21 @@
  */
 package org.apache.activemq.artemis.tests.integration.amqp;
 
+import javax.jms.Connection;
+import javax.jms.ConnectionFactory;
+import javax.jms.DeliveryMode;
+import javax.jms.MessageConsumer;
+import javax.jms.MessageProducer;
+import javax.jms.Session;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.protocol.amqp.proton.AmqpSupport;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
+import org.apache.activemq.artemis.tests.util.CFUtil;
 import org.apache.activemq.artemis.tests.util.Wait;
 import org.apache.activemq.transport.amqp.client.AmqpClient;
 import org.apache.activemq.transport.amqp.client.AmqpConnection;
@@ -43,6 +50,10 @@ import org.junit.Test;
  * Test broker behavior when creating AMQP senders
  */
 public class AmqpSenderTest extends AmqpClientTestSupport {
+
+   @Override
+   protected void addAdditionalAcceptors(ActiveMQServer server) throws Exception {
+   }
 
    @Test(timeout = 60000)
    public void testSenderSettlementModeSettledIsHonored() throws Exception {
@@ -129,7 +140,6 @@ public class AmqpSenderTest extends AmqpClientTestSupport {
          @Override
          public void inspectDeliveryUpdate(Sender sender, Delivery delivery) {
             if (delivery.remotelySettled()) {
-               IntegrationTestLogger.LOGGER.trace("Remote settled message for sender: " + sender.getName());
                settled.countDown();
             }
          }
@@ -143,9 +153,6 @@ public class AmqpSenderTest extends AmqpClientTestSupport {
          message.setText("Test-Message: " + i);
          sender.send(message);
 
-         if (i % 1000 == 0) {
-            IntegrationTestLogger.LOGGER.info("Sent message: " + i);
-         }
       }
 
       Queue queueView = getProxyToQueue(getQueueName());
@@ -154,6 +161,41 @@ public class AmqpSenderTest extends AmqpClientTestSupport {
       sender.close();
 
       assertTrue("Remote should have settled all deliveries", settled.await(5, TimeUnit.MINUTES));
+
+      connection.close();
+   }
+
+
+   @Test(timeout = 60000)
+   public void testMixDurableAndNonDurable() throws Exception {
+      final int MSG_COUNT = 2000;
+
+      ConnectionFactory factory = CFUtil.createConnectionFactory("AMQP", getBrokerAmqpConnectionURI().toString() + "?jms.forceAsyncSend=true");
+      Connection connection = factory.createConnection();
+      Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
+
+      javax.jms.Queue queue = session.createQueue(getQueueName());
+      MessageProducer sender = session.createProducer(queue);
+
+      boolean durable = false;
+      for (int i = 1; i <= MSG_COUNT; ++i) {
+         javax.jms.Message message = session.createMessage();
+         message.setIntProperty("i", i);
+         sender.setDeliveryMode(durable ? DeliveryMode.PERSISTENT : DeliveryMode.NON_PERSISTENT);
+         durable = !durable; // flipping the switch
+         sender.send(message);
+      }
+
+      connection.start();
+      MessageConsumer receiver = session.createConsumer(queue);
+
+      for (int i = 1; i <= MSG_COUNT; ++i) {
+         javax.jms.Message message = receiver.receive(10000);
+         Assert.assertNotNull(message);
+         Assert.assertEquals(i, message.getIntProperty("i"));
+      }
+
+      Assert.assertNull(receiver.receiveNoWait());
 
       connection.close();
    }
@@ -173,9 +215,6 @@ public class AmqpSenderTest extends AmqpClientTestSupport {
          message.setText("Test-Message: " + i);
          sender.send(message);
 
-         if (i % 1000 == 0) {
-            IntegrationTestLogger.LOGGER.info("Sent message: " + i);
-         }
       }
 
       Queue queueView = getProxyToQueue(getQueueName());

@@ -24,6 +24,8 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
@@ -33,6 +35,9 @@ import org.jboss.logging.Logger;
 public class ReloadableProperties {
 
    private static final Logger logger = Logger.getLogger(ReloadableProperties.class);
+
+   // use this whenever writing to the underlying properties files from another component
+   public static final ReadWriteLock LOCK = new ReentrantReadWriteLock();
 
    private Properties props = new Properties();
    private Map<String, String> invertedProps;
@@ -121,6 +126,7 @@ public class ReloadableProperties {
    }
 
    private void load(final File source, Properties props) throws IOException {
+      LOCK.readLock().lock();
       try (FileInputStream in = new FileInputStream(source)) {
          props.load(in);
          //            if (key.isDecrypt()) {
@@ -132,12 +138,20 @@ public class ReloadableProperties {
          //                    ActiveMQServerLogger.LOGGER.info("jasypt is not on the classpath: password decryption disabled.");
          //                }
          //            }
-
+      } finally {
+         LOCK.readLock().unlock();
       }
    }
 
    private boolean hasModificationAfter(long reloadTime) {
-      return key.file.lastModified() > reloadTime;
+      /**
+       * A bug in JDK 8/9 (i.e. https://bugs.openjdk.java.net/browse/JDK-8177809) causes java.io.File.lastModified() to
+       * lose resolution past 1 second. Because of this, the value returned by java.io.File.lastModified() can appear to
+       * be smaller than it actually is which can cause the broker to miss reloading the properties if the modification
+       * happens close to another "reload" event (e.g. initial loading). In order to *not* miss file modifications that
+       * need to be reloaded we artificially inflate the value returned by java.io.File.lastModified() by 1 second.
+       */
+      return key.file.lastModified() + 1000 > reloadTime;
    }
 
    private boolean looksLikeRegexp(String str) {

@@ -16,6 +16,7 @@
  */
 package org.apache.activemq.artemis.tests.integration.client;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
@@ -23,7 +24,6 @@ import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
-import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.utils.RandomUtil;
 import org.junit.Assert;
@@ -59,9 +59,9 @@ public class SimpleSendMultipleQueuesTest extends ActiveMQTestBase {
 
          message.getBodyBuffer().writeString(body);
 
-         //  log.info("sending message");
+         //  log.debug("sending message");
          producer.send(message);
-         // log.info("sent message");
+         // log.debug("sent message");
 
          ClientMessage received1 = consumer1.receive(1000);
          Assert.assertNotNull(received1);
@@ -92,9 +92,9 @@ public class SimpleSendMultipleQueuesTest extends ActiveMQTestBase {
 
       session = cf.createSession();
 
-      session.createQueue(SimpleSendMultipleQueuesTest.address, RoutingType.MULTICAST, "queue1");
-      session.createQueue(SimpleSendMultipleQueuesTest.address, RoutingType.MULTICAST, "queue2");
-      session.createQueue(SimpleSendMultipleQueuesTest.address, RoutingType.MULTICAST, "queue3");
+      session.createQueue(new QueueConfiguration("queue1").setAddress(SimpleSendMultipleQueuesTest.address));
+      session.createQueue(new QueueConfiguration("queue2").setAddress(SimpleSendMultipleQueuesTest.address));
+      session.createQueue(new QueueConfiguration("queue3").setAddress(SimpleSendMultipleQueuesTest.address));
 
       producer = session.createProducer(SimpleSendMultipleQueuesTest.address);
 

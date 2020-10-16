@@ -29,6 +29,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
@@ -47,7 +48,6 @@ import org.apache.activemq.artemis.core.server.impl.InVMNodeManager;
 import org.apache.activemq.artemis.jms.client.ActiveMQConnection;
 import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
 import org.apache.activemq.artemis.jms.client.ActiveMQSession;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.integration.jms.server.management.JMSUtil;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.tests.util.InVMNodeManagerServer;
@@ -63,8 +63,6 @@ import org.junit.Test;
  * A simple test to test setFailoverListener when using the JMS API.
  */
 public class JMSFailoverListenerTest extends ActiveMQTestBase {
-
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
 
    // Constants -----------------------------------------------------
 
@@ -127,7 +125,7 @@ public class JMSFailoverListenerTest extends ActiveMQTestBase {
 
       SimpleString jmsQueueName = new SimpleString("myqueue");
 
-      coreSession.createQueue(jmsQueueName, RoutingType.ANYCAST, jmsQueueName, null, true);
+      coreSession.createQueue(new QueueConfiguration(jmsQueueName).setRoutingType(RoutingType.ANYCAST));
 
       Queue queue = sess.createQueue("myqueue");
 
@@ -151,13 +149,13 @@ public class JMSFailoverListenerTest extends ActiveMQTestBase {
 
       conn.start();
 
-      JMSFailoverListenerTest.log.info("sent messages and started connection");
+      instanceLog.debug("sent messages and started connection");
 
       JMSUtil.crash(liveServer, ((ActiveMQSession) sess).getCoreSession());
 
       Wait.assertTrue(() -> FailoverEventType.FAILURE_DETECTED == listener.get(0));
       for (int i = 0; i < numMessages; i++) {
-         JMSFailoverListenerTest.log.info("got message " + i);
+         instanceLog.debug("got message " + i);
 
          BytesMessage bm = (BytesMessage) consumer.receive(1000);
 
@@ -202,7 +200,7 @@ public class JMSFailoverListenerTest extends ActiveMQTestBase {
 
       SimpleString jmsQueueName = new SimpleString("myqueue");
 
-      coreSessionLive.createQueue(jmsQueueName, RoutingType.ANYCAST, jmsQueueName, null, true);
+      coreSessionLive.createQueue(new QueueConfiguration(jmsQueueName).setRoutingType(RoutingType.ANYCAST));
 
       Queue queue = sessLive.createQueue("myqueue");
 
@@ -278,7 +276,7 @@ public class JMSFailoverListenerTest extends ActiveMQTestBase {
       backupServer = addServer(new InVMNodeManagerServer(backupConf, nodeManager));
 
       backupServer.setIdentity("JMSBackup");
-      log.info("Starting backup");
+      instanceLog.debug("Starting backup");
       backupServer.start();
 
       liveConf = createBasicConfig().setJournalDirectory(getJournalDir()).setBindingsDirectory(getBindingsDir()).addAcceptorConfiguration(liveAcceptortc).setJournalType(getDefaultJournalType()).setBindingsDirectory(getBindingsDir()).setJournalMinFiles(2).setJournalDirectory(getJournalDir()).setPagingDirectory(getPageDir()).setLargeMessagesDirectory(getLargeMessagesDir()).addConnectorConfiguration(livetc.getName(), livetc).setPersistenceEnabled(true).setHAPolicyConfiguration(new SharedStoreMasterPolicyConfiguration()).addClusterConfiguration(basicClusterConnectionConfig(livetc.getName()));
@@ -287,7 +285,7 @@ public class JMSFailoverListenerTest extends ActiveMQTestBase {
       liveServer = addServer(new InVMNodeManagerServer(liveConf, nodeManager));
 
       liveServer.setIdentity("JMSLive");
-      log.info("Starting life");
+      instanceLog.debug("Starting life");
 
       liveServer.start();
 

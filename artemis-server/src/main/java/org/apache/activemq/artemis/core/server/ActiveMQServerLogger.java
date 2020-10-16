@@ -43,6 +43,7 @@ import org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants;
 import org.apache.activemq.artemis.core.server.cluster.Bridge;
 import org.apache.activemq.artemis.core.server.cluster.impl.BridgeImpl;
 import org.apache.activemq.artemis.core.server.cluster.impl.ClusterConnectionImpl;
+import org.apache.activemq.artemis.core.server.cluster.qourum.ServerConnectVote;
 import org.apache.activemq.artemis.core.server.impl.ActiveMQServerImpl;
 import org.apache.activemq.artemis.core.server.impl.ServerSessionImpl;
 import org.apache.activemq.artemis.core.server.management.Notification;
@@ -80,6 +81,10 @@ public interface ActiveMQServerLogger extends BasicLogger {
    @LogMessage(level = Logger.Level.DEBUG)
    @Message(id = 223000, value = "Received Interrupt Exception whilst waiting for component to shutdown: {0}", format = Message.Format.MESSAGE_FORMAT)
    void interruptWhilstStoppingComponent(String componentClassName);
+
+   @LogMessage(level = Logger.Level.DEBUG)
+   @Message(id = 223001, value = "Ignored quorum vote due to quorum reached or vote casted: {0}", format = Message.Format.MESSAGE_FORMAT)
+   void ignoredQuorumVote(ServerConnectVote vote);
 
    @LogMessage(level = Logger.Level.INFO)
    @Message(id = 221000, value = "{0} Message Broker is starting with configuration {1}", format = Message.Format.MESSAGE_FORMAT)
@@ -437,6 +442,14 @@ public interface ActiveMQServerLogger extends BasicLogger {
    @LogMessage(level = Logger.Level.INFO)
    @Message(id = 221082, value = "Initializing metrics plugin {0} with properties: {1}", format = Message.Format.MESSAGE_FORMAT)
    void initializingMetricsPlugin(String clazz, String properties);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221083, value = "ignoring quorum vote as max cluster size is {0}.", format = Message.Format.MESSAGE_FORMAT)
+   void ignoringQuorumVote(int maxClusterSize);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221084, value = "Requested {0} quorum votes", format = Message.Format.MESSAGE_FORMAT)
+   void requestedQuorumVotes(int vote);
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222000, value = "ActiveMQServer is being finalized and has not been stopped. Please remember to stop the server before letting it go out of scope",
@@ -1659,6 +1672,54 @@ public interface ActiveMQServerLogger extends BasicLogger {
       format = Message.Format.MESSAGE_FORMAT)
    void federationPluginExecutionError(@Cause Throwable e, String pluginMethod);
 
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222287, value = "Error looking up bindings for address {}.",
+      format = Message.Format.MESSAGE_FORMAT)
+   void federationBindingsLookupError(@Cause Throwable e, SimpleString address);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222288, value = "Page {0}, message {1} could not be found on offset {2}, with starting message {3}. This represents a logic error or inconsistency on the data, and the system will try once again from the beggining of the page file.",
+      format = Message.Format.MESSAGE_FORMAT)
+   void pageLookupError(int pageNr, int messageNr, int offset, int startNr);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222289, value = "Did not route to any matching bindings on dead-letter-address {0} and auto-create-dead-letter-resources is true; dropping message: {1}",
+      format = Message.Format.MESSAGE_FORMAT)
+   void noMatchingBindingsOnDLAWithAutoCreateDLAResources(SimpleString address, String message);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222290, value = "Failed to find cluster-connection when handling cluster-connect packet. Ignoring: {0}",
+      format = Message.Format.MESSAGE_FORMAT)
+   void failedToFindClusterConnection(String packet);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222291, value = "The metrics-plugin element is deprecated and replaced by the metrics element", format = Message.Format.MESSAGE_FORMAT)
+   void metricsPluginElementDeprecated();
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222292, value = "The metrics-plugin element is ignored because the metrics element is defined", format = Message.Format.MESSAGE_FORMAT)
+   void metricsPluginElementIgnored();
+
+   @LogMessage(level = Logger.Level.WARN) // I really want emphasis on this logger, so adding the stars
+   @Message(id = 222294, value = "\n**************************************************************************************************************************************************************************************************************************************************************\n" +
+                                 "There is a possible split brain on nodeID {0}, coming from connectors {1}. Topology update ignored.\n" +
+                                 "**************************************************************************************************************************************************************************************************************************************************************", format = Message.Format.MESSAGE_FORMAT)
+   void possibleSplitBrain(String nodeID, String connectionPairInformation);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222295, value = "Subscription {0} uses wildcard address {1} but no matching address-setting has configured the shared page-store-name; counters may be inaccurate", format = Message.Format.MESSAGE_FORMAT)
+   void wildcardRoutingWithoutSharedPageStore(SimpleString queueName, SimpleString address);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222296, value = "Unable to deploy Hawtio MBeam, console client side RBAC not available",
+         format = Message.Format.MESSAGE_FORMAT)
+   void unableToDeployHawtioMBean(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222297, value = "Unable to start Management Context, RBAC not available",
+         format = Message.Format.MESSAGE_FORMAT)
+   void unableStartManagementContext(@Cause Exception e);
+
    @LogMessage(level = Logger.Level.ERROR)
    @Message(id = 224000, value = "Failure in initialisation", format = Message.Format.MESSAGE_FORMAT)
    void initializationError(@Cause Throwable e);
@@ -1967,7 +2028,7 @@ public interface ActiveMQServerLogger extends BasicLogger {
 
    @LogMessage(level = Logger.Level.ERROR)
    @Message(id = 224082, value = "Failed to invoke an interceptor", format = Message.Format.MESSAGE_FORMAT)
-   void failedToInvokeAninterceptor(@Cause Exception e);
+   void failedToInvokeAnInterceptor(@Cause Exception e);
 
    @LogMessage(level = Logger.Level.ERROR)
    @Message(id = 224083, value = "Failed to close context", format = Message.Format.MESSAGE_FORMAT)
@@ -2031,7 +2092,7 @@ public interface ActiveMQServerLogger extends BasicLogger {
 
    @LogMessage(level = Logger.Level.INFO)
    @Message(id = 224098, value = "Received a vote saying the backup is live with connector: {0}", format = Message.Format.MESSAGE_FORMAT)
-   void qourumBackupIsLive(String liveConnector);
+   void quorumBackupIsLive(String liveConnector);
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 224099, value = "Message with ID {0} has a header too large. More information available on debug level for class {1}",
@@ -2054,4 +2115,20 @@ public interface ActiveMQServerLogger extends BasicLogger {
    @LogMessage(level = Logger.Level.INFO)
    @Message(id = 224103, value = "unable to undeploy queue {0} : reason {1}", format = Message.Format.MESSAGE_FORMAT)
    void unableToUndeployQueue(SimpleString queueName, String reason);
+
+   @LogMessage(level = Logger.Level.ERROR)
+   @Message(id = 224104, value = "Error starting the Acceptor {0} {1}", format = Message.Format.MESSAGE_FORMAT)
+   void errorStartingAcceptor(String name, Object configuration);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 224105, value = "Connecting to cluster failed")
+   void failedConnectingToCluster(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.ERROR)
+   @Message(id = 224106, value = "failed to remove transaction, xid:{0}", format = Message.Format.MESSAGE_FORMAT)
+   void errorRemovingTX(@Cause Exception e, Xid xid);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 224107, value = "The Critical Analyzer detected slow paths on the broker.  It is recommended that you enable trace logs on org.apache.activemq.artemis.utils.critical while you troubleshoot this issue. You should disable the trace logs when you have finished troubleshooting.", format = Message.Format.MESSAGE_FORMAT)
+   void enableTraceForCriticalAnalyzer();
 }

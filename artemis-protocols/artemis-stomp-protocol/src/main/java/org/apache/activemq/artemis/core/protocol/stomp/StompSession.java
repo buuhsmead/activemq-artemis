@@ -17,6 +17,7 @@
 package org.apache.activemq.artemis.core.protocol.stomp;
 
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
@@ -29,6 +30,7 @@ import org.apache.activemq.artemis.api.core.ActiveMQQueueExistsException;
 import org.apache.activemq.artemis.api.core.ICoreMessage;
 import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.Pair;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.message.impl.CoreMessage;
@@ -44,6 +46,7 @@ import org.apache.activemq.artemis.core.server.impl.ServerSessionImpl;
 import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
 import org.apache.activemq.artemis.spi.core.protocol.SessionCallback;
 import org.apache.activemq.artemis.spi.core.remoting.ReadyListener;
+import org.apache.activemq.artemis.utils.CompositeAddress;
 import org.apache.activemq.artemis.utils.ConfigurationHelper;
 import org.apache.activemq.artemis.utils.PendingTask;
 import org.apache.activemq.artemis.utils.UUIDGenerator;
@@ -69,13 +72,10 @@ public class StompSession implements SessionCallback {
 
    private volatile boolean noLocal = false;
 
-   private final int consumerCredits;
-
    StompSession(final StompConnection connection, final StompProtocolManager manager, OperationContext sessionContext) {
       this.connection = connection;
       this.manager = manager;
       this.sessionContext = sessionContext;
-      this.consumerCredits = ConfigurationHelper.getIntProperty(TransportConstants.STOMP_CONSUMERS_CREDIT, TransportConstants.STOMP_DEFAULT_CONSUMERS_CREDIT, connection.getAcceptorUsed().getConfiguration());
    }
 
    @Override
@@ -214,14 +214,13 @@ public class StompSession implements SessionCallback {
 
    public void acknowledge(String messageID, String subscriptionID) throws Exception {
       long id = Long.parseLong(messageID);
-      Pair<Long, Integer> pair = messagesToAck.remove(id);
+      Pair<Long, Integer> pair = messagesToAck.get(id);
 
       if (pair == null) {
          throw BUNDLE.failToAckMissingID(id).setHandler(connection.getFrameHandler());
       }
 
       long consumerID = pair.getA();
-      int credits = pair.getB();
 
       StompSubscription sub = subscriptions.get(consumerID);
 
@@ -231,34 +230,50 @@ public class StompSession implements SessionCallback {
          }
       }
 
-      if (this.consumerCredits != -1) {
-         session.receiveConsumerCredits(consumerID, credits);
-      }
-
       if (sub.getAck().equals(Stomp.Headers.Subscribe.AckModeValues.CLIENT_INDIVIDUAL)) {
          session.individualAcknowledge(consumerID, id);
+
+         if (sub.getConsumerWindowSize() != -1) {
+            session.receiveConsumerCredits(consumerID, messagesToAck.remove(id).getB());
+         }
       } else {
-         session.acknowledge(consumerID, id);
+         List<Long> ackedRefs = session.acknowledge(consumerID, id);
+
+         if (sub.getConsumerWindowSize() != -1) {
+            for (Long ackedID : ackedRefs) {
+               session.receiveConsumerCredits(consumerID, messagesToAck.remove(ackedID).getB());
+            }
+         }
       }
 
       session.commit();
    }
 
    public StompPostReceiptFunction addSubscription(long consumerID,
-                               String subscriptionID,
-                               String clientID,
-                               String durableSubscriptionName,
-                               String destination,
-                               String selector,
-                               String ack) throws Exception {
+                                                   String subscriptionID,
+                                                   String clientID,
+                                                   String durableSubscriptionName,
+                                                   String destination,
+                                                   String selector,
+                                                   String ack,
+                                                   Integer consumerWindowSize) throws Exception {
       SimpleString address = SimpleString.toSimpleString(destination);
       SimpleString queueName = SimpleString.toSimpleString(destination);
       SimpleString selectorSimple = SimpleString.toSimpleString(selector);
-      final int receiveCredits = ack.equals(Stomp.Headers.Subscribe.AckModeValues.AUTO) ? -1 : consumerCredits;
+      final int finalConsumerWindowSize;
+
+      if (consumerWindowSize != null) {
+         finalConsumerWindowSize = consumerWindowSize;
+      } else if (ack.equals(Stomp.Headers.Subscribe.AckModeValues.AUTO)) {
+         finalConsumerWindowSize = -1;
+      } else {
+         finalConsumerWindowSize = ConfigurationHelper.getIntProperty(TransportConstants.STOMP_CONSUMER_WINDOW_SIZE, ConfigurationHelper.getIntProperty(TransportConstants.STOMP_CONSUMERS_CREDIT, TransportConstants.STOMP_DEFAULT_CONSUMER_WINDOW_SIZE, connection.getAcceptorUsed().getConfiguration()), connection.getAcceptorUsed().getConfiguration());
+      }
 
       Set<RoutingType> routingTypes = manager.getServer().getAddressInfo(getCoreSession().removePrefix(address)).getRoutingTypes();
       boolean multicast = routingTypes.size() == 1 && routingTypes.contains(RoutingType.MULTICAST);
-      if (multicast) {
+      // if the destination is FQQN then the queue will have already been created
+      if (multicast && !CompositeAddress.isFullyQualified(destination)) {
          // subscribes to a topic
          if (durableSubscriptionName != null) {
             if (clientID == null) {
@@ -267,21 +282,25 @@ public class StompSession implements SessionCallback {
             queueName = SimpleString.toSimpleString(clientID + "." + durableSubscriptionName);
             if (manager.getServer().locateQueue(queueName) == null) {
                try {
-                  session.createQueue(address, queueName, selectorSimple, false, true);
+                  session.createQueue(new QueueConfiguration(queueName).setAddress(address).setFilterString(selectorSimple));
                } catch (ActiveMQQueueExistsException e) {
                   // ignore; can be caused by concurrent durable subscribers
                }
             }
          } else {
             queueName = UUIDGenerator.getInstance().generateSimpleStringUUID();
-            session.createQueue(address, queueName, selectorSimple, true, false);
+            session.createQueue(new QueueConfiguration(queueName).setAddress(address).setFilterString(selectorSimple).setDurable(false).setTemporary(true));
          }
       }
       final ServerConsumer consumer = session.createConsumer(consumerID, queueName, multicast ? null : selectorSimple, false, false, 0);
-      StompSubscription subscription = new StompSubscription(subscriptionID, ack, queueName, multicast);
+      StompSubscription subscription = new StompSubscription(subscriptionID, ack, queueName, multicast, finalConsumerWindowSize);
       subscriptions.put(consumerID, subscription);
       session.start();
-      return () -> consumer.receiveCredits(receiveCredits);
+      /*
+       * If the consumerWindowSize is 0 then we need to supply at least 1 credit otherwise messages will *never* flow.
+       * See org.apache.activemq.artemis.core.client.impl.ClientConsumerImpl#startSlowConsumer()
+       */
+      return () -> consumer.receiveCredits(finalConsumerWindowSize == 0 ? 1 : finalConsumerWindowSize);
    }
 
    public boolean unsubscribe(String id, String durableSubscriptionName, String clientID) throws Exception {
@@ -363,11 +382,9 @@ public class StompSession implements SessionCallback {
 
       largeMessage.releaseResources(true);
 
-      largeMessage.putLongProperty(Message.HDR_LARGE_BODY_SIZE, bytes.length);
+      largeMessage.toMessage().putLongProperty(Message.HDR_LARGE_BODY_SIZE, bytes.length);
 
-      session.send(largeMessage, direct);
-
-      largeMessage = null;
+      session.send(largeMessage.toMessage(), direct);
    }
 
 }

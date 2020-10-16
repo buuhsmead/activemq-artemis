@@ -19,7 +19,7 @@
    <parent>
       <groupId>org.apache.activemq.tests</groupId>
       <artifactId>artemis-tests-pom</artifactId>
-      <version>2.11.0-SNAPSHOT</version>
+      <version>2.16.0-SNAPSHOT</version>
    </parent>
 
    <artifactId>smoke-tests</artifactId>
@@ -91,6 +91,10 @@
          <optional>true</optional>
       </dependency>
       <dependency>
+          <groupId>com.google.errorprone</groupId>
+          <artifactId>error_prone_core</artifactId>
+      </dependency>
+      <dependency>
          <groupId>org.apache.qpid</groupId>
          <artifactId>qpid-jms-client</artifactId>
          <version>${qpid.jms.version}</version>
@@ -116,6 +120,18 @@
          <artifactId>org.eclipse.paho.client.mqttv3</artifactId>
          <version>RELEASE</version>
       </dependency>
+      <dependency>
+         <groupId>org.apache.activemq</groupId>
+         <artifactId>activemq-client</artifactId>
+         <version>${activemq5-version}</version>
+         <exclusions>
+            <exclusion>
+               <groupId>org.apache.geronimo.specs</groupId>
+               <artifactId>geronimo-jms_1.1_spec</artifactId>
+            </exclusion>
+         </exclusions>
+         <scope>test</scope>
+      </dependency>
    </dependencies>
 
    <build>
@@ -135,6 +151,10 @@
                      <javaOptions>-Djava.net.preferIPv4Stack=true</javaOptions>
                      <instance>${basedir}/target/replicated-static0</instance>
                      <configuration>${basedir}/target/classes/servers/replicated-static0</configuration>
+                     <args>
+                        <arg>--java-options</arg>
+                        <arg>-ea</arg>
+                     </args>
                   </configuration>
                </execution>
                <execution>
@@ -148,6 +168,10 @@
                      <javaOptions>-Djava.net.preferIPv4Stack=true</javaOptions>
                      <instance>${basedir}/target/replicated-static1</instance>
                      <configuration>${basedir}/target/classes/servers/replicated-static1</configuration>
+                     <args>
+                        <arg>--java-options</arg>
+                        <arg>-ea</arg>
+                     </args>
                   </configuration>
                </execution>
                <execution>
@@ -193,6 +217,139 @@
                      <user>admin</user>
                      <password>admin</password>
                      <instance>${basedir}/target/standard</instance>
+                  </configuration>
+               </execution>
+               <execution>
+                  <phase>test-compile</phase>
+                  <id>create-dnsswitch</id>
+                  <goals>
+                     <goal>create</goal>
+                  </goals>
+                  <configuration>
+                     <configuration>${basedir}/target/classes/servers/dnsswitch</configuration>
+                     <allowAnonymous>true</allowAnonymous>
+                     <user>admin</user>
+                     <password>admin</password>
+                     <instance>${basedir}/target/dnsswitch</instance>
+                  </configuration>
+               </execution>
+               <execution>
+                  <phase>test-compile</phase>
+                  <id>create-dnsswitch2</id>
+                  <goals>
+                     <goal>create</goal>
+                  </goals>
+                  <configuration>
+                     <configuration>${basedir}/target/classes/servers/dnsswitch2</configuration>
+                     <allowAnonymous>true</allowAnonymous>
+                     <user>admin</user>
+                     <password>admin</password>
+                     <instance>${basedir}/target/dnsswitch2</instance>
+                  </configuration>
+               </execution>
+               <execution>
+                  <phase>test-compile</phase>
+                  <id>create-dnsswitch-main</id>
+                  <goals>
+                     <goal>create</goal>
+                  </goals>
+                  <configuration>
+                     <configuration>${basedir}/target/classes/servers/dnsswitch-replicated-main</configuration>
+                     <allowAnonymous>true</allowAnonymous>
+                     <user>admin</user>
+                     <password>admin</password>
+                     <noWeb>true</noWeb>
+                     <instance>${basedir}/target/dnsswitch-replicated-main</instance>
+                     <args>
+                        <arg>--java-options</arg>
+                        <!-- notice these files are only available on dnsswitch, so this is not a copy and paste error
+                             where I really meant dnsswitch here -->
+                        <arg>-Djdk.net.hosts.file=${basedir}/target/dnsswitch/etc/hosts.conf -Djava.security.properties=${basedir}/target/dnsswitch/etc/zerocache.security -Djava.rmi.server.hostname=localhost</arg>
+                     </args>
+                  </configuration>
+               </execution>
+               <execution>
+                  <phase>test-compile</phase>
+                  <id>create-dnsswitch-main-withping</id>
+                  <goals>
+                     <goal>create</goal>
+                  </goals>
+                  <configuration>
+                     <configuration>${basedir}/target/classes/servers/dnsswitch-replicated-main-withping</configuration>
+                     <allowAnonymous>true</allowAnonymous>
+                     <user>admin</user>
+                     <password>admin</password>
+                     <noWeb>true</noWeb>
+                     <instance>${basedir}/target/dnsswitch-replicated-main-withping</instance>
+                     <args>
+                        <arg>--java-options</arg>
+                        <!-- notice these files are only available on dnsswitch, so this is not a copy and paste error
+                             where I really meant dnsswitch here -->
+                        <arg>-Djdk.net.hosts.file=${basedir}/target/dnsswitch/etc/hosts.conf -Djava.security.properties=${basedir}/target/dnsswitch/etc/zerocache.security -Djava.rmi.server.hostname=localhost</arg>
+                     </args>
+                  </configuration>
+               </execution>
+               <execution>
+                  <phase>test-compile</phase>
+                  <id>create-dnsswitch-backup-withping</id>
+                  <goals>
+                     <goal>create</goal>
+                  </goals>
+                  <configuration>
+                     <configuration>${basedir}/target/classes/servers/dnsswitch-replicated-backup-withping</configuration>
+                     <allowAnonymous>true</allowAnonymous>
+                     <user>admin</user>
+                     <password>admin</password>
+                     <noWeb>true</noWeb>
+                     <instance>${basedir}/target/dnsswitch-replicated-backup-withping</instance>
+                     <args>
+                        <arg>--java-options</arg>
+                        <!-- notice these files are only available on dnsswitch, so this is not a copy and paste error
+                             where I really meant dnsswitch here -->
+                        <arg>-Djdk.net.hosts.file=${basedir}/target/dnsswitch/etc/hosts.conf -Djava.security.properties=${basedir}/target/dnsswitch/etc/zerocache.security -Djava.rmi.server.hostname=localhost</arg>
+                     </args>
+                  </configuration>
+               </execution>
+               <execution>
+                  <phase>test-compile</phase>
+                  <id>create-dnsswitch-main-noretrydns</id>
+                  <goals>
+                     <goal>create</goal>
+                  </goals>
+                  <configuration>
+                     <configuration>${basedir}/target/classes/servers/dnsswitch-replicated-main-noretrydns</configuration>
+                     <allowAnonymous>true</allowAnonymous>
+                     <user>admin</user>
+                     <password>admin</password>
+                     <noWeb>true</noWeb>
+                     <instance>${basedir}/target/dnsswitch-replicated-main-noretrydns</instance>
+                     <args>
+                        <arg>--java-options</arg>
+                        <!-- notice these files are only available on dnsswitch, so this is not a copy and paste error
+                             where I really meant dnsswitch here -->
+                        <arg>-Djdk.net.hosts.file=${basedir}/target/dnsswitch/etc/hosts.conf -Djava.security.properties=${basedir}/target/dnsswitch/etc/noretrydns.security -Djava.rmi.server.hostname=localhost</arg>
+                     </args>
+                  </configuration>
+               </execution>
+               <execution>
+                  <phase>test-compile</phase>
+                  <id>create-dnsswitch-backup</id>
+                  <goals>
+                     <goal>create</goal>
+                  </goals>
+                  <configuration>
+                     <configuration>${basedir}/target/classes/servers/dnsswitch-replicated-backup</configuration>
+                     <allowAnonymous>true</allowAnonymous>
+                     <user>admin</user>
+                     <password>admin</password>
+                     <noWeb>true</noWeb>
+                     <instance>${basedir}/target/dnsswitch-replicated-backup</instance>
+                     <args>
+                        <arg>--java-options</arg>
+                        <!-- notice these files are only available on dnsswitch, so this is not a copy and paste error
+                             where I really meant dnsswitch here -->
+                        <arg>-Djdk.net.hosts.file=${basedir}/target/dnsswitch/etc/hosts.conf -Djava.security.properties=${basedir}/target/dnsswitch/etc/zerocache.security -Djava.rmi.server.hostname=localhost</arg>
+                     </args>
                   </configuration>
                </execution>
                <execution>
@@ -249,6 +406,48 @@
                </execution>
                <execution>
                   <phase>test-compile</phase>
+                  <id>create-createAuditLogging</id>
+                  <goals>
+                     <goal>create</goal>
+                  </goals>
+                  <configuration>
+                     <configuration>${basedir}/target/classes/servers/audit-logging</configuration>
+                     <noWeb>false</noWeb>
+                     <allowAnonymous>true</allowAnonymous>
+                     <user>admin</user>
+                     <password>admin</password>
+                     <instance>${basedir}/target/audit-logging</instance>
+                     <args>
+                        <!-- this is needed to run the server remotely -->
+                        <arg>--java-options</arg>
+                        <arg>-Djava.rmi.server.hostname=localhost</arg>
+                        <!--<arg>-Djava.rmi.server.hostname=localhost -agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5005</arg>-->
+                     </args>
+                  </configuration>
+               </execution>
+               <execution>
+                  <phase>test-compile</phase>
+                  <id>create-createAuditLogging2</id>
+                  <goals>
+                     <goal>create</goal>
+                  </goals>
+                  <configuration>
+                     <configuration>${basedir}/target/classes/servers/audit-logging2</configuration>
+                     <noWeb>false</noWeb>
+                     <allowAnonymous>true</allowAnonymous>
+                     <user>admin</user>
+                     <password>admin</password>
+                     <instance>${basedir}/target/audit-logging2</instance>
+                     <args>
+                        <!-- this is needed to run the server remotely -->
+                        <arg>--java-options</arg>
+                        <arg>-Djava.rmi.server.hostname=localhost</arg>
+                        <!--<arg>-Djava.rmi.server.hostname=localhost -agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5005</arg>-->
+                     </args>
+                  </configuration>
+               </execution>
+               <execution>
+                  <phase>test-compile</phase>
                   <id>create-jmx-failback</id>
                   <goals>
                      <goal>create</goal>
@@ -280,6 +479,108 @@
                      <user>admin</user>
                      <password>admin</password>
                      <instance>${basedir}/target/jmx-failback2</instance>
+                     <args>
+                        <!-- this is needed to run the server remotely -->
+                        <arg>--java-options</arg>
+                        <arg>-Djava.rmi.server.hostname=localhost</arg>
+                     </args>
+                  </configuration>
+               </execution>
+               <!-- START JmxReplicatedMultipleFailbackTest -->
+               <execution>
+                  <phase>test-compile</phase>
+                  <id>create-replicated-failback-master1</id>
+                  <goals>
+                     <goal>create</goal>
+                  </goals>
+                  <configuration>
+                     <!-- this makes it easier in certain envs -->
+                     <configuration>${basedir}/target/classes/servers/replicated-failback-master1</configuration>
+                     <allowAnonymous>true</allowAnonymous>
+                     <user>admin</user>
+                     <password>admin</password>
+                     <instance>${basedir}/target/replicated-failback-master1</instance>
+                     <args>
+                        <!-- this is needed to run the server remotely -->
+                        <arg>--java-options</arg>
+                        <arg>-Djava.rmi.server.hostname=localhost</arg>
+                     </args>
+                  </configuration>
+               </execution>
+               <execution>
+                  <phase>test-compile</phase>
+                  <id>create-replicated-failback-master2</id>
+                  <goals>
+                     <goal>create</goal>
+                  </goals>
+                  <configuration>
+                     <!-- this makes it easier in certain envs -->
+                     <configuration>${basedir}/target/classes/servers/replicated-failback-master2</configuration>
+                     <allowAnonymous>true</allowAnonymous>
+                     <user>admin</user>
+                     <password>admin</password>
+                     <instance>${basedir}/target/replicated-failback-master2</instance>
+                     <args>
+                        <!-- this is needed to run the server remotely -->
+                        <arg>--java-options</arg>
+                        <arg>-Djava.rmi.server.hostname=localhost</arg>
+                     </args>
+                  </configuration>
+               </execution>
+               <execution>
+                  <phase>test-compile</phase>
+                  <id>create-replicated-failback-master3</id>
+                  <goals>
+                     <goal>create</goal>
+                  </goals>
+                  <configuration>
+                     <!-- this makes it easier in certain envs -->
+                     <configuration>${basedir}/target/classes/servers/replicated-failback-master3</configuration>
+                     <allowAnonymous>true</allowAnonymous>
+                     <user>admin</user>
+                     <password>admin</password>
+                     <instance>${basedir}/target/replicated-failback-master3</instance>
+                     <args>
+                        <!-- this is needed to run the server remotely -->
+                        <arg>--java-options</arg>
+                        <arg>-Djava.rmi.server.hostname=localhost</arg>
+                     </args>
+                  </configuration>
+               </execution>
+               <execution>
+                  <phase>test-compile</phase>
+                  <id>create-replicated-failback-slave1</id>
+                  <goals>
+                     <goal>create</goal>
+                  </goals>
+                  <configuration>
+                     <!-- this makes it easier in certain envs -->
+                     <configuration>${basedir}/target/classes/servers/replicated-failback-slave1</configuration>
+                     <allowAnonymous>true</allowAnonymous>
+                     <user>admin</user>
+                     <password>admin</password>
+                     <instance>${basedir}/target/replicated-failback-slave1</instance>
+                     <args>
+                        <!-- this is needed to run the server remotely -->
+                        <arg>--java-options</arg>
+                        <arg>-Djava.rmi.server.hostname=localhost</arg>
+                     </args>
+                  </configuration>
+               </execution>
+               <!-- END JmxReplicatedMultipleFailbackTest -->
+               <execution>
+                  <phase>test-compile</phase>
+                  <id>create-paging</id>
+                  <goals>
+                     <goal>create</goal>
+                  </goals>
+                  <configuration>
+                     <!-- this makes it easier in certain envs -->
+                     <configuration>${basedir}/target/classes/servers/paging</configuration>
+                     <allowAnonymous>true</allowAnonymous>
+                     <user>admin</user>
+                     <password>admin</password>
+                     <instance>${basedir}/target/paging</instance>
                      <args>
                         <!-- this is needed to run the server remotely -->
                         <arg>--java-options</arg>

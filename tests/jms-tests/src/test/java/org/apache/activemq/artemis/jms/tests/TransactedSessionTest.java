@@ -30,6 +30,7 @@ import java.util.concurrent.TimeUnit;
 
 import org.apache.activemq.artemis.jms.tests.util.ProxyAssertSupport;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class TransactedSessionTest extends JMSTestCase {
@@ -171,10 +172,10 @@ public class TransactedSessionTest extends JMSTestCase {
          MessageConsumer consumer = sess.createConsumer(ActiveMQServerTestCase.topic1);
          conn.start();
 
-         log.info("sending message first time");
+         log.debug("sending message first time");
          TextMessage mSent = sess.createTextMessage("igloo");
          producer.send(mSent);
-         log.info("sent message first time");
+         log.debug("sent message first time");
 
          sess.commit();
 
@@ -183,10 +184,10 @@ public class TransactedSessionTest extends JMSTestCase {
 
          sess.commit();
 
-         log.info("sending message again");
+         log.debug("sending message again");
          mSent.setText("rollback");
          producer.send(mSent);
-         log.info("sent message again");
+         log.debug("sent message again");
 
          sess.commit();
 
@@ -234,7 +235,7 @@ public class TransactedSessionTest extends JMSTestCase {
             producer.send(m);
          }
 
-         Message m = consumer.receive(500);
+         Message m = consumer.receiveNoWait();
          ProxyAssertSupport.assertNull(m);
       } finally {
          if (conn != null) {
@@ -340,7 +341,7 @@ public class TransactedSessionTest extends JMSTestCase {
          consumer = consumerSess.createConsumer(queue1);
          conn.start();
 
-         Message m = consumer.receive(500);
+         Message m = consumer.receiveNoWait();
 
          ProxyAssertSupport.assertNull(m);
       } finally {
@@ -381,7 +382,7 @@ public class TransactedSessionTest extends JMSTestCase {
 
          producerSess.rollback();
 
-         Message m = consumer.receive(500);
+         Message m = consumer.receiveNoWait();
 
          ProxyAssertSupport.assertNull(m);
       } finally {
@@ -617,6 +618,8 @@ public class TransactedSessionTest extends JMSTestCase {
 
    }
 
+   @Test
+   @Ignore
    public void _testSendCommitQueueCommitsInOrder() throws Exception {
       Connection conn = null;
 
@@ -865,7 +868,7 @@ public class TransactedSessionTest extends JMSTestCase {
          consumer = consumerSess.createConsumer(queue1);
          conn.start();
 
-         Message m = consumer.receive(500);
+         Message m = consumer.receiveNoWait();
 
          ProxyAssertSupport.assertNull(m);
       } finally {
@@ -906,7 +909,7 @@ public class TransactedSessionTest extends JMSTestCase {
 
          producerSess.rollback();
 
-         Message m = consumer.receive(500);
+         Message m = consumer.receiveNoWait();
 
          ProxyAssertSupport.assertNull(m);
       } finally {

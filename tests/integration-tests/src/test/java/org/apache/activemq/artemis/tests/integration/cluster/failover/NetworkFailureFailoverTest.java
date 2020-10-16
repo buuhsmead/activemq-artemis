@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.Interceptor;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
@@ -44,8 +45,8 @@ import org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants;
 import org.apache.activemq.artemis.core.server.cluster.impl.MessageLoadBalancingType;
 import org.apache.activemq.artemis.tests.util.Wait;
 import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
-import org.apache.activemq.artemis.tests.util.network.NetUtil;
-import org.apache.activemq.artemis.tests.util.network.NetUtilResource;
+import org.apache.activemq.artemis.utils.network.NetUtil;
+import org.apache.activemq.artemis.utils.network.NetUtilResource;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Rule;
@@ -162,13 +163,13 @@ public class NetworkFailureFailoverTest extends FailoverTestBase {
       liveServer.addInterceptor(new Interceptor() {
          @Override
          public boolean intercept(Packet packet, RemotingConnection connection) throws ActiveMQException {
-            //System.out.println("Received " + packet);
+            //instanceLog.debug("Received " + packet);
             if (packet instanceof SessionSendMessage) {
 
                if (countSent.incrementAndGet() == 500) {
                   try {
                      NetUtil.netDown(LIVE_IP);
-                     System.out.println("Blocking traffic");
+                     instanceLog.debug("Blocking traffic");
                      // Thread.sleep(3000); // this is important to let stuff to block
                      liveServer.crash(true, false);
                   } catch (Exception e) {
@@ -219,7 +220,7 @@ public class NetworkFailureFailoverTest extends FailoverTestBase {
 
       ClientSession sessionProducer = createSession(sfProducer, true, true, 0);
 
-      sessionProducer.createQueue(FailoverTestBase.ADDRESS, FailoverTestBase.ADDRESS, null, true);
+      sessionProducer.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       ClientProducer producer = sessionProducer.createProducer(FailoverTestBase.ADDRESS);
 
@@ -247,11 +248,11 @@ public class NetworkFailureFailoverTest extends FailoverTestBase {
                      latchReceived.countDown();
                      msgReceived.acknowledge();
                      if (received++ % 100 == 0) {
-                        System.out.println("Received " + received);
+                        instanceLog.debug("Received " + received);
                         sessionConsumer.commit();
                      }
                   } else {
-                     System.out.println("Null");
+                     instanceLog.debug("Null");
                   }
                } catch (Throwable e) {
                   errors++;
@@ -270,7 +271,7 @@ public class NetworkFailureFailoverTest extends FailoverTestBase {
          do {
             try {
                if (sentMessages.get() % 100 == 0) {
-                  System.out.println("Sent " + sentMessages.get());
+                  instanceLog.debug("Sent " + sentMessages.get());
                }
                producer.send(createMessage(sessionProducer, sentMessages.get(), true));
                break;
@@ -351,7 +352,7 @@ public class NetworkFailureFailoverTest extends FailoverTestBase {
 
       ClientSession sessionProducer = createSession(sfProducer, true, true, 0);
 
-      sessionProducer.createQueue(FailoverTestBase.ADDRESS, FailoverTestBase.ADDRESS, null, true);
+      sessionProducer.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       ClientProducer producer = sessionProducer.createProducer(FailoverTestBase.ADDRESS);
 
@@ -381,15 +382,15 @@ public class NetworkFailureFailoverTest extends FailoverTestBase {
                      if (++received % 100 == 0) {
 
                         if (received == 300) {
-                           System.out.println("Shutting down IP");
+                           instanceLog.debug("Shutting down IP");
                            NetUtil.netDown(LIVE_IP);
                            liveServer.crash(true, false);
                         }
-                        System.out.println("Received " + received);
+                        instanceLog.debug("Received " + received);
                         sessionConsumer.commit();
                      }
                   } else {
-                     System.out.println("Null");
+                     instanceLog.debug("Null");
                   }
                } catch (Throwable e) {
                   errors++;
@@ -407,7 +408,7 @@ public class NetworkFailureFailoverTest extends FailoverTestBase {
          do {
             try {
                if (sentMessages.get() % 100 == 0) {
-                  System.out.println("Sent " + sentMessages.get());
+                  instanceLog.debug("Sent " + sentMessages.get());
                }
                producer.send(createMessage(sessionProducer, sentMessages.get(), true));
                break;
@@ -453,13 +454,13 @@ public class NetworkFailureFailoverTest extends FailoverTestBase {
       liveServer.addInterceptor(new Interceptor() {
          @Override
          public boolean intercept(Packet packet, RemotingConnection connection) throws ActiveMQException {
-            //System.out.println("Received " + packet);
+            //instanceLog.debug("Received " + packet);
             if (packet instanceof CreateSessionMessage) {
 
                if (countSent.incrementAndGet() == 50) {
                   try {
                      NetUtil.netDown(LIVE_IP);
-                     System.out.println("Blocking traffic");
+                     instanceLog.debug("Blocking traffic");
                      blockedAt.set(sentMessages.get());
                      latchDown.countDown();
                   } catch (Exception e) {
@@ -516,7 +517,7 @@ public class NetworkFailureFailoverTest extends FailoverTestBase {
             while (running.get() && received < numSessions) {
                try {
                   ClientSession session = sessionFactory.createSession();
-                  System.out.println("Creating session, currentLatch = " + latchCreated.getCount());
+                  instanceLog.debug("Creating session, currentLatch = " + latchCreated.getCount());
                   session.close();
                   latchCreated.countDown();
                } catch (Throwable e) {
@@ -533,7 +534,7 @@ public class NetworkFailureFailoverTest extends FailoverTestBase {
 
       Thread.sleep(1000);
 
-      System.out.println("Server crashed now!!!");
+      instanceLog.debug("Server crashed now!!!");
 
       liveServer.crash(true, false);
 
@@ -564,13 +565,13 @@ public class NetworkFailureFailoverTest extends FailoverTestBase {
       liveServer.addInterceptor(new Interceptor() {
          @Override
          public boolean intercept(Packet packet, RemotingConnection connection) throws ActiveMQException {
-            //System.out.println("Received " + packet);
+            //instanceLog.debug("Received " + packet);
             if (packet instanceof SessionSendMessage) {
 
                if (countSent.incrementAndGet() == 50) {
                   try {
                      NetUtil.netDown(LIVE_IP);
-                     System.out.println("Blocking traffic");
+                     instanceLog.debug("Blocking traffic");
                      Thread.sleep(3000); // this is important to let stuff to block
                      blockedAt.set(sentMessages.get());
                      latchBlocked.countDown();
@@ -633,7 +634,7 @@ public class NetworkFailureFailoverTest extends FailoverTestBase {
 
       final ClientSession sessionProducer = createSession(sfProducer, true, true, 0);
 
-      sessionProducer.createQueue(FailoverTestBase.ADDRESS, FailoverTestBase.ADDRESS, null, true);
+      sessionProducer.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       final ClientProducer producer = sessionProducer.createProducer(FailoverTestBase.ADDRESS);
 
@@ -649,7 +650,7 @@ public class NetworkFailureFailoverTest extends FailoverTestBase {
             while (sentMessages.get() < numMessages && running.get()) {
                try {
                   if (sentMessages.get() % 10 == 0) {
-                     System.out.println("Sent " + sentMessages.get());
+                     instanceLog.debug("Sent " + sentMessages.get());
                   }
                   producer.send(createMessage(sessionProducer, sentMessages.get(), true));
                   sentMessages.incrementAndGet();

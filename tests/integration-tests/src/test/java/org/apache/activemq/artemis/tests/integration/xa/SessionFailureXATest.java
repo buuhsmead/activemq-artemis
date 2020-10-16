@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -37,11 +38,12 @@ import org.apache.activemq.artemis.core.config.StoreConfiguration;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ServerSession;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.apache.activemq.artemis.utils.RetryRule;
 import org.apache.activemq.artemis.utils.Wait;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -49,7 +51,8 @@ import org.junit.runners.Parameterized;
 @RunWith(Parameterized.class)
 public class SessionFailureXATest extends ActiveMQTestBase {
 
-   private static IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
+   @Rule
+   public RetryRule retryRule = new RetryRule(1);
 
    private final Map<String, AddressSettings> addressSettings = new HashMap<>();
 
@@ -101,7 +104,7 @@ public class SessionFailureXATest extends ActiveMQTestBase {
 
       clientSession = addClientSession(sessionFactory.createSession(true, false, false));
 
-      clientSession.createQueue(atestq, atestq, null, true);
+      clientSession.createQueue(new QueueConfiguration(atestq));
    }
 
    @Test

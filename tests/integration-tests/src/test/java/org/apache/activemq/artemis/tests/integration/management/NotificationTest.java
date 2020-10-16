@@ -18,6 +18,7 @@ package org.apache.activemq.artemis.tests.integration.management;
 
 import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
@@ -79,13 +80,17 @@ public class NotificationTest extends ActiveMQTestBase {
 
       NotificationTest.flush(notifConsumer);
 
-      session.createQueue(address, queue, durable);
+      long start = System.currentTimeMillis();
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       //the first message received will be for the address creation
       ClientMessage[] notifications = NotificationTest.consumeMessages(2, notifConsumer);
       Assert.assertEquals(BINDING_ADDED.toString(), notifications[1].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TYPE).toString());
       Assert.assertEquals(queue.toString(), notifications[1].getObjectProperty(ManagementHelper.HDR_ROUTING_NAME).toString());
       Assert.assertEquals(address.toString(), notifications[1].getObjectProperty(ManagementHelper.HDR_ADDRESS).toString());
+      Assert.assertTrue(notifications[1].getTimestamp() >= start);
+      Assert.assertTrue((long) notifications[1].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP) >= start);
+      Assert.assertEquals(notifications[1].getTimestamp(), (long) notifications[1].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP));
 
       session.deleteQueue(queue);
    }
@@ -96,19 +101,22 @@ public class NotificationTest extends ActiveMQTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       boolean durable = RandomUtil.randomBoolean();
 
-      System.out.println(queue);
       notifConsumer.close();
       notifConsumer = session.createConsumer(notifQueue.toString(), ManagementHelper.HDR_ROUTING_NAME + "= '" +
          queue +
          "'");
       NotificationTest.flush(notifConsumer);
 
-      session.createQueue(address, queue, durable);
+      long start = System.currentTimeMillis();
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       ClientMessage[] notifications = NotificationTest.consumeMessages(1, notifConsumer);
       Assert.assertEquals(BINDING_ADDED.toString(), notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TYPE).toString());
       Assert.assertEquals(queue.toString(), notifications[0].getObjectProperty(ManagementHelper.HDR_ROUTING_NAME).toString());
       Assert.assertEquals(address.toString(), notifications[0].getObjectProperty(ManagementHelper.HDR_ADDRESS).toString());
+      Assert.assertTrue(notifications[0].getTimestamp() >= start);
+      Assert.assertTrue((long) notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP) >= start);
+      Assert.assertEquals(notifications[0].getTimestamp(), (long) notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP));
 
       session.deleteQueue(queue);
    }
@@ -119,13 +127,12 @@ public class NotificationTest extends ActiveMQTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       boolean durable = RandomUtil.randomBoolean();
 
-      System.out.println(queue);
       notifConsumer.close();
       notifConsumer = session.createConsumer(notifQueue.toString(), ManagementHelper.HDR_ROUTING_NAME + " <> '" +
          queue + "' AND " + ManagementHelper.HDR_ADDRESS + " <> '" + address + "'");
       NotificationTest.flush(notifConsumer);
 
-      session.createQueue(address, queue, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       NotificationTest.consumeMessages(0, notifConsumer);
 
@@ -138,10 +145,11 @@ public class NotificationTest extends ActiveMQTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       boolean durable = RandomUtil.randomBoolean();
 
-      session.createQueue(address, queue, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       NotificationTest.flush(notifConsumer);
 
+      long start = System.currentTimeMillis();
       session.deleteQueue(queue);
 
       //There will be 2 notifications, first is for binding removal, second is for address removal
@@ -149,6 +157,9 @@ public class NotificationTest extends ActiveMQTestBase {
       Assert.assertEquals(BINDING_REMOVED.toString(), notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TYPE).toString());
       Assert.assertEquals(queue.toString(), notifications[0].getObjectProperty(ManagementHelper.HDR_ROUTING_NAME).toString());
       Assert.assertEquals(address.toString(), notifications[0].getObjectProperty(ManagementHelper.HDR_ADDRESS).toString());
+      Assert.assertTrue(notifications[0].getTimestamp() >= start);
+      Assert.assertTrue((long) notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP) >= start);
+      Assert.assertEquals(notifications[0].getTimestamp(), (long) notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP));
    }
 
    @Test
@@ -162,10 +173,11 @@ public class NotificationTest extends ActiveMQTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       boolean durable = RandomUtil.randomBoolean();
 
-      session.createQueue(address, queue, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       NotificationTest.flush(notifConsumer);
 
+      long start = System.currentTimeMillis();
       ClientConsumer consumer = mySession.createConsumer(queue);
       SimpleString consumerName = SimpleString.toSimpleString(((ClientSessionInternal) mySession).getName());
 
@@ -179,6 +191,9 @@ public class NotificationTest extends ActiveMQTestBase {
       Assert.assertEquals(SimpleString.toSimpleString("invm:0"), notifications[0].getSimpleStringProperty(ManagementHelper.HDR_REMOTE_ADDRESS));
       Assert.assertEquals(consumerName, notifications[0].getSimpleStringProperty(ManagementHelper.HDR_SESSION_NAME));
       Assert.assertEquals(SimpleString.toSimpleString("unavailable"), notifications[0].getSimpleStringProperty(ManagementHelper.HDR_CERT_SUBJECT_DN));
+      Assert.assertTrue(notifications[0].getTimestamp() >= start);
+      Assert.assertTrue((long) notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP) >= start);
+      Assert.assertEquals(notifications[0].getTimestamp(), (long) notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP));
 
       consumer.close();
       session.deleteQueue(queue);
@@ -195,12 +210,13 @@ public class NotificationTest extends ActiveMQTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       boolean durable = RandomUtil.randomBoolean();
 
-      mySession.createQueue(address, queue, durable);
+      mySession.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       ClientConsumer consumer = mySession.createConsumer(queue);
       SimpleString sessionName = SimpleString.toSimpleString(((ClientSessionInternal) mySession).getName());
 
       NotificationTest.flush(notifConsumer);
 
+      long start = System.currentTimeMillis();
       consumer.close();
 
       ClientMessage[] notifications = NotificationTest.consumeMessages(1, notifConsumer);
@@ -211,6 +227,9 @@ public class NotificationTest extends ActiveMQTestBase {
       Assert.assertEquals(SimpleString.toSimpleString("myUser"), notifications[0].getSimpleStringProperty(ManagementHelper.HDR_USER));
       Assert.assertEquals(SimpleString.toSimpleString("invm:0"), notifications[0].getSimpleStringProperty(ManagementHelper.HDR_REMOTE_ADDRESS));
       Assert.assertEquals(sessionName, notifications[0].getSimpleStringProperty(ManagementHelper.HDR_SESSION_NAME));
+      Assert.assertTrue(notifications[0].getTimestamp() >= start);
+      Assert.assertTrue((long) notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP) >= start);
+      Assert.assertEquals(notifications[0].getTimestamp(), (long) notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP));
 
       session.deleteQueue(queue);
    }
@@ -221,12 +240,16 @@ public class NotificationTest extends ActiveMQTestBase {
 
       NotificationTest.flush(notifConsumer);
 
+      long start = System.currentTimeMillis();
       session.createAddress(address, RoutingType.ANYCAST, true);
 
       ClientMessage[] notifications = NotificationTest.consumeMessages(1, notifConsumer);
       Assert.assertEquals(ADDRESS_ADDED.toString(), notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TYPE).toString());
       Assert.assertEquals(RoutingType.ANYCAST.getType(), notifications[0].getObjectProperty(ManagementHelper.HDR_ROUTING_TYPE));
       Assert.assertEquals(address.toString(), notifications[0].getObjectProperty(ManagementHelper.HDR_ADDRESS).toString());
+      Assert.assertTrue(notifications[0].getTimestamp() >= start);
+      Assert.assertTrue((long) notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP) >= start);
+      Assert.assertEquals(notifications[0].getTimestamp(), (long) notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP));
 
    }
 
@@ -236,18 +259,23 @@ public class NotificationTest extends ActiveMQTestBase {
       session.createAddress(address, RoutingType.ANYCAST, true);
       NotificationTest.flush(notifConsumer);
 
+      long start = System.currentTimeMillis();
       server.getPostOffice().removeAddressInfo(address);
 
       ClientMessage[] notifications = NotificationTest.consumeMessages(1, notifConsumer);
       Assert.assertEquals(ADDRESS_REMOVED.toString(), notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TYPE).toString());
       Assert.assertEquals(RoutingType.ANYCAST.getType(), notifications[0].getObjectProperty(ManagementHelper.HDR_ROUTING_TYPE));
       Assert.assertEquals(address.toString(), notifications[0].getObjectProperty(ManagementHelper.HDR_ADDRESS).toString());
+      Assert.assertTrue(notifications[0].getTimestamp() >= start);
+      Assert.assertTrue((long) notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP) >= start);
+      Assert.assertEquals(notifications[0].getTimestamp(), (long) notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP));
    }
 
    @Test
    public void testConnectionCreatedAndDestroyed() throws Exception {
       NotificationTest.flush(notifConsumer);
 
+      long start = System.currentTimeMillis();
       ClientSessionFactory sf = createSessionFactory(locator);
       ClientSession mySession = sf.createSession("myUser", "myPassword", false, true, true, locator.isPreAcknowledge(), locator.getAckBatchSize());
       mySession.start();
@@ -261,8 +289,13 @@ public class NotificationTest extends ActiveMQTestBase {
       Assert.assertNotNull(notifications[1].getObjectProperty(ManagementHelper.HDR_CONNECTION_NAME));
       Assert.assertNotNull(notifications[1].getObjectProperty(ManagementHelper.HDR_SESSION_NAME));
       Assert.assertEquals(SimpleString.toSimpleString("myUser"), notifications[1].getObjectProperty(ManagementHelper.HDR_USER));
+      Assert.assertTrue(notifications[1].getTimestamp() >= start);
+      Assert.assertTrue((long) notifications[1].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP) >= start);
+      Assert.assertEquals(notifications[1].getTimestamp(), (long) notifications[1].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP));
 
       NotificationTest.flush(notifConsumer);
+
+      start = System.currentTimeMillis();
       mySession.close();
       sf.close();
 
@@ -272,10 +305,15 @@ public class NotificationTest extends ActiveMQTestBase {
       Assert.assertNotNull(notifications[0].getObjectProperty(ManagementHelper.HDR_CONNECTION_NAME));
       Assert.assertNotNull(notifications[0].getObjectProperty(ManagementHelper.HDR_SESSION_NAME));
       Assert.assertEquals(SimpleString.toSimpleString("myUser"), notifications[0].getObjectProperty(ManagementHelper.HDR_USER));
+      Assert.assertTrue(notifications[0].getTimestamp() >= start);
+      Assert.assertTrue((Long) notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP) >= start);
 
       Assert.assertEquals(CONNECTION_DESTROYED.toString(), notifications[1].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TYPE).toString());
       Assert.assertNotNull(notifications[1].getObjectProperty(ManagementHelper.HDR_CONNECTION_NAME));
       Assert.assertEquals(connectionId, notifications[1].getObjectProperty(ManagementHelper.HDR_CONNECTION_NAME).toString());
+      Assert.assertTrue(notifications[1].getTimestamp() >= start);
+      Assert.assertTrue((long) notifications[1].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP) >= start);
+      Assert.assertEquals(notifications[1].getTimestamp(), (long) notifications[1].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP));
    }
 
    @Test
@@ -289,7 +327,7 @@ public class NotificationTest extends ActiveMQTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       boolean durable = RandomUtil.randomBoolean();
 
-      session.createQueue(address, queue, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       ClientConsumer consumer = mySession.createConsumer(queue);
       ClientProducer producer = mySession.createProducer(address);
@@ -299,6 +337,8 @@ public class NotificationTest extends ActiveMQTestBase {
       ClientMessage msg = session.createMessage(false);
       msg.putStringProperty("someKey", "someValue");
       producer.send(msg);
+
+      long start = System.currentTimeMillis();
       consumer.receive(1000);
 
       ClientMessage[] notifications = NotificationTest.consumeMessages(1, notifConsumer);
@@ -308,6 +348,9 @@ public class NotificationTest extends ActiveMQTestBase {
       Assert.assertEquals(address, notifications[0].getObjectProperty(ManagementHelper.HDR_ADDRESS));
       Assert.assertEquals(queue, notifications[0].getObjectProperty(ManagementHelper.HDR_ROUTING_NAME));
       Assert.assertEquals(RoutingType.MULTICAST.getType(), notifications[0].getObjectProperty(ManagementHelper.HDR_ROUTING_TYPE));
+      Assert.assertTrue(notifications[0].getTimestamp() >= start);
+      Assert.assertTrue((long) notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP) >= start);
+      Assert.assertEquals(notifications[0].getTimestamp(), (long) notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP));
 
       consumer.close();
       session.deleteQueue(queue);
@@ -324,7 +367,7 @@ public class NotificationTest extends ActiveMQTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       boolean durable = RandomUtil.randomBoolean();
 
-      session.createQueue(address, queue, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       ClientConsumer consumer = mySession.createConsumer(queue);
       ClientProducer producer = mySession.createProducer(address);
@@ -334,9 +377,10 @@ public class NotificationTest extends ActiveMQTestBase {
       ClientMessage msg = session.createMessage(false);
       msg.putStringProperty("someKey", "someValue");
       msg.setExpiration(1);
+
+      long start = System.currentTimeMillis();
       producer.send(msg);
-      Thread.sleep(500);
-      consumer.receive(500);
+      Assert.assertNull(consumer.receiveImmediate());
 
       ClientMessage[] notifications = NotificationTest.consumeMessages(1, notifConsumer);
       Assert.assertEquals(MESSAGE_EXPIRED.toString(), notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TYPE).toString());
@@ -344,6 +388,9 @@ public class NotificationTest extends ActiveMQTestBase {
       Assert.assertEquals(address, notifications[0].getObjectProperty(ManagementHelper.HDR_ADDRESS));
       Assert.assertEquals(queue, notifications[0].getObjectProperty(ManagementHelper.HDR_ROUTING_NAME));
       Assert.assertEquals(RoutingType.MULTICAST.getType(), notifications[0].getObjectProperty(ManagementHelper.HDR_ROUTING_TYPE));
+      Assert.assertTrue(notifications[0].getTimestamp() >= start);
+      Assert.assertTrue((long) notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP) >= start);
+      Assert.assertEquals(notifications[0].getTimestamp(), (long) notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP));
 
       consumer.close();
       session.deleteQueue(queue);
@@ -360,7 +407,7 @@ public class NotificationTest extends ActiveMQTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       boolean durable = RandomUtil.randomBoolean();
 
-      session.createQueue(address, queue, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       ClientProducer producer = mySession.createProducer(address);
 
       NotificationTest.flush(notifConsumer);
@@ -368,8 +415,9 @@ public class NotificationTest extends ActiveMQTestBase {
       ClientMessage msg = session.createMessage(false);
       msg.putStringProperty("someKey", "someValue");
       msg.setExpiration(1);
+
+      long start = System.currentTimeMillis();
       producer.send(msg);
-      Thread.sleep(500);
 
       ClientMessage[] notifications = NotificationTest.consumeMessages(1, notifConsumer, 5000);
       Assert.assertEquals(MESSAGE_EXPIRED.toString(), notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TYPE).toString());
@@ -377,8 +425,9 @@ public class NotificationTest extends ActiveMQTestBase {
       Assert.assertEquals(address, notifications[0].getObjectProperty(ManagementHelper.HDR_ADDRESS));
       Assert.assertEquals(queue, notifications[0].getObjectProperty(ManagementHelper.HDR_ROUTING_NAME));
       Assert.assertEquals(RoutingType.MULTICAST.getType(), notifications[0].getObjectProperty(ManagementHelper.HDR_ROUTING_TYPE));
-
-      session.deleteQueue(queue);
+      Assert.assertTrue(notifications[0].getTimestamp() >= start);
+      Assert.assertTrue((long) notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP) >= start);
+      Assert.assertEquals(notifications[0].getTimestamp(), (long) notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP));
    }
 
    // Package protected ---------------------------------------------
@@ -407,7 +456,7 @@ public class NotificationTest extends ActiveMQTestBase {
 
       notifQueue = RandomUtil.randomSimpleString();
 
-      session.createQueue(ActiveMQDefaultConfiguration.getDefaultManagementNotificationAddress(), notifQueue, null, false);
+      session.createQueue(new QueueConfiguration(notifQueue).setAddress(ActiveMQDefaultConfiguration.getDefaultManagementNotificationAddress()).setDurable(false));
 
       notifConsumer = session.createConsumer(notifQueue);
    }
@@ -417,7 +466,7 @@ public class NotificationTest extends ActiveMQTestBase {
    private static void flush(final ClientConsumer notifConsumer) throws ActiveMQException {
       ClientMessage message = null;
       do {
-         message = notifConsumer.receive(500);
+         message = notifConsumer.receiveImmediate();
       }
       while (message != null);
    }
@@ -435,21 +484,11 @@ public class NotificationTest extends ActiveMQTestBase {
       ClientMessage m = null;
       for (int i = 0; i < expected; i++) {
          m = consumer.receive(timeout);
-         if (m != null) {
-            for (SimpleString key : m.getPropertyNames()) {
-               System.out.println(key + "=" + m.getObjectProperty(key));
-            }
-         }
          Assert.assertNotNull("expected to received " + expected + " messages, got only " + i, m);
          messages[i] = m;
          m.acknowledge();
       }
       m = consumer.receiveImmediate();
-      if (m != null) {
-         for (SimpleString key : m.getPropertyNames()) {
-            System.out.println(key + "=" + m.getObjectProperty(key));
-         }
-      }
       Assert.assertNull("received one more message than expected (" + expected + ")", m);
 
       return messages;

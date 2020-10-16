@@ -24,6 +24,8 @@ import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
+import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.Pair;
 import org.apache.activemq.artemis.api.core.SimpleString;
@@ -38,6 +40,7 @@ import org.apache.activemq.artemis.core.paging.PagingManager;
 import org.apache.activemq.artemis.core.paging.PagingStore;
 import org.apache.activemq.artemis.core.paging.cursor.PagePosition;
 import org.apache.activemq.artemis.core.persistence.config.PersistedAddressSetting;
+import org.apache.activemq.artemis.core.persistence.config.PersistedDivertConfiguration;
 import org.apache.activemq.artemis.core.persistence.config.PersistedRoles;
 import org.apache.activemq.artemis.core.persistence.impl.PageCountPending;
 import org.apache.activemq.artemis.core.postoffice.Binding;
@@ -192,15 +195,15 @@ public interface StorageManager extends IDGenerator, ActiveMQComponent {
 
    void storeReference(long queueID, long messageID, boolean last) throws Exception;
 
-   void deleteMessage(long messageID) throws Exception;
+   boolean deleteMessage(long messageID) throws Exception;
 
    void storeAcknowledge(long queueID, long messageID) throws Exception;
 
    void storeCursorAcknowledge(long queueID, PagePosition position) throws Exception;
 
-   void updateDeliveryCount(MessageReference ref) throws Exception;
+   boolean updateDeliveryCount(MessageReference ref) throws Exception;
 
-   void updateScheduledDeliveryTime(MessageReference ref) throws Exception;
+   boolean updateScheduledDeliveryTime(MessageReference ref) throws Exception;
 
    void storeDuplicateID(SimpleString address, byte[] duplID, long recordID) throws Exception;
 
@@ -243,6 +246,8 @@ public interface StorageManager extends IDGenerator, ActiveMQComponent {
     */
    LargeServerMessage createLargeMessage(long id, Message message) throws Exception;
 
+   LargeServerMessage largeMessageCreated(long id, LargeServerMessage largeMessage) throws Exception;
+
    enum LargeMessageExtension {
       DURABLE(".msg"), TEMPORARY(".tmp"), SYNC(".sync");
       final String extension;
@@ -264,6 +269,17 @@ public interface StorageManager extends IDGenerator, ActiveMQComponent {
     * @return
     */
    SequentialFile createFileForLargeMessage(long messageID, LargeMessageExtension extension);
+
+   void deleteLargeMessageBody(LargeServerMessage largeServerMessage) throws ActiveMQException;
+
+   default SequentialFile createFileForLargeMessage(long messageID, boolean durable) {
+      if (durable) {
+         return createFileForLargeMessage(messageID, LargeMessageExtension.DURABLE);
+      } else {
+         return createFileForLargeMessage(messageID, LargeMessageExtension.TEMPORARY);
+      }
+   }
+
 
    void prepare(long txID, Xid xid) throws Exception;
 
@@ -344,6 +360,11 @@ public interface StorageManager extends IDGenerator, ActiveMQComponent {
 
    List<PersistedRoles> recoverPersistedRoles() throws Exception;
 
+   void storeDivertConfiguration(PersistedDivertConfiguration persistedDivertConfiguration) throws Exception;
+
+   void deleteDivertConfiguration(String divertName) throws Exception;
+
+   List<PersistedDivertConfiguration> recoverDivertConfigurations();
    /**
     * @return The ID with the stored counter
     */
@@ -415,6 +436,10 @@ public interface StorageManager extends IDGenerator, ActiveMQComponent {
     * @param bytes
     */
    void addBytesToLargeMessage(SequentialFile appendFile, long messageID, byte[] bytes) throws Exception;
+
+   void addBytesToLargeMessage(SequentialFile file,
+                               long messageId,
+                               ActiveMQBuffer bytes) throws Exception;
 
    /**
     * Stores the id from IDManager.

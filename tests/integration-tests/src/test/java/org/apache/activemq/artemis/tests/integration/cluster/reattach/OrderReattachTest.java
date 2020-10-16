@@ -23,6 +23,7 @@ import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.activemq.artemis.api.core.ActiveMQNotConnectedException;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -34,9 +35,7 @@ import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.client.impl.ClientSessionInternal;
 import org.apache.activemq.artemis.core.protocol.core.impl.RemotingConnectionImpl;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
-import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.jms.client.ActiveMQTextMessage;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.junit.Assert;
 import org.junit.Test;
@@ -47,8 +46,6 @@ public class OrderReattachTest extends ActiveMQTestBase {
    final SimpleString ADDRESS = new SimpleString("address");
 
    // Attributes ----------------------------------------------------
-   private final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
-
    private ActiveMQServer server;
 
    // Static --------------------------------------------------------
@@ -160,7 +157,7 @@ public class OrderReattachTest extends ActiveMQTestBase {
 
          ClientSession sessConsume = sf.createSession(false, true, true);
 
-         sessConsume.createQueue(ADDRESS, RoutingType.MULTICAST, subName, null, false);
+         sessConsume.createQueue(new QueueConfiguration(subName).setAddress(ADDRESS).setDurable(false));
 
          ClientConsumer consumer = sessConsume.createConsumer(subName);
 
@@ -204,7 +201,7 @@ public class OrderReattachTest extends ActiveMQTestBase {
 
             if (message.getIntProperty("count") != count) {
                failure = new Exception("counter " + count + " was not as expected (" + message.getIntProperty("count") + ")");
-               log.warn("Failure on receiving message ", failure);
+               instanceLog.warn("Failure on receiving message ", failure);
                failure.printStackTrace();
                latch.countDown();
             }

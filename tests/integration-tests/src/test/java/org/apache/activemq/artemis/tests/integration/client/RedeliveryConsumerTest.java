@@ -21,6 +21,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -36,7 +37,6 @@ import org.apache.activemq.artemis.core.journal.RecordInfo;
 import org.apache.activemq.artemis.core.journal.impl.JournalImpl;
 import org.apache.activemq.artemis.core.persistence.impl.journal.JournalRecordIds;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.junit.Assert;
 import org.junit.Test;
@@ -44,8 +44,6 @@ import org.junit.Test;
 public class RedeliveryConsumerTest extends ActiveMQTestBase {
 
    // Constants -----------------------------------------------------
-
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
 
    // Attributes ----------------------------------------------------
 
@@ -173,7 +171,7 @@ public class RedeliveryConsumerTest extends ActiveMQTestBase {
       setUp(strictUpdate);
       ClientSession session = factory.createSession(false, false, false);
 
-      RedeliveryConsumerTest.log.info("created");
+      instanceLog.debug("created");
 
       ClientProducer prod = session.createProducer(ADDRESS);
       prod.send(createTextMessage(session, "Hello"));
@@ -225,7 +223,7 @@ public class RedeliveryConsumerTest extends ActiveMQTestBase {
       setUp(strict);
       ClientSession session = factory.createSession(false, false, false);
 
-      RedeliveryConsumerTest.log.info("created");
+      instanceLog.debug("created");
 
       ClientProducer prod = session.createProducer(ADDRESS);
       prod.send(createTextMessage(session, "Hello"));
@@ -419,7 +417,7 @@ public class RedeliveryConsumerTest extends ActiveMQTestBase {
 
       ClientSession session = addClientSession(factory.createSession(false, false, false));
       try {
-         session.createQueue(ADDRESS, ADDRESS, true);
+         session.createQueue(new QueueConfiguration(ADDRESS));
       } catch (ActiveMQException expected) {
          // in case of restart
       }

@@ -21,5 +21,7 @@ public class AddressMetricNames {
 
    public static final String ROUTED_MESSAGE_COUNT = "routed.message.count";
    public static final String UNROUTED_MESSAGE_COUNT = "unrouted.message.count";
+   public static final String ADDRESS_SIZE = "address.size";
+   public static final String PAGES_COUNT = "number.of.pages";
 
 }

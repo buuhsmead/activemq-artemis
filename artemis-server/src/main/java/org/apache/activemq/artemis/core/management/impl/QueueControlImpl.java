@@ -22,6 +22,7 @@ import javax.json.JsonObjectBuilder;
 import javax.management.MBeanAttributeInfo;
 import javax.management.MBeanOperationInfo;
 import javax.management.openmbean.CompositeData;
+import javax.transaction.xa.Xid;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
@@ -50,8 +51,12 @@ import org.apache.activemq.artemis.core.server.Consumer;
 import org.apache.activemq.artemis.core.server.MessageReference;
 import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.server.ServerConsumer;
+import org.apache.activemq.artemis.core.server.impl.RefsOperation;
 import org.apache.activemq.artemis.core.settings.HierarchicalRepository;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
+import org.apache.activemq.artemis.core.transaction.ResourceManager;
+import org.apache.activemq.artemis.core.transaction.Transaction;
+import org.apache.activemq.artemis.core.transaction.TransactionOperation;
 import org.apache.activemq.artemis.selector.filter.Filterable;
 import org.apache.activemq.artemis.logs.AuditLogger;
 import org.apache.activemq.artemis.utils.JsonLoader;
@@ -263,17 +268,6 @@ public class QueueControlImpl extends AbstractControl implements QueueControl {
       } finally {
          blockOnIO();
       }
-   }
-
-   @Override
-   public float getProducedRate() {
-      if (AuditLogger.isEnabled()) {
-         AuditLogger.getProducedRate(queue);
-      }
-      checkStarted();
-
-      // This is an attribute, no need to blockOnIO
-      return queue.getRate();
    }
 
    @Override
@@ -617,6 +611,52 @@ public class QueueControlImpl extends AbstractControl implements QueueControl {
          blockOnIO();
       }
    }
+
+   @Override
+   public void disable() throws Exception {
+      if (AuditLogger.isEnabled()) {
+         AuditLogger.disable(queue);
+      }
+      checkStarted();
+
+      clearIO();
+      try {
+         server.getPostOffice().updateQueue(queue.getQueueConfiguration().setEnabled(false));
+      } finally {
+         blockOnIO();
+      }
+   }
+
+   @Override
+   public void enable() throws Exception {
+      if (AuditLogger.isEnabled()) {
+         AuditLogger.enable(queue);
+      }
+      checkStarted();
+
+      clearIO();
+      try {
+         server.getPostOffice().updateQueue(queue.getQueueConfiguration().setEnabled(true));
+      } finally {
+         blockOnIO();
+      }
+   }
+
+   @Override
+   public boolean isEnabled() {
+      if (AuditLogger.isEnabled()) {
+         AuditLogger.isEnabled(queue);
+      }
+      checkStarted();
+
+      clearIO();
+      try {
+         return queue.isEnabled();
+      } finally {
+         blockOnIO();
+      }
+   }
+
 
    @Override
    public boolean isConfigurationManaged() {
@@ -1000,7 +1040,19 @@ public class QueueControlImpl extends AbstractControl implements QueueControl {
       try {
          Filter filter = FilterImpl.createFilter(filterStr);
 
-         return queue.deleteMatchingReferences(flushLimit, filter);
+         int removed = 0;
+         try {
+            removed = queue.deleteMatchingReferences(flushLimit, filter);
+            if (AuditLogger.isResourceLoggingEnabled()) {
+               AuditLogger.removeMessagesSuccess(removed, queue.getName().toString());
+            }
+         } catch (Exception e) {
+            if (AuditLogger.isResourceLoggingEnabled()) {
+               AuditLogger.removeMessagesFailure(queue.getName().toString());
+            }
+            throw e;
+         }
+         return removed;
       } finally {
          blockOnIO();
       }
@@ -1194,8 +1246,15 @@ public class QueueControlImpl extends AbstractControl implements QueueControl {
          AuditLogger.sendMessage(queue, null, headers, type, body, durable, user, "****");
       }
       try {
-         return sendMessage(queue.getAddress(), server, headers, type, body, durable, user, password, queue.getID());
+         String s = sendMessage(queue.getAddress(), server, headers, type, body, durable, user, password, queue.getID());
+         if (AuditLogger.isResourceLoggingEnabled()) {
+            AuditLogger.sendMessageSuccess(queue.getName().toString(), user);
+         }
+         return s;
       } catch (Exception e) {
+         if (AuditLogger.isResourceLoggingEnabled()) {
+            AuditLogger.sendMessageFailure(queue.getName().toString(), user);
+         }
          throw new IllegalStateException(e.getMessage());
       }
    }
@@ -1339,7 +1398,16 @@ public class QueueControlImpl extends AbstractControl implements QueueControl {
 
       clearIO();
       try {
-         queue.pause();
+         try {
+            queue.pause();
+            if (AuditLogger.isResourceLoggingEnabled()) {
+               AuditLogger.pauseQueueSuccess(queue.getName().toString());
+            }
+         } catch (Exception e) {
+            if (AuditLogger.isResourceLoggingEnabled()) {
+               AuditLogger.pauseQueueFailure(queue.getName().toString());
+            }
+         }
       } finally {
          blockOnIO();
       }
@@ -1355,7 +1423,16 @@ public class QueueControlImpl extends AbstractControl implements QueueControl {
 
       clearIO();
       try {
-         queue.pause(persist);
+         try {
+            queue.pause(persist);
+            if (AuditLogger.isResourceLoggingEnabled()) {
+               AuditLogger.pauseQueueSuccess(queue.getName().toString());
+            }
+         } catch (Exception e) {
+            if (AuditLogger.isResourceLoggingEnabled()) {
+               AuditLogger.pauseQueueFailure(queue.getName().toString());
+            }
+         }
       } finally {
          blockOnIO();
       }
@@ -1369,7 +1446,17 @@ public class QueueControlImpl extends AbstractControl implements QueueControl {
 
       clearIO();
       try {
-         queue.resume();
+         try {
+            queue.resume();
+            if (AuditLogger.isResourceLoggingEnabled()) {
+               AuditLogger.resumeQueueSuccess(queue.getName().toString());
+            }
+         } catch (Exception e) {
+            if (AuditLogger.isResourceLoggingEnabled()) {
+               AuditLogger.resumeQueueFailure(queue.getName().toString());
+            }
+            e.printStackTrace();
+         }
       } finally {
          blockOnIO();
       }
@@ -1392,10 +1479,14 @@ public class QueueControlImpl extends AbstractControl implements QueueControl {
 
    @Override
    public CompositeData[] browse(int page, int pageSize) throws Exception {
+      return browse(page, pageSize, null);
+   }
+
+   @Override
+   public CompositeData[] browse(int page, int pageSize, String filter) throws Exception {
       if (AuditLogger.isEnabled()) {
          AuditLogger.browse(queue, page, pageSize);
       }
-      String filter = null;
       checkStarted();
 
       clearIO();
@@ -1425,9 +1516,15 @@ public class QueueControlImpl extends AbstractControl implements QueueControl {
 
             CompositeData[] rc = new CompositeData[c.size()];
             c.toArray(rc);
+            if (AuditLogger.isResourceLoggingEnabled()) {
+               AuditLogger.browseMessagesSuccess(queue.getName().toString(), c.size());
+            }
             return rc;
          }
       } catch (ActiveMQException e) {
+         if (AuditLogger.isResourceLoggingEnabled()) {
+            AuditLogger.browseMessagesFailure(queue.getName().toString());
+         }
          throw new IllegalStateException(e.getMessage());
       } finally {
          blockOnIO();
@@ -1467,9 +1564,15 @@ public class QueueControlImpl extends AbstractControl implements QueueControl {
 
             CompositeData[] rc = new CompositeData[c.size()];
             c.toArray(rc);
+            if (AuditLogger.isResourceLoggingEnabled()) {
+               AuditLogger.browseMessagesSuccess(queue.getName().toString(), currentPageSize);
+            }
             return rc;
          }
       } catch (ActiveMQException e) {
+         if (AuditLogger.isResourceLoggingEnabled()) {
+            AuditLogger.browseMessagesFailure(queue.getName().toString());
+         }
          throw new IllegalStateException(e.getMessage());
       } finally {
          blockOnIO();
@@ -1685,6 +1788,110 @@ public class QueueControlImpl extends AbstractControl implements QueueControl {
          blockOnIO();
       }
 
+   }
+
+   @Override
+   public boolean isGroupRebalance() {
+      if (AuditLogger.isEnabled()) {
+         AuditLogger.isGroupRebalance(queue);
+      }
+      checkStarted();
+
+      clearIO();
+      try {
+         return queue.isGroupRebalance();
+      } finally {
+         blockOnIO();
+      }
+   }
+
+   @Override
+   public boolean isGroupRebalancePauseDispatch() {
+      if (AuditLogger.isEnabled()) {
+         AuditLogger.isGroupRebalancePauseDispatch(queue);
+      }
+      checkStarted();
+
+      clearIO();
+      try {
+         return queue.isGroupRebalancePauseDispatch();
+      } finally {
+         blockOnIO();
+      }
+   }
+
+   @Override
+   public int getGroupBuckets() {
+      if (AuditLogger.isEnabled()) {
+         AuditLogger.getGroupBuckets(queue);
+      }
+      checkStarted();
+
+      clearIO();
+      try {
+         return queue.getGroupBuckets();
+      } finally {
+         blockOnIO();
+      }
+   }
+
+   @Override
+   public String getGroupFirstKey() {
+      if (AuditLogger.isEnabled()) {
+         AuditLogger.getGroupFirstKey(queue);
+      }
+      checkStarted();
+
+      clearIO();
+      try {
+         SimpleString groupFirstKey = queue.getGroupFirstKey();
+
+         return groupFirstKey != null ? groupFirstKey.toString() : null;
+      } finally {
+         blockOnIO();
+      }
+   }
+
+   @Override
+   public int getPreparedTransactionMessageCount() {
+      if (AuditLogger.isEnabled()) {
+         AuditLogger.getPreparedTransactionMessageCount(queue);
+      }
+      checkStarted();
+
+      clearIO();
+      try {
+         int count = 0;
+
+         ResourceManager resourceManager = server.getResourceManager();
+
+         if (resourceManager != null) {
+            List<Xid> preparedTransactions = resourceManager.getPreparedTransactions();
+
+            for (Xid preparedTransaction : preparedTransactions) {
+               Transaction transaction = resourceManager.getTransaction(preparedTransaction);
+
+               if (transaction != null) {
+                  List<TransactionOperation> allOperations = transaction.getAllOperations();
+
+                  for (TransactionOperation operation : allOperations) {
+                     if (operation instanceof RefsOperation) {
+                        RefsOperation refsOperation = (RefsOperation) operation;
+                        List<MessageReference> references = refsOperation.getReferencesToAcknowledge();
+                        for (MessageReference reference : references) {
+                           if (reference != null && reference.getQueue().getName().equals(queue.getName())) {
+                              count++;
+                           }
+                        }
+                     }
+                  }
+               }
+            }
+         }
+         return count;
+      } finally {
+         blockOnIO();
+      }
    }
 
    // Package protected ---------------------------------------------

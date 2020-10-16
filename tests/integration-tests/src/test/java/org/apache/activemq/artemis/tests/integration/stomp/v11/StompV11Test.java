@@ -38,9 +38,9 @@ import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.protocol.stomp.Stomp;
 import org.apache.activemq.artemis.core.protocol.stomp.StompConnection;
 import org.apache.activemq.artemis.core.protocol.stomp.v11.StompFrameHandlerV11;
+import org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants;
 import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.integration.stomp.StompTestBase;
 import org.apache.activemq.artemis.tests.integration.stomp.util.ClientStompFrame;
 import org.apache.activemq.artemis.tests.integration.stomp.util.StompClientConnection;
@@ -59,8 +59,6 @@ import org.junit.runners.Parameterized;
  */
 @RunWith(Parameterized.class)
 public class StompV11Test extends StompTestBase {
-
-   private static final transient IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
    public static final String CLIENT_ID = "myclientid";
 
    private StompClientConnection conn;
@@ -85,7 +83,6 @@ public class StompV11Test extends StompTestBase {
    public void tearDown() throws Exception {
       try {
          boolean connected = conn != null && conn.isConnected();
-         log.debug("Connection 1.1 : " + connected);
          if (connected) {
             conn.disconnect();
          }
@@ -233,8 +230,35 @@ public class StompV11Test extends StompTestBase {
 
       assertEquals(Stomp.Responses.ERROR, reply.getCommand());
 
-      IntegrationTestLogger.LOGGER.info("Got error frame " + reply);
+      instanceLog.debug("Got error frame " + reply);
 
+   }
+
+   @Test
+   public void testServerFrame() throws Exception {
+      { // the default case
+         ClientStompFrame frame = conn.connect(defUser, defPass);
+         conn.disconnect();
+         assertTrue(frame.getHeader(Stomp.Headers.Connected.SERVER) != null);
+         server.getRemotingService().destroyAcceptor("stomp");
+      }
+
+      { // explicitly set disableStompServerHeader=false
+         server.getRemotingService().createAcceptor("stomp", "tcp://" + TransportConstants.DEFAULT_HOST + ":" + TransportConstants.DEFAULT_STOMP_PORT + "?" + TransportConstants.DISABLE_STOMP_SERVER_HEADER + "=false").start();
+         conn = StompClientConnectionFactory.createClientConnection(uri);
+         ClientStompFrame frame = conn.connect(defUser, defPass);
+         conn.disconnect();
+         assertTrue(frame.getHeader(Stomp.Headers.Connected.SERVER) != null);
+         server.getRemotingService().destroyAcceptor("stomp");
+      }
+
+      { // explicitly set disableStompServerHeader=true
+         server.getRemotingService().createAcceptor("stomp", "tcp://" + TransportConstants.DEFAULT_HOST + ":" + TransportConstants.DEFAULT_STOMP_PORT + "?" + TransportConstants.DISABLE_STOMP_SERVER_HEADER + "=true").start();
+         conn = StompClientConnectionFactory.createClientConnection(uri);
+         ClientStompFrame frame = conn.connect(defUser, defPass);
+         conn.disconnect();
+         assertTrue(frame.getHeader(Stomp.Headers.Connected.SERVER) == null);
+      }
    }
 
    @Test
@@ -257,7 +281,7 @@ public class StompV11Test extends StompTestBase {
 
       ClientStompFrame frame = newConn.receiveFrame();
 
-      IntegrationTestLogger.LOGGER.info("received " + frame);
+      instanceLog.debug("received " + frame);
 
       assertEquals(Stomp.Responses.MESSAGE, frame.getCommand());
 
@@ -271,7 +295,7 @@ public class StompV11Test extends StompTestBase {
 
       frame = newConn.receiveFrame();
 
-      IntegrationTestLogger.LOGGER.info("received " + frame);
+      instanceLog.debug("received " + frame);
 
       unsubscribe(newConn, "a-sub");
 
@@ -291,7 +315,7 @@ public class StompV11Test extends StompTestBase {
 
       ClientStompFrame frame = newConn.receiveFrame();
 
-      IntegrationTestLogger.LOGGER.info("received " + frame);
+      instanceLog.debug("received " + frame);
 
       assertEquals(Stomp.Responses.MESSAGE, frame.getCommand());
 
@@ -326,7 +350,7 @@ public class StompV11Test extends StompTestBase {
 
       frame = newConn.receiveFrame();
 
-      IntegrationTestLogger.LOGGER.info("received " + frame);
+      instanceLog.debug("received " + frame);
 
       assertEquals(Stomp.Responses.MESSAGE, frame.getCommand());
 
@@ -353,7 +377,7 @@ public class StompV11Test extends StompTestBase {
                                    .addHeader(Stomp.Headers.CONTENT_LENGTH, cLen)
                                    .addHeader(hKey, hVal);
 
-      IntegrationTestLogger.LOGGER.info("key: |" + hKey + "| val: |" + hVal + "|");
+      instanceLog.debug("key: |" + hKey + "| val: |" + hVal + "|");
 
       frame.setBody(body);
 
@@ -367,7 +391,7 @@ public class StompV11Test extends StompTestBase {
 
       frame = newConn.receiveFrame();
 
-      IntegrationTestLogger.LOGGER.info("received " + frame);
+      instanceLog.debug("received " + frame);
 
       assertEquals(Stomp.Responses.MESSAGE, frame.getCommand());
 
@@ -400,7 +424,7 @@ public class StompV11Test extends StompTestBase {
       String hVal = "is\\ttab";
       frame.addHeader(hKey, hVal);
 
-      System.out.println("key: |" + hKey + "| val: |" + hVal + "|");
+      instanceLog.debug("key: |" + hKey + "| val: |" + hVal + "|");
 
       frame.setBody(body);
 
@@ -408,7 +432,7 @@ public class StompV11Test extends StompTestBase {
 
       ClientStompFrame error = conn.receiveFrame();
 
-      System.out.println("received " + error);
+      instanceLog.debug("received " + error);
 
       String desc = "Should have received an ERROR for undefined escape sequence";
       Assert.assertNotNull(desc, error);
@@ -495,7 +519,7 @@ public class StompV11Test extends StompTestBase {
 
       assertEquals("0,500", reply.getHeader(Stomp.Headers.Connect.HEART_BEAT));
 
-      IntegrationTestLogger.LOGGER.info("========== start pinger!");
+      instanceLog.debug("========== start pinger!");
 
       conn.startPinger(500);
 
@@ -544,7 +568,7 @@ public class StompV11Test extends StompTestBase {
 
       assertEquals("1000,500", reply.getHeader(Stomp.Headers.Connect.HEART_BEAT));
 
-      IntegrationTestLogger.LOGGER.info("========== start pinger!");
+      instanceLog.debug("========== start pinger!");
 
       conn.startPinger(500);
 
@@ -553,7 +577,7 @@ public class StompV11Test extends StompTestBase {
       //now check the frame size
       int size = conn.getServerPingNumber();
 
-      IntegrationTestLogger.LOGGER.info("ping received: " + size);
+      instanceLog.debug("ping received: " + size);
 
       assertTrue(size > 5);
 
@@ -760,7 +784,7 @@ public class StompV11Test extends StompTestBase {
 
       reply = connection.sendFrame(frame);
 
-      IntegrationTestLogger.LOGGER.info("Reply: " + reply);
+      instanceLog.debug("Reply: " + reply);
 
       assertEquals(Stomp.Responses.CONNECTED, reply.getCommand());
 
@@ -822,7 +846,7 @@ public class StompV11Test extends StompTestBase {
 
       assertEquals("0,2500", reply.getHeader(Stomp.Headers.Connect.HEART_BEAT));
 
-      IntegrationTestLogger.LOGGER.info("========== start pinger!");
+      instanceLog.debug("========== start pinger!");
 
       connection.startPinger(2500);
 
@@ -957,7 +981,7 @@ public class StompV11Test extends StompTestBase {
 
       ClientStompFrame error = conn.receiveFrame();
 
-      IntegrationTestLogger.LOGGER.info("Receiver error: " + error);
+      instanceLog.debug("Receiver error: " + error);
 
       unsubscribe(conn, "sub1");
 
@@ -985,7 +1009,7 @@ public class StompV11Test extends StompTestBase {
 
       ClientStompFrame error = conn.receiveFrame();
 
-      IntegrationTestLogger.LOGGER.info("Receiver error: " + error);
+      instanceLog.debug("Receiver error: " + error);
 
       unsubscribe(conn, "sub1");
 
@@ -1037,7 +1061,7 @@ public class StompV11Test extends StompTestBase {
 
       ClientStompFrame error = conn.receiveFrame();
 
-      IntegrationTestLogger.LOGGER.info("Receiver error: " + error);
+      instanceLog.debug("Receiver error: " + error);
 
       unsubscribe(conn, "sub1");
 
@@ -1065,7 +1089,7 @@ public class StompV11Test extends StompTestBase {
 
       ClientStompFrame error = conn.receiveFrame();
 
-      IntegrationTestLogger.LOGGER.info("Receiver error: " + error);
+      instanceLog.debug("Receiver error: " + error);
 
       unsubscribe(conn, "sub1");
 
@@ -1097,7 +1121,7 @@ public class StompV11Test extends StompTestBase {
 
       ClientStompFrame error = conn.sendFrame(ackFrame);
 
-      IntegrationTestLogger.LOGGER.info("Receiver error: " + error);
+      instanceLog.debug("Receiver error: " + error);
 
       assertEquals(Stomp.Responses.ERROR, error.getCommand());
 
@@ -1133,7 +1157,7 @@ public class StompV11Test extends StompTestBase {
 
       ClientStompFrame error = conn.sendFrame(ackFrame);
 
-      IntegrationTestLogger.LOGGER.info("Receiver error: " + error);
+      instanceLog.debug("Receiver error: " + error);
 
       assertEquals(Stomp.Responses.ERROR, error.getCommand());
 
@@ -1265,7 +1289,7 @@ public class StompV11Test extends StompTestBase {
          frame = conn.receiveFrame();
          assertNotNull(frame);
 
-         IntegrationTestLogger.LOGGER.info(i + " == received: " + frame);
+         instanceLog.debug(i + " == received: " + frame);
          //ack on even numbers
          if (i % 2 == 0) {
             ack(conn, "sub1", frame);
@@ -1283,7 +1307,7 @@ public class StompV11Test extends StompTestBase {
       for (int i = 0; i < num / 2; i++) {
          message = (TextMessage) consumer.receive(1000);
          Assert.assertNotNull(message);
-         IntegrationTestLogger.LOGGER.info("Legal: " + message.getText());
+         instanceLog.debug("Legal: " + message.getText());
       }
 
       message = (TextMessage) consumer.receive(1000);
@@ -1307,13 +1331,13 @@ public class StompV11Test extends StompTestBase {
       // receive message from socket
       ClientStompFrame frame = conn.receiveFrame(5000);
 
-      IntegrationTestLogger.LOGGER.info("received frame : " + frame);
+      instanceLog.debug("received frame : " + frame);
       assertEquals("Hello World", frame.getBody());
       assertEquals("sub1", frame.getHeader(Stomp.Headers.Message.SUBSCRIPTION));
 
       frame = newConn.receiveFrame(5000);
 
-      IntegrationTestLogger.LOGGER.info("received 2 frame : " + frame);
+      instanceLog.debug("received 2 frame : " + frame);
       assertEquals("Hello World", frame.getBody());
       assertEquals("sub2", frame.getHeader(Stomp.Headers.Message.SUBSCRIPTION));
 
@@ -1366,11 +1390,11 @@ public class StompV11Test extends StompTestBase {
       subscribe(conn, getName(), Stomp.Headers.Subscribe.AckModeValues.AUTO);
 
       String text = "A" + "\u00ea" + "\u00f1" + "\u00fc" + "C";
-      IntegrationTestLogger.LOGGER.info(text);
+      instanceLog.debug(text);
       sendJmsMessage(text);
 
       ClientStompFrame frame = conn.receiveFrame();
-      IntegrationTestLogger.LOGGER.info(frame);
+      instanceLog.debug(frame);
       Assert.assertTrue(frame.getCommand().equals(Stomp.Responses.MESSAGE));
       Assert.assertNotNull(frame.getHeader(Stomp.Headers.Message.DESTINATION));
       Assert.assertTrue(frame.getBody().equals(text));
@@ -1937,7 +1961,7 @@ public class StompV11Test extends StompTestBase {
 
       assertEquals(Stomp.Responses.MESSAGE, frame.getCommand());
 
-      IntegrationTestLogger.LOGGER.info("Message: " + frame);
+      instanceLog.debug("Message: " + frame);
 
       assertEquals("5", frame.getHeader(Stomp.Headers.CONTENT_LENGTH));
 
@@ -2180,7 +2204,7 @@ public class StompV11Test extends StompTestBase {
       assertEquals("500,500", reply.getHeader("heart-beat"));
 
 
-      System.out.println("========== start pinger!");
+      instanceLog.debug("========== start pinger!");
 
       conn.startPinger(100);
 
@@ -2215,7 +2239,7 @@ public class StompV11Test extends StompTestBase {
 
       ClientStompFrame reply = conn.sendFrame(frame);
 
-      System.out.println("Reply: " + reply.toString());
+      instanceLog.debug("Reply: " + reply.toString());
 
       assertEquals("CONNECTED", reply.getCommand());
 
@@ -2232,7 +2256,7 @@ public class StompV11Test extends StompTestBase {
 
       StompFrameHandlerV11 stompFrameHandler = (StompFrameHandlerV11) stompConnection.getStompVersionHandler();
 
-      System.out.println("========== start pinger!");
+      instanceLog.debug("========== start pinger!");
 
       conn.startPinger(100);
 
@@ -2247,7 +2271,7 @@ public class StompV11Test extends StompTestBase {
       f = conn.sendFrame(subFrame);
 
       f = conn.receiveFrame(1000);
-      System.out.println("Received " + f.toString());
+      instanceLog.debug("Received " + f.toString());
       Assert.assertTrue(f.getCommand().equals("ERROR"));
 
       conn.stopPinger();
@@ -2274,7 +2298,7 @@ public class StompV11Test extends StompTestBase {
 
       Assert.assertEquals(Stomp.Responses.MESSAGE, frame.getCommand());
 
-      log.info("Reconnecting!");
+      instanceLog.info("Reconnecting!");
 
       if (sendDisconnect) {
          conn.disconnect();

@@ -20,8 +20,12 @@ import java.util.concurrent.ScheduledExecutorService;
 
 import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.filter.Filter;
+import org.apache.activemq.artemis.core.filter.impl.FilterImpl;
+import org.apache.activemq.artemis.core.paging.PagingManager;
+import org.apache.activemq.artemis.core.paging.PagingStore;
 import org.apache.activemq.artemis.core.paging.cursor.PageSubscription;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
 import org.apache.activemq.artemis.core.postoffice.PostOffice;
@@ -71,13 +75,28 @@ public class QueueFactoryImpl implements QueueFactory {
       this.postOffice = postOffice;
    }
 
+   @Deprecated
    @Override
    public Queue createQueueWith(final QueueConfig config) {
       final Queue queue;
       if (lastValueKey(config) != null) {
-         queue = new LastValueQueue(config.id(), config.address(), config.name(), config.filter(), config.pageSubscription(), config.user(), config.isDurable(), config.isTemporary(), config.isAutoCreated(), config.deliveryMode(), config.maxConsumers(), config.isExclusive(), config.isGroupRebalance(), config.getGroupBuckets(), config.getGroupFirstKey(), config.consumersBeforeDispatch(), config.delayBeforeDispatch(), config.isPurgeOnNoConsumers(), lastValueKey(config), config.isNonDestructive(), config.isAutoDelete(), config.getAutoDeleteDelay(), config.getAutoDeleteMessageCount(), config.isConfigurationManaged(), scheduledExecutor, postOffice, storageManager, addressSettingsRepository, executorFactory.getExecutor(), server, this);
+         queue = new LastValueQueue(config.id(), config.address(), config.name(), config.filter(), config.getPagingStore(), config.pageSubscription(), config.user(), config.isDurable(), config.isTemporary(), config.isAutoCreated(), config.deliveryMode(), config.maxConsumers(), config.isExclusive(), config.isGroupRebalance(), config.getGroupBuckets(), config.getGroupFirstKey(), config.consumersBeforeDispatch(), config.delayBeforeDispatch(), config.isPurgeOnNoConsumers(), lastValueKey(config), config.isNonDestructive(), config.isAutoDelete(), config.getAutoDeleteDelay(), config.getAutoDeleteMessageCount(), config.isConfigurationManaged(), scheduledExecutor, postOffice, storageManager, addressSettingsRepository, executorFactory.getExecutor(), server, this);
       } else {
-         queue = new QueueImpl(config.id(), config.address(), config.name(), config.filter(), config.pageSubscription(), config.user(), config.isDurable(), config.isTemporary(), config.isAutoCreated(), config.deliveryMode(), config.maxConsumers(), config.isExclusive(), config.isGroupRebalance(), config.getGroupBuckets(), config.getGroupFirstKey(), config.isNonDestructive(), config.consumersBeforeDispatch(), config.delayBeforeDispatch(), config.isPurgeOnNoConsumers(), config.isAutoDelete(), config.getAutoDeleteDelay(), config.getAutoDeleteMessageCount(), config.isConfigurationManaged(), config.getRingSize(), scheduledExecutor, postOffice, storageManager, addressSettingsRepository, executorFactory.getExecutor(), server, this);
+         queue = new QueueImpl(config.id(), config.address(), config.name(), config.filter(), config.getPagingStore(), config.pageSubscription(), config.user(), config.isDurable(), config.isTemporary(), config.isAutoCreated(), config.deliveryMode(), config.maxConsumers(), config.isExclusive(), config.isGroupRebalance(), config.getGroupBuckets(), config.getGroupFirstKey(), config.isNonDestructive(), config.consumersBeforeDispatch(), config.delayBeforeDispatch(), config.isPurgeOnNoConsumers(), config.isAutoDelete(), config.getAutoDeleteDelay(), config.getAutoDeleteMessageCount(), config.isConfigurationManaged(), config.getRingSize(), scheduledExecutor, postOffice, storageManager, addressSettingsRepository, executorFactory.getExecutor(), server, this);
+      }
+      server.getCriticalAnalyzer().add(queue);
+      return queue;
+   }
+
+   @Override
+   public Queue createQueueWith(final QueueConfiguration config, PagingManager pagingManager) {
+      validateState(config);
+      final Queue queue;
+      PageSubscription pageSubscription = getPageSubscription(config, pagingManager);
+      if (lastValueKey(config) != null) {
+         queue = new LastValueQueue(config.setLastValueKey(lastValueKey(config)), pageSubscription != null ? pageSubscription.getPagingStore() : null, pageSubscription, scheduledExecutor, postOffice, storageManager, addressSettingsRepository, executorFactory.getExecutor(), server, this);
+      } else {
+         queue = new QueueImpl(config, pageSubscription != null ? pageSubscription.getPagingStore() : null, pageSubscription, scheduledExecutor, postOffice, storageManager, addressSettingsRepository, executorFactory.getExecutor(), server, this);
       }
       server.getCriticalAnalyzer().add(queue);
       return queue;
@@ -102,9 +121,9 @@ public class QueueFactoryImpl implements QueueFactory {
 
       Queue queue;
       if (lastValueKey(addressSettings) != null) {
-         queue = new LastValueQueue(persistenceID, address, name, filter, pageSubscription, user, durable, temporary, autoCreated, ActiveMQDefaultConfiguration.getDefaultRoutingType(), ActiveMQDefaultConfiguration.getDefaultMaxQueueConsumers(), ActiveMQDefaultConfiguration.getDefaultExclusive(), ActiveMQDefaultConfiguration.getDefaultGroupRebalance(), ActiveMQDefaultConfiguration.getDefaultGroupBuckets(), ActiveMQDefaultConfiguration.getDefaultGroupFirstKey(), ActiveMQDefaultConfiguration.getDefaultConsumersBeforeDispatch(), ActiveMQDefaultConfiguration.getDefaultDelayBeforeDispatch(), ActiveMQDefaultConfiguration.getDefaultPurgeOnNoConsumers(), lastValueKey(addressSettings), ActiveMQDefaultConfiguration.getDefaultNonDestructive(), ActiveMQDefaultConfiguration.getDefaultQueueAutoDelete(autoCreated), ActiveMQDefaultConfiguration.getDefaultQueueAutoDeleteDelay(), ActiveMQDefaultConfiguration.getDefaultQueueAutoDeleteMessageCount(),false, scheduledExecutor, postOffice, storageManager, addressSettingsRepository, executorFactory.getExecutor(), server, this);
+         queue = new LastValueQueue(persistenceID, address, name, filter, pageSubscription == null ? null : pageSubscription.getPagingStore(), pageSubscription, user, durable, temporary, autoCreated, ActiveMQDefaultConfiguration.getDefaultRoutingType(), ActiveMQDefaultConfiguration.getDefaultMaxQueueConsumers(), ActiveMQDefaultConfiguration.getDefaultExclusive(), ActiveMQDefaultConfiguration.getDefaultGroupRebalance(), ActiveMQDefaultConfiguration.getDefaultGroupBuckets(), ActiveMQDefaultConfiguration.getDefaultGroupFirstKey(), ActiveMQDefaultConfiguration.getDefaultConsumersBeforeDispatch(), ActiveMQDefaultConfiguration.getDefaultDelayBeforeDispatch(), ActiveMQDefaultConfiguration.getDefaultPurgeOnNoConsumers(), lastValueKey(addressSettings), ActiveMQDefaultConfiguration.getDefaultNonDestructive(), ActiveMQDefaultConfiguration.getDefaultQueueAutoDelete(autoCreated), ActiveMQDefaultConfiguration.getDefaultQueueAutoDeleteDelay(), ActiveMQDefaultConfiguration.getDefaultQueueAutoDeleteMessageCount(),false, scheduledExecutor, postOffice, storageManager, addressSettingsRepository, executorFactory.getExecutor(), server, this);
       } else {
-         queue = new QueueImpl(persistenceID, address, name, filter, pageSubscription, user, durable, temporary, autoCreated, scheduledExecutor, postOffice, storageManager, addressSettingsRepository, executorFactory.getExecutor(), server, this);
+         queue = new QueueImpl(persistenceID, address, name, filter, pageSubscription == null ? null : pageSubscription.getPagingStore(), pageSubscription, user, durable, temporary, autoCreated, scheduledExecutor, postOffice, storageManager, addressSettingsRepository, executorFactory.getExecutor(), server, this);
       }
 
       server.getCriticalAnalyzer().add(queue);
@@ -112,9 +131,41 @@ public class QueueFactoryImpl implements QueueFactory {
       return queue;
    }
 
+   @Override
+   public void queueRemoved(Queue queue) {
+      server.getCriticalAnalyzer().remove(queue);
+   }
+
+   public static PageSubscription getPageSubscription(QueueConfiguration queueConfiguration, PagingManager pagingManager) {
+      PageSubscription pageSubscription;
+
+      try {
+         PagingStore pageStore = pagingManager.getPageStore(queueConfiguration.getPageStoreName());
+         if (pageStore != null) {
+            pageSubscription = pageStore.getCursorProvider().createSubscription(queueConfiguration.getId(), FilterImpl.createFilter(queueConfiguration.getFilterString()), queueConfiguration.isDurable());
+         } else {
+            pageSubscription = null;
+         }
+      } catch (Exception e) {
+         throw new IllegalStateException(e);
+      }
+
+      return pageSubscription;
+   }
+
    private static SimpleString lastValueKey(final QueueConfig config) {
       if (config.lastValueKey() != null && !config.lastValueKey().isEmpty()) {
          return config.lastValueKey();
+      } else if (config.isLastValue()) {
+         return Message.HDR_LAST_VALUE_NAME;
+      } else {
+         return null;
+      }
+   }
+
+   private static SimpleString lastValueKey(final QueueConfiguration config) {
+      if (config.getLastValueKey() != null && !config.getLastValueKey().isEmpty()) {
+         return config.getLastValueKey();
       } else if (config.isLastValue()) {
          return Message.HDR_LAST_VALUE_NAME;
       } else {
@@ -132,8 +183,16 @@ public class QueueFactoryImpl implements QueueFactory {
       }
    }
 
-   @Override
-   public void queueRemoved(Queue queue) {
-      server.getCriticalAnalyzer().remove(queue);
+   private void validateState(QueueConfiguration config) {
+      if (isEmptyOrNull(config.getName())) {
+         throw new IllegalStateException("name can't be null or empty!");
+      }
+      if (isEmptyOrNull(config.getAddress())) {
+         throw new IllegalStateException("address can't be null or empty!");
+      }
+   }
+
+   private static boolean isEmptyOrNull(SimpleString value) {
+      return (value == null || value.length() == 0);
    }
 }

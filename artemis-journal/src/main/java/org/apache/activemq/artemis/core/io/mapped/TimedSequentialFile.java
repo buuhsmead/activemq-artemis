@@ -79,6 +79,11 @@ final class TimedSequentialFile implements SequentialFile {
    }
 
    @Override
+   public ByteBuffer map(int position, long size) throws IOException {
+      return null;
+   }
+
+   @Override
    public int calculateBlockStart(int position) throws Exception {
       return this.sequentialFile.calculateBlockStart(position);
    }
@@ -256,7 +261,7 @@ final class TimedSequentialFile implements SequentialFile {
             } else {
                //perform the copy on buffer
                releaseBuffer = true;
-               buffer = factory.newBuffer(byteBuf.capacity());
+               buffer = factory.newBuffer(byteBuf.capacity(), false);
                buffer.limit(bytes);
                byteBuf.getBytes(byteBuf.readerIndex(), buffer);
                buffer.flip();

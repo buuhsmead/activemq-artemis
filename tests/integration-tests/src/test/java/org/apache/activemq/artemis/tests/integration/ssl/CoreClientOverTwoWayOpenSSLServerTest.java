@@ -20,6 +20,7 @@ import io.netty.handler.ssl.SslHandler;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ActiveMQNotConnectedException;
 import org.apache.activemq.artemis.api.core.Interceptor;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
@@ -73,34 +74,7 @@ public class CoreClientOverTwoWayOpenSSLServerTest extends ActiveMQTestBase {
    public static final SimpleString QUEUE = new SimpleString("QueueOverSSL");
 
    /**
-    * These artifacts are required for testing 2-way SSL with open SSL - note the EC key and ECDSA signature to comply with what OpenSSL offers
-    *
-    * Commands to create the JKS artifacts:
-    * keytool -genkey -keystore openssl-client-side-keystore.jks -storepass secureexample -keypass secureexample -dname "CN=ActiveMQ Artemis Client, OU=Artemis, O=ActiveMQ, L=AMQ, S=AMQ, C=AMQ" -keyalg EC -sigalg SHA256withECDSA
-    * keytool -export -keystore openssl-client-side-keystore.jks -file activemq-jks.cer -storepass secureexample
-    * keytool -import -keystore openssl-server-side-truststore.jks -file activemq-jks.cer -storepass secureexample -keypass secureexample -noprompt
-    *
-    * keytool -genkey -keystore openssl-server-side-keystore.jks -storepass secureexample -keypass secureexample -dname "CN=ActiveMQ Artemis Server, OU=Artemis, O=ActiveMQ, L=AMQ, S=AMQ, C=AMQ" -keyalg EC -sigalg SHA256withECDSA
-    * keytool -export -keystore openssl-server-side-keystore.jks -file activemq-jks.cer -storepass secureexample
-    * keytool -import -keystore openssl-client-side-truststore.jks -file activemq-jks.cer -storepass secureexample -keypass secureexample -noprompt
-    *
-    * keytool -genkey -keystore verified-openssl-client-side-keystore.jks -storepass secureexample -keypass secureexample -dname "CN=localhost, OU=Artemis, O=ActiveMQ, L=AMQ, S=AMQ, C=AMQ" -keyalg EC -sigalg SHA256withECDSA
-    * keytool -export -keystore verified-openssl-client-side-keystore.jks -file activemq-jks.cer -storepass secureexample
-    * keytool -import -keystore verified-openssl-server-side-truststore.jks -file activemq-jks.cer -storepass secureexample -keypass secureexample -noprompt
-    *
-    * Commands to create the JCEKS artifacts:
-    * keytool -genkey -keystore openssl-client-side-keystore.jceks -storetype JCEKS -storepass secureexample -keypass secureexample -dname "CN=ActiveMQ Artemis Client, OU=Artemis, O=ActiveMQ, L=AMQ, S=AMQ, C=AMQ" -keyalg EC  -sigalg SHA256withECDSA
-    * keytool -export -keystore openssl-client-side-keystore.jceks -file activemq-jceks.cer -storetype jceks -storepass secureexample
-    * keytool -import -keystore openssl-server-side-truststore.jceks -storetype JCEKS -file activemq-jceks.cer -storepass secureexample -keypass secureexample -noprompt
-    *
-    * keytool -genkey -keystore openssl-server-side-keystore.jceks -storetype JCEKS -storepass secureexample -keypass secureexample -dname "CN=ActiveMQ Artemis Server, OU=Artemis, O=ActiveMQ, L=AMQ, S=AMQ, C=AMQ" -keyalg EC  -sigalg SHA256withECDSA
-    * keytool -export -keystore openssl-server-side-keystore.jceks -file activemq-jceks.cer -storetype jceks -storepass secureexample
-    * keytool -import -keystore openssl-client-side-truststore.jceks -storetype JCEKS -file activemq-jceks.cer -storepass secureexample -keypass secureexample -noprompt
-    *
-    * keytool -genkey -keystore verified-openssl-client-side-keystore.jceks -storetype JCEKS -storepass secureexample -keypass secureexample -dname "CN=localhost, OU=Artemis, O=ActiveMQ, L=AMQ, S=AMQ, C=AMQ" -keyalg EC -sigalg SHA256withECDSA
-    * keytool -export -keystore verified-openssl-client-side-keystore.jceks -file activemq-jceks.cer -storetype jceks -storepass secureexample
-    * keytool -import -keystore verified-openssl-server-side-truststore.jceks -storetype JCEKS -file activemq-jceks.cer -storepass secureexample -keypass secureexample -noprompt
-    *
+    * See {@link CoreClientOverTwoWayOpenSSLTest} for details about the SSL artifacts needed for this test.
     */
 
    private String storeType;
@@ -121,7 +95,6 @@ public class CoreClientOverTwoWayOpenSSLServerTest extends ActiveMQTestBase {
          if (packet.getType() == PacketImpl.SESS_SEND) {
             try {
                if (connection.getTransportConnection() instanceof NettyConnection) {
-                  System.out.println("Passed through....");
                   NettyConnection nettyConnection = (NettyConnection) connection.getTransportConnection();
                   SslHandler sslHandler = (SslHandler) nettyConnection.getChannel().pipeline().get("ssl");
                   Assert.assertNotNull(sslHandler);
@@ -154,7 +127,7 @@ public class CoreClientOverTwoWayOpenSSLServerTest extends ActiveMQTestBase {
       ServerLocator locator = addServerLocator(ActiveMQClient.createServerLocatorWithoutHA(tc));
       ClientSessionFactory sf = createSessionFactory(locator);
       ClientSession session = sf.createSession(false, true, true);
-      session.createQueue(CoreClientOverTwoWayOpenSSLServerTest.QUEUE, CoreClientOverTwoWayOpenSSLServerTest.QUEUE, false);
+      session.createQueue(new QueueConfiguration(CoreClientOverTwoWayOpenSSLServerTest.QUEUE).setDurable(false));
       ClientProducer producer = session.createProducer(CoreClientOverTwoWayOpenSSLServerTest.QUEUE);
 
       ClientMessage message = createTextMessage(session, text);
@@ -192,7 +165,7 @@ public class CoreClientOverTwoWayOpenSSLServerTest extends ActiveMQTestBase {
       ServerLocator locator = addServerLocator(ActiveMQClient.createServerLocatorWithoutHA(tc));
       ClientSessionFactory sf = createSessionFactory(locator);
       ClientSession session = sf.createSession(false, true, true);
-      session.createQueue(CoreClientOverTwoWayOpenSSLServerTest.QUEUE, CoreClientOverTwoWayOpenSSLServerTest.QUEUE, false);
+      session.createQueue(new QueueConfiguration(CoreClientOverTwoWayOpenSSLServerTest.QUEUE).setDurable(false));
       ClientProducer producer = session.createProducer(CoreClientOverTwoWayOpenSSLServerTest.QUEUE);
 
       ClientMessage message = createTextMessage(session, text);

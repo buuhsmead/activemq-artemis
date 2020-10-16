@@ -393,5 +393,4 @@ public class NettyConnectorTest extends ActiveMQTestBase {
          scheduledThreadPool.shutdownNow();
       }
    }
-
 }

@@ -19,9 +19,11 @@ package org.apache.activemq.artemis.component;
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 
@@ -44,9 +46,12 @@ import org.eclipse.jetty.server.handler.DefaultHandler;
 import org.eclipse.jetty.server.handler.HandlerList;
 import org.eclipse.jetty.server.handler.RequestLogHandler;
 import org.eclipse.jetty.server.handler.ResourceHandler;
+import org.eclipse.jetty.servlet.FilterHolder;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.eclipse.jetty.webapp.WebAppContext;
 import org.jboss.logging.Logger;
+
+import javax.servlet.DispatcherType;
 
 public class WebServerComponent implements ExternalComponent {
 
@@ -60,6 +65,7 @@ public class WebServerComponent implements ExternalComponent {
    private List<WebAppContext> webContexts;
    private ServerConnector connector;
    private Path artemisHomePath;
+   private Path temporaryWarDir;
 
    @Override
    public void configure(ComponentDTO config, String artemisInstance, String artemisHome) throws Exception {
@@ -68,10 +74,34 @@ public class WebServerComponent implements ExternalComponent {
       server = new Server();
       String scheme = uri.getScheme();
 
+      HttpConfiguration httpConfiguration = new HttpConfiguration();
+
+      if (webServerConfig.customizer != null) {
+         try {
+            httpConfiguration.addCustomizer((HttpConfiguration.Customizer) Class.forName(webServerConfig.customizer).getConstructor().newInstance());
+         } catch (Throwable t) {
+            ActiveMQWebLogger.LOGGER.customizerNotLoaded(webServerConfig.customizer, t);
+         }
+      }
+
       if ("https".equals(scheme)) {
-         SslContextFactory sslFactory = new SslContextFactory();
+         SslContextFactory.Server sslFactory = new SslContextFactory.Server();
          sslFactory.setKeyStorePath(webServerConfig.keyStorePath == null ? artemisInstance + "/etc/keystore.jks" : webServerConfig.keyStorePath);
          sslFactory.setKeyStorePassword(webServerConfig.getKeyStorePassword() == null ? "password" : webServerConfig.getKeyStorePassword());
+         String[] ips = sslFactory.getIncludeProtocols();
+
+         if (webServerConfig.getIncludedTLSProtocols() != null) {
+            sslFactory.setIncludeProtocols(webServerConfig.getIncludedTLSProtocols());
+         }
+         if (webServerConfig.getExcludedTLSProtocols() != null) {
+            sslFactory.setExcludeProtocols(webServerConfig.getExcludedTLSProtocols());
+         }
+         if (webServerConfig.getIncludedCipherSuites() != null) {
+            sslFactory.setIncludeCipherSuites(webServerConfig.getIncludedCipherSuites());
+         }
+         if (webServerConfig.getExcludedCipherSuites() != null) {
+            sslFactory.setExcludeCipherSuites(webServerConfig.getExcludedCipherSuites());
+         }
          if (webServerConfig.clientAuth != null) {
             sslFactory.setNeedClientAuth(webServerConfig.clientAuth);
             if (webServerConfig.clientAuth) {
@@ -82,17 +112,15 @@ public class WebServerComponent implements ExternalComponent {
 
          SslConnectionFactory sslConnectionFactory = new SslConnectionFactory(sslFactory, "HTTP/1.1");
 
-         HttpConfiguration https = new HttpConfiguration();
-         https.addCustomizer(new SecureRequestCustomizer());
-         https.setSendServerVersion(false);
-         HttpConnectionFactory httpFactory = new HttpConnectionFactory(https);
+         httpConfiguration.addCustomizer(new SecureRequestCustomizer());
+         httpConfiguration.setSendServerVersion(false);
+         HttpConnectionFactory httpFactory = new HttpConnectionFactory(httpConfiguration);
 
          connector = new ServerConnector(server, sslConnectionFactory, httpFactory);
 
       } else {
-         HttpConfiguration configuration = new HttpConfiguration();
-         configuration.setSendServerVersion(false);
-         ConnectionFactory connectionFactory = new HttpConnectionFactory(configuration);
+         httpConfiguration.setSendServerVersion(false);
+         ConnectionFactory connectionFactory = new HttpConnectionFactory(httpConfiguration);
          connector = new ServerConnector(server, connectionFactory);
       }
       connector.setPort(uri.getPort());
@@ -105,6 +133,11 @@ public class WebServerComponent implements ExternalComponent {
       this.artemisHomePath = Paths.get(artemisHome != null ? artemisHome : ".");
       Path homeWarDir = artemisHomePath.resolve(webServerConfig.path).toAbsolutePath();
       Path instanceWarDir = Paths.get(artemisInstance != null ? artemisInstance : ".").resolve(webServerConfig.path).toAbsolutePath();
+
+      temporaryWarDir = Paths.get(artemisInstance != null ? artemisInstance : ".").resolve("tmp").resolve("webapps").toAbsolutePath();
+      if (!Files.exists(temporaryWarDir)) {
+         Files.createDirectories(temporaryWarDir);
+      }
 
       if (webServerConfig.apps != null && webServerConfig.apps.size() > 0) {
          webContexts = new ArrayList<>();
@@ -226,6 +259,7 @@ public class WebServerComponent implements ExternalComponent {
       if (isStarted()) {
          return;
       }
+      cleanupTmp();
       server.start();
       ActiveMQWebLogger.LOGGER.webserverStarted(webServerConfig.bind);
 
@@ -248,6 +282,24 @@ public class WebServerComponent implements ExternalComponent {
       Path lib = artemisHomePath.resolve("lib");
       File libFolder = new File(lib.toUri());
       return libFolder;
+   }
+
+   private void cleanupTmp() {
+      if (webContexts == null || webContexts.size() == 0) {
+         //there is no webapp to be deployed (as in some tests)
+         return;
+      }
+
+      try {
+         List<File> temporaryFiles = new ArrayList<>();
+         Files.newDirectoryStream(temporaryWarDir).forEach(path -> temporaryFiles.add(path.toFile()));
+
+         if (temporaryFiles.size() > 0) {
+            WebTmpCleaner.cleanupTmpFiles(getLibFolder(), temporaryFiles, true);
+         }
+      } catch (Exception e) {
+         logger.warn("Failed to get base dir for tmp web files", e);
+      }
    }
 
    public void cleanupWebTemporaryFiles(List<WebAppContext> webContexts) throws Exception {
@@ -281,8 +333,14 @@ public class WebServerComponent implements ExternalComponent {
       } else {
          webapp.setContextPath("/" + url);
       }
+      //add the filters needed for audit logging
+      webapp.addFilter(new FilterHolder(JolokiaFilter.class), "/*", EnumSet.of(DispatcherType.INCLUDE, DispatcherType.REQUEST));
+      webapp.addFilter(new FilterHolder(AuthenticationFilter.class), "/auth/login/*", EnumSet.of(DispatcherType.REQUEST));
 
       webapp.setWar(warDirectory.resolve(warFile).toString());
+
+      webapp.setAttribute("org.eclipse.jetty.webapp.basetempdir", temporaryWarDir.toFile().getAbsolutePath());
+
       handlers.addHandler(webapp);
       return webapp;
    }
@@ -297,5 +355,9 @@ public class WebServerComponent implements ExternalComponent {
       if (isShutdown) {
          internalStop();
       }
+   }
+
+   public List<WebAppContext> getWebContexts() {
+      return this.webContexts;
    }
 }

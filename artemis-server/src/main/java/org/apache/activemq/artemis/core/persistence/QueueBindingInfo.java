@@ -58,6 +58,10 @@ public interface QueueBindingInfo {
 
    void setPurgeOnNoConsumers(boolean purgeOnNoConsumers);
 
+   boolean isEnabled();
+
+   void setEnabled(boolean enabled);
+
    boolean isExclusive();
 
    void setExclusive(boolean exclusive);
@@ -87,6 +91,8 @@ public interface QueueBindingInfo {
    void setRoutingType(byte routingType);
 
    boolean isGroupRebalance();
+
+   boolean isGroupRebalancePauseDispatch();
 
    int getGroupBuckets();
 

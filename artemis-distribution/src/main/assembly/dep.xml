@@ -83,6 +83,8 @@
             <include>org.jboss.logging:jboss-logging</include>
             <include>org.jboss.slf4j:slf4j-jboss-logmanager</include>
             <include>org.jctools:jctools-core</include>
+            <include>org.apache.commons:commons-dbcp2</include>
+            <include>org.apache.commons:commons-pool2</include>
             <include>io.netty:netty-all</include>
             <include>org.apache.qpid:proton-j</include>
             <include>org.apache.activemq:activemq-client</include>
@@ -107,6 +109,7 @@
             <include>com.sun.xml.bind:jaxb-impl</include>
             <include>com.sun.xml.bind:jaxb-core</include>
             <include>javax.activation:activation</include>
+            <include>org.apache.geronimo.specs:geronimo-jaspic_1.0_spec</include>
          </includes>
          <!--excludes>
             <exclude>org.apache.activemq:artemis-website</exclude>
@@ -227,6 +230,7 @@
          <directoryMode>0755</directoryMode>
          <fileMode>0755</fileMode>
       </fileSet>
+      <!-- examples -->
       <fileSet>
          <directory>${activemq.basedir}/examples</directory>
          <outputDirectory>examples</outputDirectory>
@@ -237,6 +241,11 @@
             <exclude>**/**/*.dat</exclude>
             <exclude>**/**/*.md</exclude>
          </excludes>
+      </fileSet>
+      <fileSet>
+         <directory>${project.build.directory}/markdown-pages/examples</directory>
+         <outputDirectory>examples</outputDirectory>
+         <lineEnding>keep</lineEnding>
       </fileSet>
       <!-- Include license and notice files -->
       <fileSet>

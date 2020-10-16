@@ -21,6 +21,7 @@ import java.io.PrintStream;
 import java.text.MessageFormat;
 import java.util.EnumSet;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.cli.commands.AbstractAction;
 import org.apache.activemq.artemis.cli.commands.ActionContext;
@@ -107,7 +108,7 @@ public class AddressCommandTest extends JMSTestBase {
       final SimpleString addressSimpleString = new SimpleString(addressName);
       final AddressInfo addressInfo = new AddressInfo(addressSimpleString, EnumSet.of(RoutingType.ANYCAST, RoutingType.MULTICAST));
       server.addAddressInfo(addressInfo);
-      server.createQueue(addressSimpleString, RoutingType.MULTICAST, new SimpleString("queue1"), null, true, false);
+      server.createQueue(new QueueConfiguration(new SimpleString("queue1")).setAddress(addressSimpleString).setRoutingType(RoutingType.MULTICAST));
 
       final DeleteAddress deleteAddress = new DeleteAddress();
       deleteAddress.setName(addressName);
@@ -126,7 +127,7 @@ public class AddressCommandTest extends JMSTestBase {
       ShowAddress showAddress = new ShowAddress();
       showAddress.setName(address);
       showAddress.execute(new ActionContext(System.in, new PrintStream(output), new PrintStream(error)));
-      System.out.println(output.toString());
+      instanceLog.debug(output.toString());
    }
 
    @Test
@@ -144,9 +145,9 @@ public class AddressCommandTest extends JMSTestBase {
       // Create bindings
       SimpleString address = new SimpleString("address");
       server.addAddressInfo(new AddressInfo(address, RoutingType.MULTICAST));
-      server.createQueue(address, RoutingType.MULTICAST, new SimpleString("queue1"), null, true, false);
-      server.createQueue(address, RoutingType.MULTICAST, new SimpleString("queue2"), null, true, false);
-      server.createQueue(address, RoutingType.MULTICAST, new SimpleString("queue3"), null, true, false);
+      server.createQueue(new QueueConfiguration(new SimpleString("queue1")).setAddress(address).setRoutingType(RoutingType.MULTICAST));
+      server.createQueue(new QueueConfiguration(new SimpleString("queue2")).setAddress(address).setRoutingType(RoutingType.MULTICAST));
+      server.createQueue(new QueueConfiguration(new SimpleString("queue3")).setAddress(address).setRoutingType(RoutingType.MULTICAST));
 
       DivertConfiguration divertConfiguration = new DivertConfiguration();
       divertConfiguration.setName(address.toString());
@@ -157,7 +158,7 @@ public class AddressCommandTest extends JMSTestBase {
       showAddress.setName(address.toString());
       showAddress.setBindings(true);
       showAddress.execute(new ActionContext(System.in, new PrintStream(output), new PrintStream(error)));
-      System.out.println(output.toString());
+      instanceLog.debug(output.toString());
    }
 
    @Test
@@ -193,7 +194,7 @@ public class AddressCommandTest extends JMSTestBase {
       final SimpleString addressSimpleString = new SimpleString(addressName);
       final AddressInfo addressInfo = new AddressInfo(addressSimpleString, EnumSet.of(RoutingType.ANYCAST, RoutingType.MULTICAST));
       server.addAddressInfo(addressInfo);
-      server.createQueue(addressSimpleString, RoutingType.MULTICAST, new SimpleString("queue1"), null, true, false);
+      server.createQueue(new QueueConfiguration(new SimpleString("queue1")).setAddress(addressSimpleString).setRoutingType(RoutingType.MULTICAST));
 
       final UpdateAddress updateAddress = new UpdateAddress();
       updateAddress.setName(addressName);
@@ -207,13 +208,13 @@ public class AddressCommandTest extends JMSTestBase {
 
    private void checkExecutionPassed(AbstractAction command) throws Exception {
       String fullMessage = output.toString();
-      System.out.println("output: " + fullMessage);
+      instanceLog.debug("output: " + fullMessage);
       assertTrue(fullMessage, fullMessage.contains("successfully"));
    }
 
    private void checkExecutionFailure(AbstractAction command, String message) throws Exception {
       String fullMessage = error.toString();
-      System.out.println("error: " + fullMessage);
+      instanceLog.debug("error: " + fullMessage);
       assertTrue(fullMessage, fullMessage.contains(message));
    }
 }

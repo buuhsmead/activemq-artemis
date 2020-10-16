@@ -19,6 +19,7 @@ package org.apache.activemq.artemis.tests.integration.clientcrash;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -28,9 +29,9 @@ import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.jms.client.ActiveMQTextMessage;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.SpawnedVMCheck;
 import org.apache.activemq.artemis.utils.SpawnedVMSupport;
+import org.jboss.logging.Logger;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -42,6 +43,8 @@ import org.junit.Test;
  * resources when one of its client crashes.
  */
 public class ClientCrashTest extends ClientTestBase {
+
+   private static final Logger log = Logger.getLogger(ClientCrashTest.class);
 
    @Rule
    public SpawnedVMCheck spawnedVMCheck = new SpawnedVMCheck();
@@ -62,8 +65,6 @@ public class ClientCrashTest extends ClientTestBase {
    public static final String MESSAGE_TEXT_FROM_CLIENT = "ClientCrashTest from client";
 
    // Static --------------------------------------------------------
-
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
 
    // Attributes ----------------------------------------------------
 
@@ -94,7 +95,7 @@ public class ClientCrashTest extends ClientTestBase {
       assertActiveConnections(1);
 
       ClientSession session = sf.createSession(false, true, true);
-      session.createQueue(ClientCrashTest.QUEUE, ClientCrashTest.QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(ClientCrashTest.QUEUE).setDurable(false));
 
       // spawn a JVM that creates a Core client, which sends a message
       // It has to be spawned after the queue was created.
@@ -124,8 +125,6 @@ public class ClientCrashTest extends ClientTestBase {
 
       assertEquals(9, p.exitValue());
 
-      System.out.println("VM Exited");
-
       long timeout = ClientCrashTest.CONNECTION_TTL + ClientCrashTest.PING_PERIOD + 10000;
 
       assertActiveConnections(1, timeout);
@@ -148,7 +147,7 @@ public class ClientCrashTest extends ClientTestBase {
 
       ClientSession session = sf.createSession(false, true, true);
 
-      session.createQueue(ClientCrashTest.QUEUE2, ClientCrashTest.QUEUE2, null, false);
+      session.createQueue(new QueueConfiguration(ClientCrashTest.QUEUE2).setDurable(false));
 
       // spawn a JVM that creates a Core client, which sends a message
       p = SpawnedVMSupport.spawnVM(CrashClient2.class.getName());
@@ -157,8 +156,6 @@ public class ClientCrashTest extends ClientTestBase {
       Assert.assertTrue(p.waitFor(1, TimeUnit.MINUTES));
 
       assertEquals(CrashClient2.OK, p.exitValue());
-
-      System.out.println("VM Exited");
 
       long timeout = ClientCrashTest.CONNECTION_TTL + ClientCrashTest.PING_PERIOD + 10000L;
 

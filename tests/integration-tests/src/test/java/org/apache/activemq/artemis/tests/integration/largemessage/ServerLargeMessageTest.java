@@ -19,7 +19,6 @@ package org.apache.activemq.artemis.tests.integration.largemessage;
 import java.io.File;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
-import java.lang.reflect.Field;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.util.HashSet;
@@ -29,6 +28,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
@@ -118,7 +118,7 @@ public class ServerLargeMessageTest extends ActiveMQTestBase {
 
          fileMessage.releaseResources(false);
 
-         session.createQueue("A", RoutingType.ANYCAST, "A");
+         session.createQueue(new QueueConfiguration("A").setRoutingType(RoutingType.ANYCAST));
 
          ClientProducer prod = session.createProducer("A");
 
@@ -173,7 +173,7 @@ public class ServerLargeMessageTest extends ActiveMQTestBase {
          ClientMessage clientMessage = session.createMessage(false);
          clientMessage.setBodyInputStream(ActiveMQTestBase.createFakeLargeStream(ActiveMQClient.DEFAULT_MIN_LARGE_MESSAGE_SIZE));
 
-         session.createQueue("A", RoutingType.ANYCAST, "A");
+         session.createQueue(new QueueConfiguration("A").setRoutingType(RoutingType.ANYCAST));
 
          ClientProducer prod = session.createProducer("A");
          prod.send(clientMessage);
@@ -228,6 +228,11 @@ public class ServerLargeMessageTest extends ActiveMQTestBase {
                @Override
                public int calculateBlockStart(int position) throws Exception {
                   return 0;
+               }
+
+               @Override
+               public ByteBuffer map(int position, long size) throws IOException {
+                  return null;
                }
 
                @Override
@@ -363,12 +368,10 @@ public class ServerLargeMessageTest extends ActiveMQTestBase {
    }
 
    private void replaceFile(LargeServerMessageImpl largeMessage) throws Exception {
-      SequentialFile originalFile = largeMessage.getFile();
+      SequentialFile originalFile = largeMessage.getAppendFile();
       MockSequentialFile mockFile = new MockSequentialFile(originalFile);
 
-      Field fileField = LargeServerMessageImpl.class.getDeclaredField("file");
-      fileField.setAccessible(true);
-      fileField.set(largeMessage, mockFile);
+      largeMessage.getLargeBody().replaceFile(mockFile);
       mockFile.close();
    }
 
@@ -398,6 +401,11 @@ public class ServerLargeMessageTest extends ActiveMQTestBase {
 
       @Override
       public void open(int maxIO, boolean useExecutor) throws Exception {
+      }
+
+      @Override
+      public ByteBuffer map(int position, long size) throws IOException {
+         return null;
       }
 
       @Override

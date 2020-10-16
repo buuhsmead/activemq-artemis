@@ -28,6 +28,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
@@ -54,12 +55,15 @@ import org.apache.activemq.artemis.utils.ActiveMQThreadFactory;
 import org.apache.activemq.artemis.utils.FutureLatch;
 import org.apache.activemq.artemis.utils.actors.ArtemisExecutor;
 import org.apache.activemq.artemis.utils.collections.LinkedListIterator;
+import org.jboss.logging.Logger;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 public class QueueImplTest extends ActiveMQTestBase {
+   private static final Logger log = Logger.getLogger(QueueImplTest.class);
+
    // The tests ----------------------------------------------------------------
 
    private ScheduledExecutorService scheduledExecutor;
@@ -221,7 +225,7 @@ public class QueueImplTest extends ActiveMQTestBase {
 
       float rate = queue.getRate();
       Assert.assertTrue(rate <= 10.0f);
-      System.out.println("Rate: " + rate);
+      log.debug("Rate: " + rate);
    }
 
    @Test
@@ -460,6 +464,7 @@ public class QueueImplTest extends ActiveMQTestBase {
       cons1.getReferences().clear();
 
       for (MessageReference ref : refs) {
+         ref.getMessage().refUp();
          queue.acknowledge(ref);
       }
 
@@ -1271,7 +1276,7 @@ public class QueueImplTest extends ActiveMQTestBase {
       ClientSessionFactory factory = createSessionFactory(locator);
       ClientSession session = addClientSession(factory.createSession(false, true, true));
 
-      session.createQueue(MY_ADDRESS, MY_QUEUE, true);
+      session.createQueue(new QueueConfiguration(MY_QUEUE).setAddress(MY_ADDRESS));
 
       ClientProducer producer = addClientProducer(session.createProducer(MY_ADDRESS));
 

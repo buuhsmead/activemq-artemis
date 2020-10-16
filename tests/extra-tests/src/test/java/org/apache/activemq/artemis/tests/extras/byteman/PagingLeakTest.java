@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -31,7 +32,6 @@ import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.paging.cursor.impl.PagePositionImpl;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ActiveMQServers;
-import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.core.settings.impl.AddressFullMessagePolicy;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
@@ -39,6 +39,7 @@ import org.apache.activemq.artemis.tests.util.Wait;
 import org.jboss.byteman.contrib.bmunit.BMRule;
 import org.jboss.byteman.contrib.bmunit.BMRules;
 import org.jboss.byteman.contrib.bmunit.BMUnitRunner;
+import org.jboss.logging.Logger;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -46,6 +47,7 @@ import org.junit.runner.RunWith;
 
 @RunWith(BMUnitRunner.class)
 public class PagingLeakTest extends ActiveMQTestBase {
+   private static final Logger log = Logger.getLogger(PagingLeakTest.class);
 
    private static final AtomicInteger pagePosInstances = new AtomicInteger(0);
 
@@ -76,7 +78,7 @@ public class PagingLeakTest extends ActiveMQTestBase {
          targetLocation = "ENTRY",
          action = "org.apache.activemq.artemis.tests.extras.byteman.PagingLeakTest.deletePosition()")})
    public void testValidateLeak() throws Throwable {
-      System.out.println("location::" + getBindingsDir());
+      log.debug("location::" + getBindingsDir());
 
       List<PagePositionImpl> positions = new ArrayList<>();
 
@@ -132,7 +134,7 @@ public class PagingLeakTest extends ActiveMQTestBase {
          final int maxConsumed;
 
          Consumer(int sleepTime, String suffix, int maxConsumed) throws Exception {
-            server.createQueue(address, RoutingType.MULTICAST, address.concat(suffix), null, true, false);
+            server.createQueue(new QueueConfiguration(address.concat(suffix)).setAddress(address));
 
             this.sleepTime = sleepTime;
             locator = createInVMLocator(0);
@@ -166,7 +168,7 @@ public class PagingLeakTest extends ActiveMQTestBase {
                   }
 
                   if (i % 1000 == 0) {
-                     System.out.println("Consumed " + i + " events in " + (System.currentTimeMillis() - lastTime));
+                     log.debug("Consumed " + i + " events in " + (System.currentTimeMillis() - lastTime));
                      lastTime = System.currentTimeMillis();
                   }
                }
@@ -194,7 +196,7 @@ public class PagingLeakTest extends ActiveMQTestBase {
          producer.send(msg);
 
          if (i == 100) {
-            System.out.println("Starting consumers!!!");
+            log.debug("Starting consumers!!!");
             consumer1.start();
             consumer2.start();
          }
@@ -205,7 +207,7 @@ public class PagingLeakTest extends ActiveMQTestBase {
 
       }
 
-      System.out.println("Sent " + numberOfMessages);
+      log.debug("Sent " + numberOfMessages);
 
       consumer1.join();
       consumer2.join();

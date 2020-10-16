@@ -6,9 +6,17 @@ you can configure it.
 To disable security completely simply set the `security-enabled` property to
 `false` in the `broker.xml` file.
 
-For performance reasons security is cached and invalidated every so long. To
-change this period set the property `security-invalidation-interval`, which is
-in milliseconds. The default is `10000` ms.
+For performance reasons both **authentication and authorization is cached**
+independently. Entries are removed from the caches (i.e. invalidated) either
+when the cache reaches its maximum size in which case the least-recently used
+entry is removed or when an entry has been in the cache "too long".
+
+The size of the caches are controlled by the `authentication-cache-size` and
+`authorization-cache-size` configuration parameters. Both deafult to `1000`.
+
+How long cache entries are valid is controlled by
+`security-invalidation-interval`, which is in milliseconds. Using `0` will
+disable caching. The default is `10000` ms.
 
 ## Tracking the Validated User
 
@@ -139,6 +147,36 @@ By not inheriting permissions, it allows you to effectively deny permissions in
 more specific security-setting blocks by simply not specifying them. Otherwise
 it would not be possible to deny permissions in sub-groups of addresses.
 
+### Fine-grained security using fully qualified queue name
+
+In certain situations it may be necessary to configure security that is more
+fine-grained that simply across an entire address. For example, consider an
+address with multiple queues:
+
+```xml
+<addresses>
+   <address name="foo">
+      <anycast>
+         <queue name="q1" />
+         <queue name="q2" />
+      </anycast>
+   </address>
+</addresses>
+```
+
+You may want to limit consumption from `q1` to one role and consumption from
+`q2` to another role. You can do this using the fully qualified queue name (i.e.
+fqqn") in the `match` of the `security-setting`, e.g.:
+
+```xml
+<security-setting match="foo::q1">
+   <permission type="consume" roles="q1Role"/>
+</security-setting>
+<security-setting match="foo::q2">
+   <permission type="consume" roles="q2Role"/>
+</security-setting>
+```
+
 ## Security Setting Plugin
 
 Aside from configuring sets of permissions via XML these permissions can
@@ -261,6 +299,12 @@ and Security Layer (SASL) authentication is currently not supported.
 - `mapAdminToManage`. Whether or not to map the legacy `admin` permission to the
   `manage` permission. See details of the mapping semantics below. The default
    value is `false`.
+
+- `allowQueueAdminOnRead`. Whether or not to map the legacy `read` permission to
+  the `createDurableQueue`, `createNonDurableQueue`, and `deleteDurableQueue`
+  permissions so that JMS clients can create durable and non-durable subscriptions
+  without needing the `admin` permission. This was allowed in ActiveMQ 5.x. The
+  default value is `false`.
 
 The name of the queue or topic defined in LDAP will serve as the "match" for
 the security-setting, the permission value will be mapped from the ActiveMQ 5.x
@@ -538,7 +582,7 @@ follow the syntax `ENC(<hash>)`. Hashed passwords can easily be added to
 *instance*. This command will not work from the Artemis home.
 
 ```sh
-./artemis user add --username guest --password guest --role admin
+./artemis user add --user guest --password guest --role admin
 ```
 
 This will use the default codec to perform a "one-way" hash of the password
@@ -731,7 +775,7 @@ system. It is implemented by
 
 - `authenticateUser` - boolean flag to disable authentication. Useful as an
   optimisation when this module is used just for role mapping of a Subject's
-  existing authenticated principals; default is `false`.
+  existing authenticated principals; default is `true`.
 
 - `referral` - specify how to handle referrals; valid values: `ignore`,
   `follow`, `throw`; default is `ignore`.
@@ -1253,3 +1297,16 @@ configure it in `bootstrap.xml` using the `security-manager` element, e.g.:
 ```
 
 The `security-manager` example demonstrates how to do this is more detail.
+
+## Per-Acceptor Security Domains
+
+It's possible to override the broker's JAAS security domain by specifying a
+security domain on an individual `acceptor`. Simply use the `securityDomain`
+parameter and indicate which domain from your `login.config` to use, e.g.:
+
+```xml
+<acceptor name="myAcceptor">tcp://127.0.0.1:61616?securityDomain=mySecurityDomain</acceptor>
+```
+
+Any client connecting to this acceptor will be have security enforced using
+`mySecurityDomain`.

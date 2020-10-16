@@ -17,7 +17,7 @@
 
 package org.apache.activemq.artemis.api.core;
 
-/** If {@link Message#getContext()} != null and is implementing this interface.
+/**
  *  These methods will be called during refCount operations */
 public interface RefCountMessageListener {
 
@@ -25,7 +25,14 @@ public interface RefCountMessageListener {
 
    void durableDown(Message message, int durableCount);
 
-   void nonDurableUp(Message message, int nonDurableCoun);
+   void refUp(Message message, int nonDurableCoun);
 
-   void nonDurableDown(Message message, int nonDurableCoun);
+   void refDown(Message message, int nonDurableCoun);
+
+   default void usageUp(Message message, int usageCount) {
+   }
+
+   default void usageDown(Message message, int usageCount) {
+
+   }
 }

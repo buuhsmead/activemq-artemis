@@ -72,6 +72,11 @@ public final class PageSubscriptionImpl implements PageSubscription {
 
    private boolean empty = true;
 
+   /** for tests */
+   public AtomicInteger getScheduledCleanupCount() {
+      return scheduledCleanupCount;
+   }
+
    // Number of scheduled cleanups, to avoid too many schedules
    private final AtomicInteger scheduledCleanupCount = new AtomicInteger(0);
 
@@ -1357,7 +1362,7 @@ public final class PageSubscriptionImpl implements PageSubscription {
                   break;
                }
 
-               int nextFileOffset = message.getPosition().getFileOffset() == -1 ? -1 : message.getPosition().getFileOffset() + message.getPagedMessage().getEncodeSize() + Page.SIZE_RECORD;
+               int nextFileOffset = message.getPosition().getFileOffset() == -1 ? -1 : message.getPosition().getFileOffset() + message.getPagedMessage().getStoredSize() + Page.SIZE_RECORD;
                tmpPosition = new PagePositionAndFileOffset(nextFileOffset, message.getPosition());
 
                boolean valid = true;

@@ -88,11 +88,15 @@ public class BackupManager implements ActiveMQComponent {
          return;
       //deploy the backup connectors using the cluster configuration
       for (ClusterConnectionConfiguration config : configuration.getClusterConfigurations()) {
+         logger.debug("deploy backup config " + config);
          deployBackupConnector(config);
       }
       //start each connector and if we are backup and shared store announce ourselves. NB with replication we don't do this
       //as we wait for replication to start and be notified by the replication manager.
       for (BackupConnector conn : backupConnectors) {
+         if (logger.isDebugEnabled()) {
+            logger.debugf("****** BackupManager connecting to %s", conn);
+         }
          conn.start();
          if (server.getHAPolicy().isBackup() && server.getHAPolicy().isSharedStore()) {
             conn.informTopology();
@@ -192,6 +196,11 @@ public class BackupManager implements ActiveMQComponent {
       private boolean announcingBackup;
       private boolean backupAnnounced = false;
 
+      @Override
+      public String toString() {
+         return "BackupConnector{" + "name='" + name + '\'' + ", connector=" + connector + '}';
+      }
+
       private BackupConnector(String name,
                               TransportConfiguration connector,
                               long retryInterval,
@@ -227,7 +236,7 @@ public class BackupManager implements ActiveMQComponent {
             backupServerLocator.setIdentity("backupLocatorFor='" + server + "'");
             backupServerLocator.setReconnectAttempts(-1);
             backupServerLocator.setInitialConnectAttempts(-1);
-            backupServerLocator.setProtocolManagerFactory(ActiveMQServerSideProtocolManagerFactory.getInstance(backupServerLocator));
+            backupServerLocator.setProtocolManagerFactory(ActiveMQServerSideProtocolManagerFactory.getInstance(backupServerLocator, server.getStorageManager()));
          }
       }
 
@@ -359,7 +368,7 @@ public class BackupManager implements ActiveMQComponent {
             ServerLocatorImpl locator = new ServerLocatorImpl(topology, true, tcConfigs);
             locator.setClusterConnection(true);
             locator.setRetryInterval(retryInterval);
-            locator.setProtocolManagerFactory(ActiveMQServerSideProtocolManagerFactory.getInstance(locator));
+            locator.setProtocolManagerFactory(ActiveMQServerSideProtocolManagerFactory.getInstance(locator, server.getStorageManager()));
             return locator;
          }
          return null;

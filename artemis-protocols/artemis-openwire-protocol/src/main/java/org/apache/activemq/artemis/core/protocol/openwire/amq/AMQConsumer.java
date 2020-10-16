@@ -27,11 +27,13 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.activemq.advisory.AdvisorySupport;
 import org.apache.activemq.artemis.api.core.ActiveMQQueueExistsException;
 import org.apache.activemq.artemis.api.core.ICoreMessage;
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.client.impl.ClientConsumerImpl;
@@ -41,11 +43,11 @@ import org.apache.activemq.artemis.core.server.MessageReference;
 import org.apache.activemq.artemis.core.server.QueueQueryResult;
 import org.apache.activemq.artemis.core.server.ServerConsumer;
 import org.apache.activemq.artemis.core.server.SlowConsumerDetectionListener;
-import org.apache.activemq.artemis.core.server.impl.AddressInfo;
 import org.apache.activemq.artemis.core.server.impl.ServerConsumerImpl;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.core.transaction.Transaction;
 import org.apache.activemq.artemis.reader.MessageUtil;
+import org.apache.activemq.artemis.utils.CompositeAddress;
 import org.apache.activemq.artemis.utils.SelectorTranslator;
 import org.apache.activemq.command.ConsumerControl;
 import org.apache.activemq.command.ConsumerId;
@@ -67,8 +69,9 @@ public class AMQConsumer {
 
    private int prefetchSize;
    private final AtomicInteger currentWindow;
+   private int deliveredAcks;
    private long messagePullSequence = 0;
-   private MessagePullHandler messagePullHandler;
+   private final AtomicReference<MessagePullHandler> messagePullHandler = new AtomicReference<>(null);
    //internal means we don't expose
    //it's address/queue to management service
    private boolean internalAddress = false;
@@ -86,8 +89,9 @@ public class AMQConsumer {
       this.scheduledPool = scheduledPool;
       this.prefetchSize = info.getPrefetchSize();
       this.currentWindow = new AtomicInteger(prefetchSize);
+      this.deliveredAcks = 0;
       if (prefetchSize == 0) {
-         messagePullHandler = new MessagePullHandler();
+         messagePullHandler.set(new MessagePullHandler());
       }
       this.internalAddress = internalAddress;
       this.rolledbackMessageRefs = null;
@@ -136,7 +140,8 @@ public class AMQConsumer {
          }
       }
 
-      SimpleString destinationName = new SimpleString(session.convertWildcard(openwireDestination.getPhysicalName()));
+      SimpleString destinationName = new SimpleString(session.convertWildcard(openwireDestination));
+
       if (openwireDestination.isTopic()) {
          SimpleString queueName = createTopicSubscription(info.isDurable(), info.getClientId(), destinationName.toString(), info.getSubscriptionName(), selector, destinationName);
 
@@ -146,7 +151,8 @@ public class AMQConsumer {
          ((ServerConsumerImpl)serverConsumer).setPreAcknowledge(preAck);
       } else {
          try {
-            session.getCoreServer().createQueue(destinationName, RoutingType.ANYCAST, destinationName, null, true, false);
+            session.getCoreServer().createQueue(new QueueConfiguration(destinationName)
+                                                   .setRoutingType(RoutingType.ANYCAST));
          } catch (ActiveMQQueueExistsException e) {
             // ignore
          }
@@ -177,13 +183,6 @@ public class AMQConsumer {
 
       SimpleString queueName;
 
-      AddressInfo addressInfo = session.getCoreServer().getAddressInfo(address);
-      if (addressInfo != null) {
-         addressInfo.addRoutingType(RoutingType.MULTICAST);
-      } else {
-         addressInfo = new AddressInfo(address, RoutingType.MULTICAST);
-      }
-      addressInfo.setInternal(internalAddress);
       if (isDurable) {
          queueName = org.apache.activemq.artemis.jms.client.ActiveMQDestination.createQueueNameForSubscription(true, clientID, subscriptionName);
          if (info.getDestination().isComposite()) {
@@ -209,15 +208,25 @@ public class AMQConsumer {
                session.getCoreSession().deleteQueue(queueName);
 
                // Create the new one
-               session.getCoreSession().createQueue(addressInfo, queueName, selector, false, true);
+               session.getCoreSession().createQueue(new QueueConfiguration(queueName).setAddress(address).setFilterString(selector).setInternal(internalAddress));
             }
          } else {
-            session.getCoreSession().createQueue(addressInfo, queueName, selector, false, true);
+            session.getCoreSession().createQueue(new QueueConfiguration(queueName).setAddress(address).setFilterString(selector).setInternal(internalAddress));
          }
       } else {
-         queueName = new SimpleString(UUID.randomUUID().toString());
+         /*
+          * The consumer may be using FQQN in which case the queue might already exist.
+          */
+         if (CompositeAddress.isFullyQualified(physicalName)) {
+            queueName = CompositeAddress.extractQueueName(SimpleString.toSimpleString(physicalName));
+            if (session.getCoreServer().locateQueue(queueName) != null) {
+               return queueName;
+            }
+         } else {
+            queueName = new SimpleString(UUID.randomUUID().toString());
+         }
 
-         session.getCoreSession().createQueue(addressInfo, queueName, selector, true, false);
+         session.getCoreSession().createQueue(new QueueConfiguration(queueName).setAddress(address).setFilterString(selector).setDurable(false).setTemporary(true).setInternal(internalAddress));
       }
 
       return queueName;
@@ -227,8 +236,8 @@ public class AMQConsumer {
       return info.getConsumerId();
    }
 
-   public void acquireCredit(int n) throws Exception {
-      if (messagePullHandler != null) {
+   public void acquireCredit(int n) {
+      if (messagePullHandler.get() != null) {
          //don't acquire any credits when the pull handler controls it!!
          return;
       }
@@ -239,13 +248,13 @@ public class AMQConsumer {
       if (promptDelivery) {
          serverConsumer.promptDelivery();
       }
-
    }
 
    public int handleDeliver(MessageReference reference, ICoreMessage message, int deliveryCount) {
       MessageDispatch dispatch;
       try {
-         if (messagePullHandler != null && !messagePullHandler.checkForcedConsumer(message)) {
+         MessagePullHandler pullHandler = messagePullHandler.get();
+         if (pullHandler != null && !pullHandler.checkForcedConsumer(message)) {
             return 0;
          }
 
@@ -302,7 +311,20 @@ public class AMQConsumer {
 
       List<MessageReference> ackList = serverConsumer.getDeliveringReferencesBasedOnProtocol(removeReferences, first, last);
 
-      acquireCredit(ack.getMessageCount());
+      if (removeReferences && (ack.isIndividualAck() || ack.isStandardAck() || ack.isPoisonAck())) {
+         if (deliveredAcks < ackList.size()) {
+            acquireCredit(ackList.size() - deliveredAcks);
+            deliveredAcks = 0;
+         } else {
+            deliveredAcks -= ackList.size();
+         }
+      } else {
+         if (ack.isDeliveredAck()) {
+            this.deliveredAcks += ack.getMessageCount();
+         }
+
+         acquireCredit(ack.getMessageCount());
+      }
 
       if (removeReferences) {
 
@@ -359,8 +381,9 @@ public class AMQConsumer {
 
    public void processMessagePull(MessagePull messagePull) throws Exception {
       currentWindow.incrementAndGet();
-      if (messagePullHandler != null) {
-         messagePullHandler.nextSequence(messagePullSequence++, messagePull.getTimeout());
+      MessagePullHandler pullHandler = messagePullHandler.get();
+      if (pullHandler != null) {
+         pullHandler.nextSequence(messagePullSequence++, messagePull.getTimeout());
       }
    }
 
@@ -380,6 +403,11 @@ public class AMQConsumer {
       this.prefetchSize = prefetchSize;
       this.currentWindow.set(prefetchSize);
       this.info.setPrefetchSize(prefetchSize);
+      if (this.prefetchSize == 0) {
+         messagePullHandler.compareAndSet(null, new MessagePullHandler());
+      } else {
+         messagePullHandler.set(null);
+      }
       if (this.prefetchSize > 0) {
          serverConsumer.promptDelivery();
       }

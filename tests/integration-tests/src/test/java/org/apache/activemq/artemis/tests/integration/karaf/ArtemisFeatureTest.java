@@ -83,7 +83,7 @@ import static org.ops4j.pax.exam.karaf.options.KarafDistributionOption.logLevel;
 @RunWith(PaxExam.class)
 public class ArtemisFeatureTest extends Assert {
 
-   private static Logger LOG = Logger.getLogger(ArtemisFeatureTest.class.getName());
+   private static Logger log = Logger.getLogger(ArtemisFeatureTest.class.getName());
 
    @Inject
    BundleContext bundleContext;
@@ -117,6 +117,8 @@ public class ArtemisFeatureTest extends Assert {
       Option[] options = new Option[]{karafDistributionConfiguration().frameworkUrl(maven().groupId("org.apache.karaf").artifactId("apache-karaf").type("tar.gz").versionAsInProject()).unpackDirectory(new File("target/paxexam/unpack/")),
 
          KarafDistributionOption.keepRuntimeFolder(), logLevel(LogLevelOption.LogLevel.INFO), editConfigurationFilePut("etc/config.properties", "karaf.startlevel.bundle", "50"),
+         // [KARAF-6600] Use https URL for Maven Central
+         editConfigurationFilePut("etc/org.ops4j.pax.url.mvn.cfg", "org.ops4j.pax.url.mvn.repositories", "https://repo1.maven.org/maven2@id=central, https://repository.apache.org/content/groups/snapshots-group@id=apache@snapshots@noreleases, https://oss.sonatype.org/content/repositories/ops4j-snapshots@id=ops4j.sonatype.snapshots.deploy@snapshots@noreleases"),
          // uncomment this to debug it.
          // debugConfiguration("5005", true),
          features(getArtemisMQKarafFeatureUrl(), f.toArray(new String[f.size()]))};
@@ -128,7 +130,7 @@ public class ArtemisFeatureTest extends Assert {
       String type = "xml/features";
       UrlReference urlReference = mavenBundle().groupId("org.apache.activemq").
          artifactId("artemis-features").versionAsInProject().type(type);
-      LOG.info("FeatureURL: " + urlReference.getURL());
+      log.debug("FeatureURL: " + urlReference.getURL());
       return urlReference;
    }
 
@@ -146,7 +148,7 @@ public class ArtemisFeatureTest extends Assert {
 
       Object service = waitForService("(objectClass=org.apache.activemq.artemis.core.server.ActiveMQServer)", 30000);
       assertNotNull(service);
-      LOG.info("have service " + service);
+      log.debug("have service " + service);
 
       executeCommand("service:list -n");
 
@@ -236,7 +238,7 @@ public class ArtemisFeatureTest extends Assert {
          e.printStackTrace(System.err);
          response = "SHELL COMMAND TIMED OUT: ";
       }
-      LOG.info("Execute: " + command + " - Response:" + response);
+      log.debug("Execute: " + command + " - Response:" + response);
       return response;
    }
 
@@ -263,7 +265,7 @@ public class ArtemisFeatureTest extends Assert {
    public boolean verifyBundleInstalled(final String bundleName) throws Exception {
       boolean found = false;
       for (Bundle bundle : bundleContext.getBundles()) {
-         LOG.debug("Checking: " + bundle.getSymbolicName());
+         log.debug("Checking: " + bundle.getSymbolicName());
          if (bundle.getSymbolicName().contains(bundleName)) {
             found = true;
             break;

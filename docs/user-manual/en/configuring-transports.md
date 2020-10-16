@@ -108,9 +108,10 @@ We believe this caters for the vast majority of transport requirements.
 
 Apache ActiveMQ Artemis supports using a single port for all protocols, Apache
 ActiveMQ Artemis will automatically detect which protocol is being used CORE,
-AMQP, STOMP or OPENWIRE and use the appropriate Apache ActiveMQ Artemis
+AMQP, STOMP, MQTT or OPENWIRE and use the appropriate Apache ActiveMQ Artemis
 handler. It will also detect whether protocols such as HTTP or Web Sockets are
-being used and also use the appropriate decoders
+being used and also use the appropriate decoders. Web Sockets are supported for
+AMQP, STOMP, and MQTT.
 
 It is possible to limit which protocols are supported by using the `protocols`
 parameter on the Acceptor like so:
@@ -259,6 +260,9 @@ simple TCP:
   value. When set value to zero or negative integer this feature is turned off.
   Changing value needs to restart server to take effect.
 
+- `autoStart`. Determines whether or not an acceptor will start automatically
+  when the broker is started. Default value is `true`.
+
 ### Configuring Netty Native Transport
 
 Netty Native Transport support exists for selected OS platforms.  This allows
@@ -311,6 +315,12 @@ Please see the examples for a full working example of using Netty SSL.
 
 Netty SSL uses all the same properties as Netty TCP but adds the following
 additional properties:
+
+- `sslContext`
+
+A key that can be used in conjunction with `org.apache.activemq.artemis.core.remoting.impl.ssl.CachingSSLContextFactory`
+to cache created SSLContext and avoid recreating. Look [Configuring a SSLContextFactory](#Configuring a SSLContextFactory)
+for more details.
 
 - `sslEnabled`
 
@@ -489,6 +499,24 @@ additional properties:
   [broker's classpath](using-server.md#adding-runtime-dependencies).
 
 
+#### Configuring a SSLContextFactory
+
+If you have a `JDK` provider you can configure which SSLContextFactory to use.
+Currently we provide two implementations: 
+- `org.apache.activemq.artemis.core.remoting.impl.ssl.DefaultSSLContextFactory`
+- `org.apache.activemq.artemis.core.remoting.impl.ssl.CachingSSLContextFactory`
+but you can also add your own implementation of `org.apache.activemq.artemis.spi.core.remoting.ssl.SSLContextFactory`.
+
+The implementations are loaded by a ServiceLoader, thus you need to declare your implementation in
+a `META-INF/services/org.apache.activemq.artemis.spi.core.remoting.ssl.SSLContextFactory` file.
+If several implementations are available, the one with the highest `priority` will be selected.
+So for example, if you want to use `org.apache.activemq.artemis.core.remoting.impl.ssl.CachingSSLContextFactory`
+you need to add a `META-INF/services/org.apache.activemq.artemis.spi.core.remoting.ssl.SSLContextFactory` file
+to your classpath with the content `org.apache.activemq.artemis.core.remoting.impl.ssl.CachingSSLContextFactory`.
+
+**Note:** This mechanism doesn't work if you have selected `OPENSSL` as provider.
+
+
 ### Configuring Netty HTTP
 
 Netty HTTP tunnels packets over the HTTP protocol. It can be useful in
@@ -518,3 +546,30 @@ additional properties:
 - `httpRequiresSessionId`. If `true` the client will wait after the first call
   to receive a session id. Used the http connector is connecting to servlet
   acceptor (not recommended)
+
+
+### Configuring Netty SOCKS Proxy
+
+All these parameters are only applicable to a `connector` and/or client URL.
+
+**Note:** Using a loop-back address (e.g. `localhost` or `127.0.0.1`) as the
+target of the `connector` or URL will circumvent the application of these
+configuration properties. In other words, no SOCKS proxy support will be
+configured even if these properties are set.
+
+- `socksEnabled`. Whether or not to enable SOCKS support on the `connector`.
+
+- `socksHost`. The name of the SOCKS server to use.
+
+- `socksPort`. The port of the SOCKS server to use.
+
+- `socksVersion`. The version of SOCKS to use. Must be an integer. Default is
+  `5`.
+
+- `socksUsername`. The username to use when connecting to the `socksHost`.
+
+- `socksPassword`. The password to use when connecting to the `socksHost`. Only
+  applicable if the `socksVersion` is `5`.
+
+- `socksRemoteDNS`. Whether or not to create remote destination socket
+  unresolved and disable DNS resolution. Default is `false`.

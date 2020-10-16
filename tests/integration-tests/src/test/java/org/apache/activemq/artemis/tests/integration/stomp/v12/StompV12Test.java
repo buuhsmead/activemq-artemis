@@ -40,13 +40,13 @@ import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.protocol.stomp.Stomp;
 import org.apache.activemq.artemis.core.protocol.stomp.StompConnection;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.integration.stomp.StompTestBase;
 import org.apache.activemq.artemis.tests.integration.stomp.util.ClientStompFrame;
 import org.apache.activemq.artemis.tests.integration.stomp.util.StompClientConnection;
 import org.apache.activemq.artemis.tests.integration.stomp.util.StompClientConnectionFactory;
 import org.apache.activemq.artemis.tests.integration.stomp.util.StompClientConnectionV11;
 import org.apache.activemq.artemis.tests.integration.stomp.util.StompClientConnectionV12;
+import org.jboss.logging.Logger;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -60,7 +60,8 @@ import org.junit.runners.Parameterized;
 @RunWith(Parameterized.class)
 public class StompV12Test extends StompTestBase {
 
-   private static final transient IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
+   private static final Logger log = Logger.getLogger(StompV12Test.class);
+
    public static final String CLIENT_ID = "myclientid";
 
    private StompClientConnectionV12 conn;
@@ -263,7 +264,7 @@ public class StompV12Test extends StompTestBase {
 
       conn.disconnect();
 
-      System.out.println("Got error frame " + reply);
+      instanceLog.debug("Got error frame " + reply);
 
    }
 
@@ -284,7 +285,7 @@ public class StompV12Test extends StompTestBase {
 
       ClientStompFrame frame = newConn.receiveFrame();
 
-      System.out.println("received " + frame);
+      instanceLog.debug("received " + frame);
 
       Assert.assertEquals(Stomp.Responses.MESSAGE, frame.getCommand());
 
@@ -299,7 +300,7 @@ public class StompV12Test extends StompTestBase {
 
       frame = newConn.receiveFrame();
 
-      System.out.println("received " + frame);
+      instanceLog.debug("received " + frame);
 
       //unsub
       unsubscribe(newConn, "a-sub");
@@ -320,7 +321,7 @@ public class StompV12Test extends StompTestBase {
 
       ClientStompFrame frame = newConn.receiveFrame();
 
-      System.out.println("received " + frame);
+      instanceLog.debug("received " + frame);
 
       Assert.assertEquals(Stomp.Responses.MESSAGE, frame.getCommand());
 
@@ -418,7 +419,7 @@ public class StompV12Test extends StompTestBase {
       Assert.assertEquals(Stomp.Responses.MESSAGE, frame.getCommand());
       Assert.assertEquals(body, frame.getBody());
 
-      System.out.println("received: " + frame);
+      instanceLog.debug("received: " + frame);
       Assert.assertEquals("value1", frame.getHeader("foo"));
 
       //unsub
@@ -476,7 +477,7 @@ public class StompV12Test extends StompTestBase {
       Assert.assertEquals(Stomp.Responses.MESSAGE, frame.getCommand());
       Assert.assertEquals(body, frame.getBody());
 
-      System.out.println("received: " + frame);
+      instanceLog.debug("received: " + frame);
       Assert.assertEquals(null, frame.getHeader("header1"));
       Assert.assertEquals("value1 ", frame.getHeader(" header1"));
       Assert.assertEquals("value2   ", frame.getHeader("  header2"));
@@ -509,7 +510,7 @@ public class StompV12Test extends StompTestBase {
                                    .addHeader(hKey, hVal)
                                    .setBody(body);
 
-      System.out.println("key: |" + hKey + "| val: |" + hVal + "|");
+      instanceLog.debug("key: |" + hKey + "| val: |" + hVal + "|");
 
       conn.sendFrame(frame);
 
@@ -521,7 +522,7 @@ public class StompV12Test extends StompTestBase {
 
       frame = newConn.receiveFrame();
 
-      System.out.println("received " + frame);
+      instanceLog.debug("received " + frame);
 
       Assert.assertEquals(Stomp.Responses.MESSAGE, frame.getCommand());
 
@@ -553,7 +554,7 @@ public class StompV12Test extends StompTestBase {
       String hVal = "is\\ttab";
       frame.addHeader(hKey, hVal);
 
-      System.out.println("key: |" + hKey + "| val: |" + hVal + "|");
+      instanceLog.debug("key: |" + hKey + "| val: |" + hVal + "|");
 
       frame.setBody(body);
 
@@ -561,7 +562,7 @@ public class StompV12Test extends StompTestBase {
 
       ClientStompFrame error = conn.receiveFrame();
 
-      System.out.println("received " + error);
+      instanceLog.debug("received " + error);
 
       String desc = "Should have received an ERROR for undefined escape sequence";
       Assert.assertNotNull(desc, error);
@@ -704,7 +705,7 @@ public class StompV12Test extends StompTestBase {
       //now check the frame size
       int size = conn.getServerPingNumber();
 
-      System.out.println("ping received: " + size);
+      instanceLog.debug("ping received: " + size);
 
       Assert.assertTrue("size: " + size, size > 5);
 
@@ -933,7 +934,7 @@ public class StompV12Test extends StompTestBase {
 
       ClientStompFrame error = conn.receiveFrame();
 
-      System.out.println("Receiver error: " + error);
+      instanceLog.debug("Receiver error: " + error);
 
       waitDisconnect(conn);
       Assert.assertFalse("Should be disconnected in STOMP 1.2 after ERROR", conn.isConnected());
@@ -1017,7 +1018,7 @@ public class StompV12Test extends StompTestBase {
 
       ClientStompFrame error = conn.receiveFrame();
 
-      System.out.println("Receiver error: " + error);
+      instanceLog.debug("Receiver error: " + error);
 
       waitDisconnect(conn);
       Assert.assertFalse("Should be disconnected in STOMP 1.2 after ERROR", conn.isConnected());
@@ -1048,7 +1049,7 @@ public class StompV12Test extends StompTestBase {
 
       ClientStompFrame error = conn.sendFrame(ackFrame);
 
-      System.out.println("Receiver error: " + error);
+      instanceLog.debug("Receiver error: " + error);
 
       Assert.assertEquals(Stomp.Responses.ERROR, error.getCommand());
 
@@ -1083,7 +1084,7 @@ public class StompV12Test extends StompTestBase {
 
       ClientStompFrame error = conn.sendFrame(ackFrame);
 
-      System.out.println("Receiver error: " + error);
+      instanceLog.debug("Receiver error: " + error);
 
       Assert.assertEquals(Stomp.Responses.ERROR, error.getCommand());
 
@@ -1251,7 +1252,7 @@ public class StompV12Test extends StompTestBase {
          frame = conn.receiveFrame();
          Assert.assertNotNull(frame);
 
-         System.out.println(i + " == received: " + frame);
+         instanceLog.debug(i + " == received: " + frame);
          //ack on even numbers
          if (i % 2 == 0) {
             ack(conn, frame);
@@ -1269,7 +1270,7 @@ public class StompV12Test extends StompTestBase {
       for (int i = 0; i < num / 2; i++) {
          message = (TextMessage) consumer.receive(1000);
          Assert.assertNotNull(message);
-         System.out.println("Legal: " + message.getText());
+         instanceLog.debug("Legal: " + message.getText());
       }
 
       message = (TextMessage) consumer.receiveNoWait();
@@ -1293,13 +1294,13 @@ public class StompV12Test extends StompTestBase {
       // receive message from socket
       ClientStompFrame frame = conn.receiveFrame(1000);
 
-      System.out.println("received frame : " + frame);
+      instanceLog.debug("received frame : " + frame);
       Assert.assertEquals("Hello World", frame.getBody());
       Assert.assertEquals("sub1", frame.getHeader(Stomp.Headers.Message.SUBSCRIPTION));
 
       frame = newConn.receiveFrame(1000);
 
-      System.out.println("received 2 frame : " + frame);
+      instanceLog.debug("received 2 frame : " + frame);
       Assert.assertEquals("Hello World", frame.getBody());
       Assert.assertEquals("sub2", frame.getHeader(Stomp.Headers.Message.SUBSCRIPTION));
 
@@ -1352,11 +1353,11 @@ public class StompV12Test extends StompTestBase {
       subscribe(conn, getName(), Stomp.Headers.Subscribe.AckModeValues.AUTO);
 
       String text = "A" + "\u00ea" + "\u00f1" + "\u00fc" + "C";
-      System.out.println(text);
+      instanceLog.debug(text);
       sendJmsMessage(text);
 
       ClientStompFrame frame = conn.receiveFrame();
-      System.out.println(frame);
+      instanceLog.debug(frame);
       Assert.assertTrue(frame.getCommand().equals(Stomp.Responses.MESSAGE));
       Assert.assertNotNull(frame.getHeader(Stomp.Headers.Subscribe.DESTINATION));
       Assert.assertTrue(frame.getBody().equals(text));
@@ -1466,7 +1467,6 @@ public class StompV12Test extends StompTestBase {
 
    @Test
    public void testMultipleDurableSubscribers() throws Exception {
-      org.jboss.logmanager.Logger.getLogger(StompConnection.class.getName()).setLevel(org.jboss.logmanager.Level.TRACE);
       conn.connect(defUser, defPass, "myClientID");
       StompClientConnectionV12 conn2 = (StompClientConnectionV12) StompClientConnectionFactory.createClientConnection(uri);
       conn2.connect(defUser, defPass, "myClientID");
@@ -1482,8 +1482,6 @@ public class StompV12Test extends StompTestBase {
 
    @Test
    public void testMultipleConcurrentDurableSubscribers() throws Exception {
-      org.jboss.logmanager.Logger.getLogger(StompConnection.class.getName()).setLevel(org.jboss.logmanager.Level.TRACE);
-
       int NUMBER_OF_THREADS = 25;
       SubscriberThread[] threads = new SubscriberThread[NUMBER_OF_THREADS];
       final CountDownLatch startFlag = new CountDownLatch(1);
@@ -1710,7 +1708,7 @@ public class StompV12Test extends StompTestBase {
             TextMessage m = (TextMessage) arg0;
             latch.countDown();
             try {
-               System.out.println("___> latch now: " + latch.getCount() + " m: " + m.getText());
+               instanceLog.debug("___> latch now: " + latch.getCount() + " m: " + m.getText());
             } catch (JMSException e) {
                Assert.fail("here failed");
                e.printStackTrace();
@@ -2001,7 +1999,7 @@ public class StompV12Test extends StompTestBase {
 
       Assert.assertEquals(Stomp.Responses.MESSAGE, frame.getCommand());
 
-      System.out.println("Message: " + frame);
+      instanceLog.debug("Message: " + frame);
 
       Assert.assertEquals("5", frame.getHeader(Stomp.Headers.CONTENT_LENGTH));
 
@@ -2281,7 +2279,7 @@ public class StompV12Test extends StompTestBase {
 
       Assert.assertEquals(Stomp.Responses.MESSAGE, frame.getCommand());
 
-      log.info("Reconnecting!");
+      log.debug("Reconnecting!");
 
       if (sendDisconnect) {
          conn.disconnect();
@@ -2357,7 +2355,7 @@ public class StompV12Test extends StompTestBase {
 
       ClientStompFrame frame = conn.receiveFrame();
 
-      System.out.println("Received: " + frame);
+      instanceLog.debug("Received: " + frame);
 
       Assert.assertEquals(Stomp.Responses.MESSAGE, frame.getCommand());
       Assert.assertEquals("ID:MYMACHINE-50616-635482262727823605-1:1:1:1", frame.getHeader(Stomp.Headers.Message.SUBSCRIPTION));
@@ -2369,6 +2367,174 @@ public class StompV12Test extends StompTestBase {
       unsubscribe(conn, "ID\\cMYMACHINE-50616-635482262727823605-1\\c1\\c1\\c1");
 
       conn.disconnect();
+   }
+
+   @Test
+   public void testSubscribeWithZeroConsumerWindowSize() throws Exception {
+      internalSubscribeWithZeroConsumerWindowSize(Stomp.Headers.Subscribe.CONSUMER_WINDOW_SIZE, true);
+   }
+
+   @Test
+   public void testSubscribeWithZeroConsumerWindowSizeLegacyHeader() throws Exception {
+      internalSubscribeWithZeroConsumerWindowSize(Stomp.Headers.Subscribe.ACTIVEMQ_PREFETCH_SIZE, true);
+   }
+
+   @Test
+   public void testSubscribeWithZeroConsumerWindowSizeAndNack() throws Exception {
+      internalSubscribeWithZeroConsumerWindowSize(Stomp.Headers.Subscribe.CONSUMER_WINDOW_SIZE, false);
+   }
+
+   @Test
+   public void testSubscribeWithZeroConsumerWindowSizeLegacyHeaderAndNack() throws Exception {
+      internalSubscribeWithZeroConsumerWindowSize(Stomp.Headers.Subscribe.ACTIVEMQ_PREFETCH_SIZE, false);
+   }
+
+   private void internalSubscribeWithZeroConsumerWindowSize(String consumerWindowSizeHeader, boolean ack) throws Exception {
+      final int TIMEOUT = 1000;
+      conn.connect(defUser, defPass);
+      subscribe(conn, null, Stomp.Headers.Subscribe.AckModeValues.CLIENT_INDIVIDUAL, null, null, getQueuePrefix() + getQueueName(), true, 0, consumerWindowSizeHeader);
+
+      sendJmsMessage(getName());
+      sendJmsMessage(getName());
+      ClientStompFrame frame1 = conn.receiveFrame(TIMEOUT);
+      Assert.assertNotNull(frame1);
+      Assert.assertEquals(Stomp.Responses.MESSAGE, frame1.getCommand());
+      String messageID = frame1.getHeader(Stomp.Headers.Message.MESSAGE_ID);
+      ClientStompFrame frame2 = conn.receiveFrame(TIMEOUT);
+      Assert.assertNull(frame2);
+      if (ack) {
+         ack(conn, messageID);
+      } else {
+         nack(conn, messageID);
+      }
+
+      ClientStompFrame frame3 = conn.receiveFrame(TIMEOUT);
+      Assert.assertNotNull(frame3);
+      Assert.assertEquals(Stomp.Responses.MESSAGE, frame3.getCommand());
+      messageID = frame3.getHeader(Stomp.Headers.Message.MESSAGE_ID);
+      if (ack) {
+         ack(conn, messageID);
+      } else {
+         nack(conn, messageID);
+      }
+
+      conn.disconnect();
+
+      MessageConsumer consumer = session.createConsumer(queue);
+      Message message = consumer.receive(TIMEOUT);
+      Assert.assertNull(message);
+   }
+
+   @Test
+   public void testSubscribeWithNonZeroConsumerWindowSize() throws Exception {
+      internalSubscribeWithNonZeroConsumerWindowSize(Stomp.Headers.Subscribe.CONSUMER_WINDOW_SIZE, true);
+   }
+
+   @Test
+   public void testSubscribeWithNonZeroConsumerWindowSizeLegacyHeader() throws Exception {
+      internalSubscribeWithNonZeroConsumerWindowSize(Stomp.Headers.Subscribe.ACTIVEMQ_PREFETCH_SIZE, true);
+   }
+
+   @Test
+   public void testSubscribeWithNonZeroConsumerWindowSizeAndNack() throws Exception {
+      internalSubscribeWithNonZeroConsumerWindowSize(Stomp.Headers.Subscribe.CONSUMER_WINDOW_SIZE, false);
+   }
+
+   @Test
+   public void testSubscribeWithNonZeroConsumerWindowSizeLegacyHeaderAndNack() throws Exception {
+      internalSubscribeWithNonZeroConsumerWindowSize(Stomp.Headers.Subscribe.ACTIVEMQ_PREFETCH_SIZE, false);
+   }
+
+   private void internalSubscribeWithNonZeroConsumerWindowSize(String consumerWindowSizeHeader, boolean ack) throws Exception {
+      // the size of each message was determined from the DEBUG logging from org.apache.activemq.artemis.core.protocol.stomp.StompConnection
+      final int MESSAGE_SIZE = 270;
+      final int TIMEOUT = 1000;
+      final String MESSAGE = "foo-foo-foo";
+
+      conn.connect(defUser, defPass);
+      subscribe(conn, null, Stomp.Headers.Subscribe.AckModeValues.CLIENT_INDIVIDUAL, null, null, getQueuePrefix() + getQueueName(), true, MESSAGE_SIZE * 2, consumerWindowSizeHeader);
+
+      sendJmsMessage(MESSAGE);
+      sendJmsMessage(MESSAGE);
+      sendJmsMessage(MESSAGE);
+      ClientStompFrame frame1 = conn.receiveFrame(TIMEOUT);
+      Assert.assertNotNull(frame1);
+      Assert.assertEquals(Stomp.Responses.MESSAGE, frame1.getCommand());
+      String messageID1 = frame1.getHeader(Stomp.Headers.Message.MESSAGE_ID);
+      ClientStompFrame frame2 = conn.receiveFrame(TIMEOUT);
+      Assert.assertNotNull(frame2);
+      Assert.assertEquals(Stomp.Responses.MESSAGE, frame2.getCommand());
+      String messageID2 = frame2.getHeader(Stomp.Headers.Message.MESSAGE_ID);
+      ClientStompFrame frame3 = conn.receiveFrame(TIMEOUT);
+      Assert.assertNull(frame3);
+      if (ack) {
+         ack(conn, messageID1);
+         ack(conn, messageID2);
+      } else {
+         nack(conn, messageID1);
+         nack(conn, messageID2);
+      }
+
+      ClientStompFrame frame4 = conn.receiveFrame(TIMEOUT);
+      Assert.assertNotNull(frame4);
+      Assert.assertEquals(Stomp.Responses.MESSAGE, frame4.getCommand());
+      String messageID4 = frame4.getHeader(Stomp.Headers.Message.MESSAGE_ID);
+      if (ack) {
+         ack(conn, messageID4);
+      } else {
+         nack(conn, messageID4);
+      }
+
+      conn.disconnect();
+
+      MessageConsumer consumer = session.createConsumer(queue);
+      Message message = consumer.receive(TIMEOUT);
+      Assert.assertNull(message);
+   }
+
+   @Test
+   public void testSubscribeWithNonZeroConsumerWindowSizeAndClientAck() throws Exception {
+      org.jboss.logmanager.Logger.getLogger(StompConnection.class.getName()).setLevel(org.jboss.logmanager.Level.DEBUG);
+      // the size of each message was determined from the DEBUG logging from org.apache.activemq.artemis.core.protocol.stomp.StompConnection
+      final int MESSAGE_SIZE = 270;
+      final int TIMEOUT = 1000;
+      final String MESSAGE = "foo-foo-foo";
+
+      conn.connect(defUser, defPass);
+      subscribe(conn, null, Stomp.Headers.Subscribe.AckModeValues.CLIENT, null, null, getQueuePrefix() + getQueueName(), true, MESSAGE_SIZE * 2, Stomp.Headers.Subscribe.CONSUMER_WINDOW_SIZE);
+
+      sendJmsMessage(MESSAGE);
+      sendJmsMessage(MESSAGE);
+      sendJmsMessage(MESSAGE);
+      sendJmsMessage(MESSAGE);
+
+      ClientStompFrame frame1 = conn.receiveFrame(TIMEOUT);
+      Assert.assertNotNull(frame1);
+      Assert.assertEquals(Stomp.Responses.MESSAGE, frame1.getCommand());
+      ClientStompFrame frame2 = conn.receiveFrame(TIMEOUT);
+      Assert.assertNotNull(frame2);
+      Assert.assertEquals(Stomp.Responses.MESSAGE, frame2.getCommand());
+      String messageID2 = frame2.getHeader(Stomp.Headers.Message.MESSAGE_ID);
+      ClientStompFrame frame3 = conn.receiveFrame(TIMEOUT);
+      Assert.assertNull(frame3);
+      // this should clear the first 2 messages since we're using CLIENT ack mode
+      ack(conn, messageID2);
+
+      ClientStompFrame frame4 = conn.receiveFrame(TIMEOUT);
+      Assert.assertNotNull(frame4);
+      Assert.assertEquals(Stomp.Responses.MESSAGE, frame4.getCommand());
+      ClientStompFrame frame5 = conn.receiveFrame(TIMEOUT);
+      Assert.assertNotNull(frame5);
+      Assert.assertEquals(Stomp.Responses.MESSAGE, frame5.getCommand());
+      String messageID5 = frame5.getHeader(Stomp.Headers.Message.MESSAGE_ID);
+      // this should clear the next 2 messages
+      ack(conn, messageID5);
+
+      conn.disconnect();
+
+      MessageConsumer consumer = session.createConsumer(queue);
+      Message message = consumer.receive(TIMEOUT);
+      Assert.assertNull(message);
    }
 
    private void ack(StompClientConnection conn, ClientStompFrame frame) throws IOException, InterruptedException {

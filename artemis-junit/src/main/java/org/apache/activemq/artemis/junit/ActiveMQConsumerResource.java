@@ -17,6 +17,7 @@
 package org.apache.activemq.artemis.junit;
 
 import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -31,10 +32,10 @@ import org.apache.activemq.artemis.api.core.RoutingType;
  *
  * <pre><code>
  * public class SimpleTest {
- *     @Rule
+ *     &#64;Rule
  *     public ActiveMQConsumerResource client = new ActiveMQProducerResource( "vm://0", "test.queue" );
  *
- *     @Test
+ *     &#64;Test
  *     public void testSomething() throws Exception {
  *         // Use the embedded client here
  *         ClientMessage message = client.receiveMessage();
@@ -103,7 +104,7 @@ public class ActiveMQConsumerResource extends AbstractActiveMQClientResource {
          if (!session.queueQuery(queueName).isExists() && autoCreateQueue) {
             log.warn("{}: queue does not exist - creating queue: address = {}, name = {}", this.getClass().getSimpleName(), queueName.toString(), queueName.toString());
             session.createAddress(queueName, RoutingType.MULTICAST, true);
-            session.createQueue(queueName, queueName);
+            session.createQueue(new QueueConfiguration(queueName));
          }
          consumer = session.createConsumer(queueName, browseOnly);
       } catch (ActiveMQException amqEx) {

@@ -33,11 +33,14 @@ import org.apache.activemq.artemis.logs.AssertionLoggerHandler;
 import org.apache.activemq.artemis.tests.unit.UnitTestLogger;
 import org.apache.activemq.artemis.tests.unit.core.journal.impl.fakes.SimpleEncoding;
 import org.apache.activemq.artemis.utils.RandomUtil;
+import org.jboss.logging.Logger;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
 public abstract class JournalImplTestUnit extends JournalImplTestBase {
+
+   private static final Logger log = Logger.getLogger(JournalImplTestUnit.class);
 
    @Override
    @After
@@ -112,6 +115,31 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
          journal.appendAddRecord(1, (byte) 1, new SimpleEncoding(2, (byte) 'a'), false);
       }
       stopJournal();
+   }
+
+   @Test
+   public void testFlushAppendsAndDeletes() throws Exception {
+      setup(10, 10 * 1024, true);
+      createJournal();
+      startJournal();
+      load();
+      byte[] record = new byte[1000];
+      for (int i = 0; i < record.length; i++) {
+         record[i] = (byte) 'a';
+      }
+      // Appending records after restart should be valid (not throwing any
+      // exceptions)
+      for (int i = 0; i < 10_000; i++) {
+         journal.appendAddRecord(i, (byte) 1, new SimpleEncoding(2, (byte) 'a'), false);
+         journal.appendDeleteRecord(i, false);
+      }
+      stopJournal();
+
+      List<String> files = fileFactory.listFiles(fileExtension);
+
+      // I am allowing one extra as a possible race with pushOpenFiles. I have not seen it happening on my test
+      // but it wouldn't be a problem if it happened
+      Assert.assertTrue("Supposed to have up to 10 files", files.size() <= 11);
    }
 
    @Test
@@ -677,7 +705,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
       int addRecordsPerFile = calculateRecordsPerFile(10 * 1024, journal.getAlignment(), JournalImpl.SIZE_ADD_RECORD + 1 + recordLength);
 
-      System.out.println(JournalImpl.SIZE_ADD_RECORD + 1 + recordLength);
+      log.debug(JournalImpl.SIZE_ADD_RECORD + 1 + recordLength);
 
       // Fills exactly 10 files
       int initialNumberOfAddRecords = addRecordsPerFile * 10;
@@ -1013,7 +1041,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
       journal.debugWait();
 
-      System.out.println("journal tmp :" + journal.debug());
+      log.debug("journal tmp :" + journal.debug());
 
       List<String> files2 = fileFactory.listFiles(fileExtension);
 
@@ -1030,7 +1058,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
       journal.debugWait();
 
-      System.out.println("journal tmp2 :" + journal.debug());
+      log.debug("journal tmp2 :" + journal.debug());
 
       List<String> files3 = fileFactory.listFiles(fileExtension);
 
@@ -1085,7 +1113,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
       journal.checkReclaimStatus();
 
-      System.out.println("journal:" + journal.debug());
+      log.debug("journal:" + journal.debug());
 
       stopJournal(false);
       createJournal();
@@ -2689,6 +2717,22 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
    }
 
    @Test
+   public void testTryIsolation2() throws Exception {
+      setup(10, 10 * 1024, true);
+      createJournal();
+      startJournal();
+      load();
+      addTx(1, 1, 2, 3);
+
+      Assert.assertFalse(tryUpdate(1));
+
+      stopJournal();
+      createJournal();
+      startJournal();
+      loadAndCheck();
+   }
+
+   @Test
    public void testIsolation3() throws Exception {
       setup(10, 10 * 1024, true);
       createJournal();
@@ -2701,6 +2745,22 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
       } catch (IllegalStateException e) {
          // Ok
       }
+
+      stopJournal();
+      createJournal();
+      startJournal();
+      loadAndCheck();
+   }
+
+   @Test
+   public void testTryDelete() throws Exception {
+      setup(10, 10 * 1024, true);
+      createJournal();
+      startJournal();
+      load();
+      addTx(1, 1, 2, 3);
+
+      Assert.assertFalse(tryDelete(1));
 
       stopJournal();
       createJournal();
@@ -2951,18 +3011,18 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
        * Enable System.outs again if test fails and needs to be debugged
        */
 
-      //      System.out.println("Before stop ****************************");
-      //      System.out.println(journal.debug());
-      //      System.out.println("*****************************************");
+      //      log.debug("Before stop ****************************");
+      //      log.debug(journal.debug());
+      //      log.debug("*****************************************");
 
       stopJournal();
       createJournal();
       startJournal();
       loadAndCheck();
 
-      //      System.out.println("After start ****************************");
-      //      System.out.println(journal.debug());
-      //      System.out.println("*****************************************");
+      //      log.debug("After start ****************************");
+      //      log.debug(journal.debug());
+      //      log.debug("*****************************************");
 
       journal.forceMoveNextFile();
 
@@ -2970,49 +3030,49 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
          delete(i);
       }
 
-      //      System.out.println("After delete ****************************");
-      //      System.out.println(journal.debug());
-      //      System.out.println("*****************************************");
+      //      log.debug("After delete ****************************");
+      //      log.debug(journal.debug());
+      //      log.debug("*****************************************");
 
       for (int i = 100; i < 200; i++) {
          updateTx(transactionID, i);
       }
 
-      //      System.out.println("After updatetx ****************************");
-      //      System.out.println(journal.debug());
-      //      System.out.println("*****************************************");
+      //      log.debug("After updatetx ****************************");
+      //      log.debug(journal.debug());
+      //      log.debug("*****************************************");
 
       journal.forceMoveNextFile();
 
       commit(transactionID++);
 
-      //      System.out.println("After commit ****************************");
-      //      System.out.println(journal.debug());
-      //      System.out.println("*****************************************");
+      //      log.debug("After commit ****************************");
+      //      log.debug(journal.debug());
+      //      log.debug("*****************************************");
 
       for (int i = 100; i < 200; i++) {
          updateTx(transactionID, i);
          deleteTx(transactionID, i);
       }
 
-      //      System.out.println("After delete ****************************");
-      //      System.out.println(journal.debug());
-      //      System.out.println("*****************************************");
+      //      log.debug("After delete ****************************");
+      //      log.debug(journal.debug());
+      //      log.debug("*****************************************");
 
       commit(transactionID++);
 
-      //      System.out.println("Before reclaim/after commit ****************************");
-      //      System.out.println(journal.debug());
-      //      System.out.println("*****************************************");
+      //      log.debug("Before reclaim/after commit ****************************");
+      //      log.debug(journal.debug());
+      //      log.debug("*****************************************");
 
       stopJournal();
       createJournal();
       startJournal();
       loadAndCheck();
 
-      //      System.out.println("After reclaim ****************************");
-      //      System.out.println(journal.debug());
-      //      System.out.println("*****************************************");
+      //      log.debug("After reclaim ****************************");
+      //      log.debug(journal.debug());
+      //      log.debug("*****************************************");
 
       journal.forceMoveNextFile();
       checkAndReclaimFiles();

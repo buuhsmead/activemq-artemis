@@ -78,9 +78,9 @@ infrastructure.
 
 If an AMQP Link is dynamic then a temporary queue will be created and either
 the remote source or remote target address will be set to the name of the
-temporary queue. If the Link is not dynamic then the the address of the remote
-target or source will used for the queue. If this does not exist then it will
-be auto-created if the settings allow.
+temporary queue. If the Link is not dynamic then the address of the remote 
+target or source will be used for the queue. In case it does not exist, 
+it will be auto-created if the settings allow.
 
 ## AMQP and Multicast Addresses (Topics)
 
@@ -128,6 +128,45 @@ message for later delivery:
 If both annotations are present in the same message then the broker will prefer
 the more specific `x-opt-delivery-time` value.
 
+## DLQ and Expiry transfer
+
+AMQP Messages will be copied before transferred to a DLQ or ExpiryQueue and will receive properties and annotations during this process.
+
+The broker also keeps an internal only property (called extra property) that is not exposed to the clients, and those will also be filled during this process.
+
+Here is a list of Annotations and Property names AMQP Messages will receive when transferred:
+
+|Annotation name| Internal Property Name|Description|
+|---------------|-----------------------|-----------|
+|x-opt-ORIG-MESSAGE-ID|_AMQ_ORIG_MESSAGE_ID|The original message ID before the transfer|
+|x-opt-ACTUAL-EXPIRY|_AMQ_ACTUAL_EXPIRY|When the expiry took place. Milliseconds since epoch times|
+|x-opt-ORIG-QUEUE|_AMQ_ORIG_QUEUE|The original queue name before the transfer|
+|x-opt-ORIG-ADDRESS|_AMQ_ORIG_ADDRESS|The original address name before the transfer|
+
+## Filtering on Message Annotations
+
+It is possible to filter on messaging annotations if you use the prefix "m." before the annotation name.
+
+For example if you want to filter messages sent to a specific destination, you could create your filter accordingly to this:
+
+```java
+ConnectionFactory factory = new JmsConnectionFactory("amqp://localhost:5672");
+Connection connection = factory.createConnection();
+Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
+connection.start();
+javax.jms.Queue queue = session.createQueue("my-DLQ");
+MessageConsumer consumer = session.createConsumer(queue, "\"m.x-opt-ORIG-ADDRESS\"='ORIGINAL_PLACE'");
+Message message = consumer.receive();
+```
+
+The broker will set internal properties. If you intend to filter after DLQ or Expiry you may choose the internal property names:
+
+```java
+// Replace the consumer creation on the previous example:
+MessageConsumer consumer = session.createConsumer(queue, "_AMQ_ORIG_ADDRESS='ORIGINAL_PLACE'");
+```
+
+
 ## Configuring AMQP Idle Timeout
 
 It is possible to configure the AMQP Server's IDLE Timeout by setting the property amqpIdleTimeout in milliseconds on the acceptor.
@@ -156,3 +195,19 @@ This contains a real example for configuring amqpIdleTimeout:
 ```xml
 <acceptor name="amqp">tcp://0.0.0.0:5672?amqpIdleTimeout=0;tcpSendBufferSize=1048576;tcpReceiveBufferSize=1048576;protocols=AMQP;useEpoll=true;amqpCredits=1000;amqpMinCredits=300;directDeliver=false;batchDelay=10</acceptor>
 ```
+
+## Web Sockets
+
+Apache ActiveMQ Artemis also supports AMQP over [Web
+Sockets](https://html.spec.whatwg.org/multipage/web-sockets.html).  Modern web
+browsers which support Web Sockets can send and receive AMQP messages.
+
+AMQP over Web Sockets is supported via a normal AMQP acceptor:
+
+```xml
+<acceptor name="amqp-ws-acceptor">tcp://localhost:5672?protocols=AMQP</acceptor>
+```
+
+With this configuration, Apache ActiveMQ Artemis will accept AMQP connections
+over Web Sockets on the port `5672`. Web browsers can then connect to
+`ws://<server>:5672` using a Web Socket to send and receive AMQP messages.

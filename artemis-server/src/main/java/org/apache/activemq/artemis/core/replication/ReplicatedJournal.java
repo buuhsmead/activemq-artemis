@@ -33,6 +33,7 @@ import org.apache.activemq.artemis.core.journal.impl.JournalFile;
 import org.apache.activemq.artemis.core.journal.impl.dataformat.ByteArrayEncoding;
 import org.apache.activemq.artemis.core.persistence.OperationContext;
 import org.apache.activemq.artemis.core.replication.ReplicationManager.ADD_OPERATION_TYPE;
+import org.apache.activemq.artemis.utils.collections.SparseArrayLinkedList;
 import org.jboss.logging.Logger;
 
 /**
@@ -206,6 +207,21 @@ public class ReplicatedJournal implements Journal {
       localJournal.appendDeleteRecord(id, sync);
    }
 
+   /**
+    * @param id
+    * @param sync
+    * @throws Exception
+    * @see org.apache.activemq.artemis.core.journal.Journal#appendDeleteRecord(long, boolean)
+    */
+   @Override
+   public boolean tryAppendDeleteRecord(final long id, final boolean sync) throws Exception {
+      if (log.isTraceEnabled()) {
+         log.trace("AppendDelete " + id);
+      }
+      replicationManager.appendDeleteRecord(journalID, id);
+      return localJournal.tryAppendDeleteRecord(id, sync);
+   }
+
    @Override
    public void appendDeleteRecord(final long id,
                                   final boolean sync,
@@ -217,6 +233,16 @@ public class ReplicatedJournal implements Journal {
       localJournal.appendDeleteRecord(id, sync, completionCallback);
    }
 
+   @Override
+   public boolean tryAppendDeleteRecord(final long id,
+                                  final boolean sync,
+                                  final IOCompletion completionCallback) throws Exception {
+      if (log.isTraceEnabled()) {
+         log.trace("AppendDelete " + id);
+      }
+      replicationManager.appendDeleteRecord(journalID, id);
+      return localJournal.tryAppendDeleteRecord(id, sync, completionCallback);
+   }
    /**
     * @param txID
     * @param id
@@ -344,6 +370,15 @@ public class ReplicatedJournal implements Journal {
       this.appendUpdateRecord(id, recordType, new ByteArrayEncoding(record), sync);
    }
 
+   @Override
+   public boolean tryAppendUpdateRecord(final long id,
+                                     final byte recordType,
+                                     final byte[] record,
+                                     final boolean sync) throws Exception {
+
+      return this.tryAppendUpdateRecord(id, recordType, new ByteArrayEncoding(record), sync);
+   }
+
    /**
     * @param id
     * @param recordType
@@ -366,6 +401,19 @@ public class ReplicatedJournal implements Journal {
    }
 
    @Override
+   public boolean tryAppendUpdateRecord(final long id,
+                                  final byte recordType,
+                                  final Persister persister,
+                                  final Object record,
+                                  final boolean sync) throws Exception {
+      if (log.isTraceEnabled()) {
+         log.trace("AppendUpdateRecord id = " + id + " , recordType = " + recordType);
+      }
+      replicationManager.appendUpdateRecord(journalID, ADD_OPERATION_TYPE.UPDATE, id, recordType, persister, record);
+      return localJournal.tryAppendUpdateRecord(id, recordType, persister, record, sync);
+   }
+
+   @Override
    public void appendUpdateRecord(final long id,
                                   final byte journalRecordType,
                                   final Persister persister,
@@ -377,6 +425,20 @@ public class ReplicatedJournal implements Journal {
       }
       replicationManager.appendUpdateRecord(journalID, ADD_OPERATION_TYPE.UPDATE, id, journalRecordType, persister, record);
       localJournal.appendUpdateRecord(id, journalRecordType, persister, record, sync, completionCallback);
+   }
+
+   @Override
+   public boolean tryAppendUpdateRecord(final long id,
+                                  final byte journalRecordType,
+                                  final Persister persister,
+                                  final Object record,
+                                  final boolean sync,
+                                  final IOCompletion completionCallback) throws Exception {
+      if (log.isTraceEnabled()) {
+         log.trace("AppendUpdateRecord id = " + id + " , recordType = " + journalRecordType);
+      }
+      replicationManager.appendUpdateRecord(journalID, ADD_OPERATION_TYPE.UPDATE, id, journalRecordType, persister, record);
+      return localJournal.tryAppendUpdateRecord(id, journalRecordType, persister, record, sync, completionCallback);
    }
 
    /**
@@ -425,6 +487,21 @@ public class ReplicatedJournal implements Journal {
     */
    @Override
    public JournalLoadInformation load(final List<RecordInfo> committedRecords,
+                                      final List<PreparedTransactionInfo> preparedTransactions,
+                                      final TransactionFailureCallback transactionFailure,
+                                      final boolean fixbadTX) throws Exception {
+      return localJournal.load(committedRecords, preparedTransactions, transactionFailure, fixbadTX);
+   }
+
+   /**
+    * @param committedRecords
+    * @param preparedTransactions
+    * @param transactionFailure
+    * @throws Exception
+    * @see org.apache.activemq.artemis.core.journal.Journal#load(java.util.List, java.util.List, org.apache.activemq.artemis.core.journal.TransactionFailureCallback)
+    */
+   @Override
+   public JournalLoadInformation load(final SparseArrayLinkedList<RecordInfo> committedRecords,
                                       final List<PreparedTransactionInfo> preparedTransactions,
                                       final TransactionFailureCallback transactionFailure,
                                       final boolean fixbadTX) throws Exception {

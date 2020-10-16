@@ -57,8 +57,10 @@ import org.apache.activemq.artemis.core.server.ActiveMQServers;
 import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
 import org.apache.activemq.artemis.jms.client.ActiveMQDestination;
 import org.apache.activemq.artemis.jndi.ActiveMQInitialContextFactory;
+import org.apache.activemq.artemis.logs.AssertionLoggerHandler;
 import org.apache.activemq.artemis.spi.core.security.ActiveMQJAASSecurityManager;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.apache.activemq.artemis.utils.Wait;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -113,6 +115,21 @@ public class SimpleJNDIClientTest extends ActiveMQTestBase {
       props.put("java.naming.provider.url", "");
       new InitialContext(props);//Must not throw an exception
 
+   }
+
+   @Test
+   public void testConnectionFactoryStringWithInvalidParameter() throws Exception {
+      Hashtable<String, String> props = new Hashtable<>();
+      props.put(Context.INITIAL_CONTEXT_FACTORY, "org.apache.activemq.artemis.jndi.ActiveMQInitialContextFactory");
+      props.put("connectionFactory.ConnectionFactory", "tcp://localhost:61616?foo=too");
+
+      AssertionLoggerHandler.startCapture();
+      try {
+         new InitialContext(props);
+         assertTrue("Expected to find AMQ212078", AssertionLoggerHandler.findText("AMQ212078"));
+      } finally {
+         AssertionLoggerHandler.stopCapture();
+      }
    }
 
    @Test
@@ -460,6 +477,29 @@ public class SimpleJNDIClientTest extends ActiveMQTestBase {
    }
 
    @Test
+   public void testQueueFQQN() throws Exception {
+      final String QUEUE = "myQueue";
+      Hashtable<String, String> props = new Hashtable<>();
+      props.put(Context.INITIAL_CONTEXT_FACTORY, "org.apache.activemq.artemis.jndi.ActiveMQInitialContextFactory");
+      props.put("queue.myQueue", "myAddress::" + QUEUE);
+      Context ctx = new InitialContext(props);
+      liveService.getSecurityStore().setSecurityEnabled(false);
+
+      Destination destination = (Destination) ctx.lookup(QUEUE);
+      Assert.assertTrue(destination instanceof Queue);
+      ConnectionFactory connectionFactory = new ActiveMQConnectionFactory("tcp://localhost:61616");
+      try (Connection connection = connectionFactory.createConnection()) {
+         Session session = connection.createSession();
+         MessageProducer producer = session.createProducer(destination);
+         producer.send(session.createMessage());
+         Wait.assertTrue(() -> liveService.locateQueue(QUEUE).getMessageCount() == 1, 2000, 100);
+         MessageConsumer consumer = session.createConsumer(destination);
+         connection.start();
+         assertNotNull(consumer.receiveNoWait());
+      }
+   }
+
+   @Test
    public void testDynamicQueue() throws NamingException, JMSException {
       Hashtable<String, String> props = new Hashtable<>();
       props.put(Context.INITIAL_CONTEXT_FACTORY, "org.apache.activemq.artemis.jndi.ActiveMQInitialContextFactory");
@@ -467,6 +507,28 @@ public class SimpleJNDIClientTest extends ActiveMQTestBase {
 
       Destination destination = (Destination) ctx.lookup("dynamicQueues/myQueue");
       Assert.assertTrue(destination instanceof Queue);
+   }
+
+   @Test
+   public void testDynamicQueueFQQN() throws Exception {
+      final String QUEUE = "myQueue";
+      Hashtable<String, String> props = new Hashtable<>();
+      props.put(Context.INITIAL_CONTEXT_FACTORY, "org.apache.activemq.artemis.jndi.ActiveMQInitialContextFactory");
+      Context ctx = new InitialContext(props);
+      liveService.getSecurityStore().setSecurityEnabled(false);
+
+      Destination destination = (Destination) ctx.lookup("dynamicQueues/myAddress::" + QUEUE);
+      Assert.assertTrue(destination instanceof Queue);
+      ConnectionFactory connectionFactory = new ActiveMQConnectionFactory("tcp://localhost:61616");
+      try (Connection connection = connectionFactory.createConnection()) {
+         Session session = connection.createSession();
+         MessageProducer producer = session.createProducer(destination);
+         producer.send(session.createMessage());
+         Wait.assertTrue(() -> liveService.locateQueue(QUEUE).getMessageCount() == 1, 2000, 100);
+         MessageConsumer consumer = session.createConsumer(destination);
+         connection.start();
+         assertNotNull(consumer.receiveNoWait());
+      }
    }
 
    @Test
@@ -485,6 +547,28 @@ public class SimpleJNDIClientTest extends ActiveMQTestBase {
    }
 
    @Test
+   public void testTopicFQQN() throws Exception {
+      final String SUBSCRIPTION = "mySubsription";
+      Hashtable<String, String> props = new Hashtable<>();
+      props.put(Context.INITIAL_CONTEXT_FACTORY, "org.apache.activemq.artemis.jndi.ActiveMQInitialContextFactory");
+      props.put("topic.myTopic", "myTopic::" + SUBSCRIPTION);
+      Context ctx = new InitialContext(props);
+      liveService.getSecurityStore().setSecurityEnabled(false);
+
+      Destination destination = (Destination) ctx.lookup("myTopic");
+      Assert.assertTrue(destination instanceof Topic);
+      ConnectionFactory connectionFactory = new ActiveMQConnectionFactory("tcp://localhost:61616");
+      Connection connection = connectionFactory.createConnection();
+      Session session = connection.createSession();
+      MessageProducer producer = session.createProducer(destination);
+      producer.send(session.createMessage());
+      Wait.assertTrue(() -> liveService.locateQueue(SUBSCRIPTION).getMessageCount() == 1, 2000, 100);
+      MessageConsumer consumer = session.createConsumer(destination);
+      connection.start();
+      assertNotNull(consumer.receiveNoWait());
+   }
+
+   @Test
    public void testDynamicTopic() throws NamingException, JMSException {
       Hashtable<String, String> props = new Hashtable<>();
       props.put(Context.INITIAL_CONTEXT_FACTORY, "org.apache.activemq.artemis.jndi.ActiveMQInitialContextFactory");
@@ -492,6 +576,28 @@ public class SimpleJNDIClientTest extends ActiveMQTestBase {
 
       Destination destination = (Destination) ctx.lookup("dynamicTopics/myTopic");
       Assert.assertTrue(destination instanceof Topic);
+   }
+
+   @Test
+   public void testDynamicTopicFQQN() throws Exception {
+      final String SUBSCRIPTION = "mySubsription";
+      Hashtable<String, String> props = new Hashtable<>();
+      props.put(Context.INITIAL_CONTEXT_FACTORY, "org.apache.activemq.artemis.jndi.ActiveMQInitialContextFactory");
+      props.put("topic.myTopic", "myTopic::" + SUBSCRIPTION);
+      Context ctx = new InitialContext(props);
+      liveService.getSecurityStore().setSecurityEnabled(false);
+
+      Destination destination = (Destination) ctx.lookup("dynamicTopics/myTopic::" + SUBSCRIPTION);
+      Assert.assertTrue(destination instanceof Topic);
+      ConnectionFactory connectionFactory = new ActiveMQConnectionFactory("tcp://localhost:61616");
+      Connection connection = connectionFactory.createConnection();
+      Session session = connection.createSession();
+      MessageProducer producer = session.createProducer(destination);
+      producer.send(session.createMessage());
+      Wait.assertTrue(() -> liveService.locateQueue(SUBSCRIPTION).getMessageCount() == 1, 2000, 100);
+      MessageConsumer consumer = session.createConsumer(destination);
+      connection.start();
+      assertNotNull(consumer.receiveNoWait());
    }
 
    @Test

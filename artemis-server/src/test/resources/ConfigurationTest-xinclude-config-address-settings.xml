@@ -18,6 +18,9 @@
    <address-setting match="a1">
       <dead-letter-address>a1.1</dead-letter-address>
       <expiry-address>a1.2</expiry-address>
+      <expiry-delay>1</expiry-delay>
+      <min-expiry-delay>2</min-expiry-delay>
+      <max-expiry-delay>3</max-expiry-delay>
       <redelivery-delay>1</redelivery-delay>
       <redelivery-collision-avoidance-factor>0.5</redelivery-collision-avoidance-factor>
       <max-size-bytes>817M</max-size-bytes>
@@ -43,7 +46,13 @@
    </address-setting>
    <address-setting match="a2">
       <dead-letter-address>a2.1</dead-letter-address>
+      <auto-create-dead-letter-resources>true</auto-create-dead-letter-resources>
+      <dead-letter-queue-prefix></dead-letter-queue-prefix>
+      <dead-letter-queue-suffix>.DLQ</dead-letter-queue-suffix>
       <expiry-address>a2.2</expiry-address>
+      <auto-create-expiry-resources>true</auto-create-expiry-resources>
+      <expiry-queue-prefix></expiry-queue-prefix>
+      <expiry-queue-suffix>.EXP</expiry-queue-suffix>
       <redelivery-delay>5</redelivery-delay>
       <max-size-bytes>932489234928324</max-size-bytes>
       <page-size-bytes>712671626</page-size-bytes>
@@ -68,5 +77,7 @@
       <default-address-routing-type>ANYCAST</default-address-routing-type>
       <default-consumer-window-size>10000</default-consumer-window-size>
       <retroactive-message-count>10</retroactive-message-count>
+      <enable-metrics>false</enable-metrics>
+      <page-store-name>a2.shared</page-store-name>
    </address-setting>
 </address-settings>

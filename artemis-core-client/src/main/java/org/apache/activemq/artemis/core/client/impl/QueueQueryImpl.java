@@ -52,6 +52,8 @@ public class QueueQueryImpl implements ClientSession.QueueQuery {
 
    private final Boolean groupRebalance;
 
+   private final Boolean groupRebalancePauseDispatch;
+
    private final Integer groupBuckets;
 
    private final SimpleString groupFirstKey;
@@ -73,6 +75,8 @@ public class QueueQueryImpl implements ClientSession.QueueQuery {
    private final Long autoDeleteMessageCount;
 
    private final Long ringSize;
+
+   private final Boolean enabled;
 
 
    private final Integer defaultConsumerWindowSize;
@@ -160,7 +164,7 @@ public class QueueQueryImpl implements ClientSession.QueueQuery {
                          final Long autoDeleteDelay,
                          final Long autoDeleteMessageCount,
                          final Integer defaultConsumerWindowSize) {
-      this(durable, temporary, consumerCount, messageCount, filterString, address, name, exists, autoCreateQueues, maxConsumers, autoCreated, purgeOnNoConsumers, routingType, exclusive, groupRebalance, groupBuckets, null, lastValue, lastValueKey, nonDestructive, consumersBeforeDispatch, delayBeforeDispatch, autoDelete, autoDeleteDelay, autoDeleteMessageCount, defaultConsumerWindowSize, null);
+      this(durable, temporary, consumerCount, messageCount, filterString, address, name, exists, autoCreateQueues, maxConsumers, autoCreated, purgeOnNoConsumers, routingType, exclusive, groupRebalance, null, groupBuckets, null, lastValue, lastValueKey, nonDestructive, consumersBeforeDispatch, delayBeforeDispatch, autoDelete, autoDeleteDelay, autoDeleteMessageCount, defaultConsumerWindowSize, null, null);
    }
 
    public QueueQueryImpl(final boolean durable,
@@ -178,6 +182,7 @@ public class QueueQueryImpl implements ClientSession.QueueQuery {
                          final RoutingType routingType,
                          final Boolean exclusive,
                          final Boolean groupRebalance,
+                         final Boolean groupRebalancePauseDispatch,
                          final Integer groupBuckets,
                          final SimpleString groupFirstKey,
                          final Boolean lastValue,
@@ -189,7 +194,8 @@ public class QueueQueryImpl implements ClientSession.QueueQuery {
                          final Long autoDeleteDelay,
                          final Long autoDeleteMessageCount,
                          final Integer defaultConsumerWindowSize,
-                         final Long ringSize) {
+                         final Long ringSize,
+                         final Boolean enabled) {
       this.durable = durable;
       this.temporary = temporary;
       this.consumerCount = consumerCount;
@@ -205,6 +211,7 @@ public class QueueQueryImpl implements ClientSession.QueueQuery {
       this.routingType = routingType;
       this.exclusive = exclusive;
       this.groupRebalance = groupRebalance;
+      this.groupRebalancePauseDispatch = groupRebalancePauseDispatch;
       this.groupBuckets = groupBuckets;
       this.groupFirstKey = groupFirstKey;
       this.lastValue = lastValue;
@@ -217,6 +224,7 @@ public class QueueQueryImpl implements ClientSession.QueueQuery {
       this.autoDeleteMessageCount = autoDeleteMessageCount;
       this.defaultConsumerWindowSize = defaultConsumerWindowSize;
       this.ringSize = ringSize;
+      this.enabled = enabled;
    }
 
    @Override
@@ -325,6 +333,11 @@ public class QueueQueryImpl implements ClientSession.QueueQuery {
    }
 
    @Override
+   public Boolean isGroupRebalancePauseDispatch() {
+      return groupRebalancePauseDispatch;
+   }
+
+   @Override
    public Integer getGroupBuckets() {
       return groupBuckets;
    }
@@ -352,6 +365,11 @@ public class QueueQueryImpl implements ClientSession.QueueQuery {
    @Override
    public Long getRingSize() {
       return ringSize;
+   }
+
+   @Override
+   public Boolean isEnabled() {
+      return enabled;
    }
 }
 

@@ -107,7 +107,7 @@ public class AMQPConnectionCallback implements FailureListener, CloseListener {
       if (isPermittedMechanism(mechanism)) {
          switch (mechanism) {
             case PlainSASL.NAME:
-               result = new PlainSASL(server.getSecurityStore());
+               result = new PlainSASL(server.getSecurityStore(), manager.getSecurityDomain(), connection.getProtocolConnection());
                break;
 
             case AnonymousServerSASL.NAME:
@@ -294,11 +294,11 @@ public class AMQPConnectionCallback implements FailureListener, CloseListener {
       return null;
    }
 
-   public void invokeIncomingInterceptors(AMQPMessage message, ActiveMQProtonRemotingConnection connection) {
-      manager.invokeIncoming(message, connection);
+   public String invokeIncomingInterceptors(AMQPMessage message, ActiveMQProtonRemotingConnection connection) {
+      return manager.invokeIncoming(message, connection);
    }
 
-   public void invokeOutgoingInterceptors(AMQPMessage message, ActiveMQProtonRemotingConnection connection) {
-      manager.invokeOutgoing(message, connection);
+   public String invokeOutgoingInterceptors(AMQPMessage message, ActiveMQProtonRemotingConnection connection) {
+      return manager.invokeOutgoing(message, connection);
    }
 }

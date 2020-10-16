@@ -18,6 +18,7 @@ package org.apache.activemq.artemis.tests.integration.paging;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -199,18 +200,16 @@ public class PagingWithFailoverAndCountersTest extends ActiveMQTestBase {
                         session.commit();
                         if (currentMsg > lastCommit) {
                            lastCommit = currentMsg;
-                        } else {
-                           System.out.println("Ignoring setting lastCommit (" + lastCommit + ") <= currentMSG (" + currentMsg + ")");
                         }
                      }
                      msgcount++;
                   }
 
                   if (msgcount % 100 == 0) {
-                     System.out.println("received " + msgcount + " on " + queueName);
+                     instanceLog.debug("received " + msgcount + " on " + queueName);
                   }
                } catch (Throwable e) {
-                  System.out.println("=====> expected Error at " + currentMsg + " with lastCommit=" + lastCommit);
+                  instanceLog.warn("=====> expected Error at " + currentMsg + " with lastCommit=" + lastCommit);
                }
             }
 
@@ -242,9 +241,7 @@ public class PagingWithFailoverAndCountersTest extends ActiveMQTestBase {
                ClientSessionFactory factory = locator.createSessionFactory();
                ClientSession session = factory.createSession();
 
-               session.createQueue("new-queue", RoutingType.ANYCAST, "new-queue");
-
-               System.out.println("created queue");
+               session.createQueue(new QueueConfiguration("new-queue").setRoutingType(RoutingType.ANYCAST));
 
                session.start();
                ClientProducer prod = session.createProducer("new-queue");
@@ -259,8 +256,6 @@ public class PagingWithFailoverAndCountersTest extends ActiveMQTestBase {
                e.printStackTrace();
                fail(e.getMessage());
             }
-            System.out.println("Started monitoring");
-
             Queue queue2 = inProcessBackup.getServer().locateQueue(SimpleString.toSimpleString("cons2"));
 
             while (isRunning(1)) {
@@ -286,8 +281,8 @@ public class PagingWithFailoverAndCountersTest extends ActiveMQTestBase {
 
       ClientSession session = factory.createSession();
 
-      session.createQueue("myAddress", "DeadConsumer", true);
-      session.createQueue("myAddress", "cons2", true);
+      session.createQueue(new QueueConfiguration("DeadConsumer").setAddress("myAddress"));
+      session.createQueue(new QueueConfiguration("cons2").setAddress("myAddress"));
 
       startBackupInProcess();
 

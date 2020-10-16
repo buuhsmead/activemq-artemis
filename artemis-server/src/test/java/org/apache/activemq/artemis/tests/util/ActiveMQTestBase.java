@@ -66,6 +66,7 @@ import org.apache.activemq.artemis.api.core.ActiveMQExceptionType;
 import org.apache.activemq.artemis.api.core.ICoreMessage;
 import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.Pair;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
@@ -148,6 +149,7 @@ import org.apache.activemq.artemis.utils.Wait;
 import org.apache.activemq.artemis.utils.actors.OrderedExecutorFactory;
 import org.jboss.logging.Logger;
 import org.junit.After;
+import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.ClassRule;
@@ -162,6 +164,12 @@ import org.junit.runner.Description;
  * Base class with basic utilities on starting up a basic server
  */
 public abstract class ActiveMQTestBase extends Assert {
+
+   private static final Logger log = Logger.getLogger(ActiveMQTestBase.class);
+
+   private static final Logger baseLog = Logger.getLogger(ActiveMQTestBase.class);
+
+   protected final Logger instanceLog = Logger.getLogger(this.getClass());
 
    static {
       Env.setTestEnv(true);
@@ -205,7 +213,6 @@ public abstract class ActiveMQTestBase extends Assert {
    private static final String SEND_CALL_NUMBER = "sendCallNumber";
    private static final String OS_TYPE = System.getProperty("os.name").toLowerCase();
    private static final int DEFAULT_UDP_PORT;
-   private static final ActiveMQServerLogger log = ActiveMQServerLogger.LOGGER;
 
    protected static final long WAIT_TIMEOUT = 30000;
 
@@ -239,12 +246,12 @@ public abstract class ActiveMQTestBase extends Assert {
    public TestRule watcher = new TestWatcher() {
       @Override
       protected void starting(Description description) {
-         log.info(String.format("**** start #test %s() ***", description.getMethodName()));
+         baseLog.info(String.format("**** start #test %s() ***", description.getMethodName()));
       }
 
       @Override
       protected void finished(Description description) {
-         log.info(String.format("**** end #test %s() ***", description.getMethodName()));
+         baseLog.info(String.format("**** end #test %s() ***", description.getMethodName()));
       }
    };
 
@@ -264,11 +271,13 @@ public abstract class ActiveMQTestBase extends Assert {
    public ActiveMQTestBase() {
       File parent = new File(TARGET_TMP);
       parent.mkdirs();
-      temporaryFolder = new TemporaryFolder(parent);
+      File subParent = new File(parent, this.getClass().getSimpleName());
+      subParent.mkdirs();
+      temporaryFolder = new TemporaryFolder(subParent);
    }
 
    protected <T> T serialClone(Object object) throws Exception {
-      System.out.println("object::" + object);
+      log.debug("object::" + object);
       ByteArrayOutputStream bout = new ByteArrayOutputStream();
       ObjectOutputStream obOut = new ObjectOutputStream(bout);
       obOut.writeObject(object);
@@ -652,7 +661,6 @@ public abstract class ActiveMQTestBase extends Assert {
     * Verifies whether weak references are released after a few GCs.
     *
     * @param references
-    * @throws InterruptedException
     */
    public static void checkWeakReferences(final WeakReference<?>... references) {
       int i = 0;
@@ -1086,16 +1094,16 @@ public abstract class ActiveMQTestBase extends Assert {
          } else if (prop.getPropertyType() == Double.class || prop.getPropertyType() == Double.TYPE) {
             value = RandomUtil.randomDouble();
          } else {
-            System.out.println("Can't validate property of type " + prop.getPropertyType() + " on " + prop.getName());
+            log.debug("Can't validate property of type " + prop.getPropertyType() + " on " + prop.getName());
             value = null;
          }
 
          if (value != null && prop.getWriteMethod() != null && prop.getReadMethod() == null) {
-            System.out.println("WriteOnly property " + prop.getName() + " on " + pojo.getClass());
+            log.debug("WriteOnly property " + prop.getName() + " on " + pojo.getClass());
          } else if (value != null && prop.getWriteMethod() != null &&
             prop.getReadMethod() != null &&
             !ignoreSet.contains(prop.getName())) {
-            System.out.println("Validating " + prop.getName() + " type = " + prop.getPropertyType());
+            log.debug("Validating " + prop.getName() + " type = " + prop.getPropertyType());
             prop.getWriteMethod().invoke(pojo, value);
 
             Assert.assertEquals("Property " + prop.getName(), value, prop.getReadMethod().invoke(pojo));
@@ -1119,23 +1127,21 @@ public abstract class ActiveMQTestBase extends Assert {
       assertFalse(store.isPaging());
    }
 
-   protected Topology waitForTopology(final ActiveMQServer server, final int nodes) throws Exception {
+   protected static Topology waitForTopology(final ActiveMQServer server, final int nodes) throws Exception {
       return waitForTopology(server, nodes, -1, WAIT_TIMEOUT);
    }
 
-   protected Topology waitForTopology(final ActiveMQServer server,
+   protected static Topology waitForTopology(final ActiveMQServer server,
                                       final int nodes,
                                       final int backups) throws Exception {
       return waitForTopology(server, nodes, backups, WAIT_TIMEOUT);
    }
 
-   protected Topology waitForTopology(final ActiveMQServer server,
+   protected static Topology waitForTopology(final ActiveMQServer server,
                                       final int liveNodes,
                                       final int backupNodes,
                                       final long timeout) throws Exception {
       logger.debug("waiting for " + liveNodes + " on the topology for server = " + server);
-
-      long start = System.currentTimeMillis();
 
       Set<ClusterConnection> ccs = server.getClusterManager().getClusterConnections();
 
@@ -1144,6 +1150,15 @@ public abstract class ActiveMQTestBase extends Assert {
       }
 
       Topology topology = server.getClusterManager().getDefaultConnection(null).getTopology();
+
+      return waitForTopology(topology, timeout, liveNodes, backupNodes);
+   }
+
+   protected static Topology waitForTopology(Topology topology,
+                                    long timeout,
+                                    int liveNodes,
+                                    int backupNodes) throws Exception {
+      final long start = System.currentTimeMillis();
 
       int liveNodesCount = 0;
 
@@ -1298,7 +1313,7 @@ public abstract class ActiveMQTestBase extends Assert {
       }
 
       if (!server.isStarted()) {
-         log.info(threadDump("Server didn't start"));
+         baseLog.info(threadDump("Server didn't start"));
          fail("server didn't start: " + server);
       }
 
@@ -1320,7 +1335,7 @@ public abstract class ActiveMQTestBase extends Assert {
       }
 
       if (server.isStarted()) {
-         log.info(threadDump("Server didn't start"));
+         baseLog.info(threadDump("Server didn't start"));
          fail("Server didn't start: " + server);
       }
    }
@@ -1579,7 +1594,7 @@ public abstract class ActiveMQTestBase extends Assert {
       ClientSessionFactory sf = locator.createSessionFactory();
       ClientSession session = sf.createSession();
       try {
-         session.createQueue(address, queue);
+         session.createQueue(new QueueConfiguration(queue).setAddress(address));
       } finally {
          session.close();
          closeSessionFactory(sf);
@@ -1646,7 +1661,7 @@ public abstract class ActiveMQTestBase extends Assert {
     * @param session
     * @param producer
     * @param numMessages
-    * @throws Exception
+    * @throws ActiveMQException
     */
    public final void sendMessages(ClientSession session,
                                   ClientProducer producer,
@@ -1819,9 +1834,6 @@ public abstract class ActiveMQTestBase extends Assert {
       }
 
       AtomicInteger getType(byte key) {
-         if (key == 0) {
-            System.out.println("huh?");
-         }
          Integer ikey = (int) key;
          AtomicInteger value = recordsType.get(ikey);
          if (value == null) {
@@ -1937,30 +1949,20 @@ public abstract class ActiveMQTestBase extends Assert {
          ")" +
          ")";
 
-      log.error(msg);
+      baseLog.error(msg);
       return false;
    }
 
+   protected int getNumberOfFiles(File directory) {
+      return directory.listFiles().length;
+   }
    /**
     * Deleting a file on LargeDir is an asynchronous process. We need to keep looking for a while if
     * the file hasn't been deleted yet.
     */
    protected void validateNoFilesOnLargeDir(final String directory, final int expect) throws Exception {
       File largeMessagesFileDir = new File(directory);
-
-      // Deleting the file is async... we keep looking for a period of the time until the file is really gone
-      long timeout = System.currentTimeMillis() + 5000;
-      while (timeout > System.currentTimeMillis() && largeMessagesFileDir.listFiles().length != expect) {
-         Thread.sleep(100);
-      }
-
-      if (expect != largeMessagesFileDir.listFiles().length) {
-         for (File file : largeMessagesFileDir.listFiles()) {
-            System.out.println("File " + file + " still on ");
-         }
-      }
-
-      Assert.assertEquals(expect, largeMessagesFileDir.listFiles().length);
+      Wait.assertEquals(expect, () -> getNumberOfFiles(largeMessagesFileDir));
    }
 
    /**
@@ -2037,18 +2039,20 @@ public abstract class ActiveMQTestBase extends Assert {
       }
    }
 
+   @AfterClass
+   public static void checkLibaio() throws Throwable {
+      if (!Wait.waitFor(() -> LibaioContext.getTotalMaxIO() == 0)) {
+         Assert.fail("test did not close all its files " + LibaioContext.getTotalMaxIO());
+      }
+   }
+
    private void checkFilesUsage() throws Exception {
       int invmSize = InVMRegistry.instance.size();
       if (invmSize > 0) {
          InVMRegistry.instance.clear();
-         log.info(threadDump("Thread dump"));
+         baseLog.info(threadDump("Thread dump"));
          fail("invm registry still had acceptors registered");
       }
-
-      if (!Wait.waitFor(() -> LibaioContext.getTotalMaxIO() == 0)) {
-         Assert.fail("test did not close all its files " + LibaioContext.getTotalMaxIO());
-      }
-
    }
 
    private void cleanupPools() {
@@ -2058,14 +2062,14 @@ public abstract class ActiveMQTestBase extends Assert {
       try {
          ServerLocatorImpl.clearThreadPools();
       } catch (Throwable e) {
-         log.info(threadDump(e.getMessage()));
+         baseLog.info(threadDump(e.getMessage()));
          System.err.println(threadDump(e.getMessage()));
       }
 
       try {
          NettyConnector.clearThreadPools();
       } catch (Exception e) {
-         log.info(threadDump(e.getMessage()));
+         baseLog.info(threadDump(e.getMessage()));
          System.err.println(threadDump(e.getMessage()));
       }
    }
@@ -2134,7 +2138,7 @@ public abstract class ActiveMQTestBase extends Assert {
    protected MessageReference generateReference(final Queue queue, final long id) {
       Message message = generateMessage(id);
 
-      return MessageReference.Factory.createReference(message, queue);
+      return MessageReference.Factory.createReference(message, queue, null);
    }
 
    protected int calculateRecordSize(final int size, final int alignment) {

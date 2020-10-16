@@ -106,12 +106,6 @@ public interface QueueControl {
    long getMessageCount();
 
    /**
-    * Returns the rate of writing messages to the queue.
-    */
-   @Attribute(desc = "rate of writing messages to the queue currently (based on default window function)")
-   float getProducedRate();
-
-   /**
     * Returns the persistent size of all messages currently in this queue. The persistent size of a message
     * is the amount of space the message would take up on disk which is used to track how much data there
     * is to consume on this queue
@@ -257,8 +251,26 @@ public interface QueueControl {
    /**
     *
     */
-   @Attribute(desc = "delete this queue when the last consumer disconnects")
+   @Attribute(desc = "purge this queue when the last consumer disconnects")
    boolean isPurgeOnNoConsumers();
+
+   /**
+    *
+    */
+   @Attribute(desc = "if the queue is enabled, default it is enabled, when disabled messages will not be routed to the queue")
+   boolean isEnabled();
+
+   /**
+    * Enables the queue. Messages are now routed to this queue.
+    */
+   @Operation(desc = "Enables routing of messages to the Queue", impact = MBeanOperationInfo.ACTION)
+   void enable() throws Exception;
+
+   /**
+    * Enables the queue. Messages are not routed to this queue.
+    */
+   @Operation(desc = "Disables routing of messages to the Queue", impact = MBeanOperationInfo.ACTION)
+   void disable() throws Exception;
 
    /**
     *
@@ -595,6 +607,7 @@ public interface QueueControl {
    @Operation(desc = "Resumes delivery of queued messages and gets the queue out of paused state. It will also affected the state of a persisted pause.", impact = MBeanOperationInfo.ACTION)
    void resume() throws Exception;
 
+
    @Operation(desc = "List all the existent consumers on the Queue")
    String listConsumersAsJSON() throws Exception;
 
@@ -613,6 +626,11 @@ public interface QueueControl {
    @Operation(desc = "Browse Messages", impact = MBeanOperationInfo.ACTION)
    CompositeData[] browse(@Parameter(name = "page", desc = "Current page") int page,
                           @Parameter(name = "pageSize", desc = "Page size") int pageSize) throws Exception;
+
+   @Operation(desc = "Browse Messages", impact = MBeanOperationInfo.ACTION)
+   CompositeData[] browse(@Parameter(name = "page", desc = "Current page") int page,
+                          @Parameter(name = "pageSize", desc = "Page size") int pageSize,
+                          @Parameter(name = "filter", desc = "filter") String filter) throws Exception;
 
    /**
     * Resets the MessagesAdded property
@@ -676,4 +694,33 @@ public interface QueueControl {
    @Attribute(desc = "Get the ring size")
    long getRingSize();
 
+   /**
+    * Returns whether the groups of this queue are automatically rebalanced.
+    */
+   @Attribute(desc = "whether the groups of this queue are automatically rebalanced")
+   boolean isGroupRebalance();
+
+   /**
+    * Returns whether the dispatch is paused when groups of this queue are automatically rebalanced.
+    */
+   @Attribute(desc = "whether the dispatch is paused when groups of this queue are automatically rebalanced")
+   boolean isGroupRebalancePauseDispatch();
+
+   /**
+    * Will return the group buckets.
+    */
+   @Attribute(desc = "Get the group buckets")
+   int getGroupBuckets();
+
+   /**
+    * Will return the header key to notify a consumer of a group change.
+    */
+   @Attribute(desc = "Get the header key to notify a consumer of a group change")
+   String getGroupFirstKey();
+
+   /**
+    * Will return the number of messages stuck in prepared transactions
+    */
+   @Attribute(desc = "return how many messages are stuck in prepared transactions")
+   int getPreparedTransactionMessageCount();
 }

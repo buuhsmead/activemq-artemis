@@ -64,7 +64,7 @@ public class AddressControlUsingCoreTest extends AddressControlTest {
          }
 
          @Override
-         public long getAddressSize() throws Exception {
+         public long getAddressSize() {
             return (long) proxy.retrieveAttributeValue("addressSize");
          }
 
@@ -74,12 +74,22 @@ public class AddressControlUsingCoreTest extends AddressControlTest {
          }
 
          @Override
+         public String[] getRemoteQueueNames() throws Exception {
+            return (String[]) proxy.retrieveAttributeValue("remoteQueueNames", String.class);
+         }
+
+         @Override
+         public String[] getAllQueueNames() throws Exception {
+            return (String[]) proxy.retrieveAttributeValue("allQueueNames", String.class);
+         }
+
+         @Override
          public String[] getQueueNames() throws Exception {
             return (String[]) proxy.retrieveAttributeValue("queueNames", String.class);
          }
 
          @Override
-         public int getNumberOfPages() throws Exception {
+         public int getNumberOfPages() {
             return (int) proxy.retrieveAttributeValue("numberOfPages", Integer.class);
          }
 
@@ -136,6 +146,16 @@ public class AddressControlUsingCoreTest extends AddressControlTest {
          @Override
          public boolean isRetroactiveResource() {
             return (boolean) proxy.retrieveAttributeValue("retroactiveResource");
+         }
+
+         @Override
+         public long getCurrentDuplicateIdCacheSize() {
+            return (long) proxy.retrieveAttributeValue("currentDuplicateIdCacheSize");
+         }
+
+         @Override
+         public boolean clearDuplicateIdCache() throws Exception {
+            return (boolean) proxy.invokeOperation("clearDuplicateIdCache");
          }
 
          @Override

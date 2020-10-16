@@ -27,7 +27,7 @@ import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ActiveMQPropertyConversionException;
 import org.apache.activemq.artemis.api.core.ICoreMessage;
 import org.apache.activemq.artemis.api.core.Message;
-import org.apache.activemq.artemis.api.core.RefCountMessage;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -37,21 +37,18 @@ import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.MessageHandler;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.client.impl.ClientSessionInternal;
-import org.apache.activemq.artemis.core.message.impl.CoreMessageObjectPools;
+import org.apache.activemq.artemis.core.persistence.CoreMessageObjectPools;
 import org.apache.activemq.artemis.core.persistence.Persister;
 import org.apache.activemq.artemis.core.protocol.core.impl.ActiveMQConsumerContext;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.spi.core.remoting.ConsumerContext;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.utils.UUID;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class AcknowledgeTest extends ActiveMQTestBase {
-
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
 
    public final SimpleString addressA = new SimpleString("addressA");
 
@@ -69,7 +66,7 @@ public class AcknowledgeTest extends ActiveMQTestBase {
       ClientSessionFactory cf = createSessionFactory(locator);
       ClientSession sendSession = cf.createSession(false, true, true);
       ClientSession session = cf.createSession(false, true, true);
-      sendSession.createQueue(addressA, queueA, false);
+      sendSession.createQueue(new QueueConfiguration(queueA).setAddress(addressA).setDurable(false));
       ClientProducer cp = sendSession.createProducer(addressA);
       ClientConsumer cc = session.createConsumer(queueA);
       int numMessages = 100;
@@ -99,7 +96,7 @@ public class AcknowledgeTest extends ActiveMQTestBase {
       ClientSessionFactory cf = createSessionFactory(locator);
       ClientSession sendSession = cf.createSession(false, true, true);
       ClientSession session = cf.createSession(false, true, true);
-      sendSession.createQueue(addressA, queueA, false);
+      sendSession.createQueue(new QueueConfiguration(queueA).setAddress(addressA).setDurable(false));
       ClientProducer cp = sendSession.createProducer(addressA);
       ClientConsumer cc = session.createConsumer(queueA);
       int numMessages = 3;
@@ -108,7 +105,7 @@ public class AcknowledgeTest extends ActiveMQTestBase {
       }
 
       Thread.sleep(500);
-      log.info("woke up");
+      instanceLog.debug("woke up");
 
       final CountDownLatch latch = new CountDownLatch(numMessages);
       session.start();
@@ -117,7 +114,7 @@ public class AcknowledgeTest extends ActiveMQTestBase {
 
          @Override
          public void onMessage(final ClientMessage message) {
-            log.info("Got message " + c++);
+            instanceLog.debug("Got message " + c++);
             latch.countDown();
          }
       });
@@ -136,7 +133,7 @@ public class AcknowledgeTest extends ActiveMQTestBase {
       ClientSessionFactory cf = createSessionFactory(locator);
       ClientSession sendSession = cf.createSession(false, true, true);
       final ClientSession session = cf.createSession(false, true, true);
-      sendSession.createQueue(addressA, queueA, false);
+      sendSession.createQueue(new QueueConfiguration(queueA).setAddress(addressA).setDurable(false));
       ClientProducer cp = sendSession.createProducer(addressA);
       ClientConsumer cc = session.createConsumer(queueA);
       int numMessages = 100;
@@ -187,7 +184,7 @@ public class AcknowledgeTest extends ActiveMQTestBase {
 
       sessionConsumer.start();
 
-      sessionConsumer.createQueue(addressA, queueA, true);
+      sessionConsumer.createQueue(new QueueConfiguration(queueA).setAddress(addressA));
 
       ClientConsumer consumer = sessionConsumer.createConsumer(queueA);
 
@@ -250,7 +247,7 @@ public class AcknowledgeTest extends ActiveMQTestBase {
       ClientSessionFactory cf = createSessionFactory(locator);
       ClientSession sendSession = cf.createSession(false, true, true);
       final ClientSession session = cf.createSession(false, true, true);
-      sendSession.createQueue(addressA, queueA, false);
+      sendSession.createQueue(new QueueConfiguration(queueA).setAddress(addressA).setDurable(false));
       ClientProducer cp = sendSession.createProducer(addressA);
       ClientConsumer cc = session.createConsumer(queueA);
       int numMessages = 100;
@@ -337,7 +334,7 @@ public class AcknowledgeTest extends ActiveMQTestBase {
       }
    }
 
-   class FakeMessageWithID extends RefCountMessage {
+   class FakeMessageWithID implements Message {
 
       final long id;
 
@@ -367,6 +364,11 @@ public class AcknowledgeTest extends ActiveMQTestBase {
       }
 
       @Override
+      public int getDurableCount() {
+         return 0;
+      }
+
+      @Override
       public void persist(ActiveMQBuffer targetRecord) {
       }
 
@@ -376,7 +378,7 @@ public class AcknowledgeTest extends ActiveMQTestBase {
       }
 
       @Override
-      public void reloadPersistence(ActiveMQBuffer record) {
+      public void reloadPersistence(ActiveMQBuffer record, CoreMessageObjectPools pools) {
 
       }
 
@@ -435,22 +437,37 @@ public class AcknowledgeTest extends ActiveMQTestBase {
       }
 
       @Override
-      public int incrementRefCount() throws Exception {
+      public int getUsage() {
          return 0;
       }
 
       @Override
-      public int decrementRefCount() throws Exception {
+      public int usageUp() {
          return 0;
       }
 
       @Override
-      public int incrementDurableRefCount() {
+      public int usageDown() {
          return 0;
       }
 
       @Override
-      public int decrementDurableRefCount() {
+      public int refUp() {
+         return 0;
+      }
+
+      @Override
+      public int refDown() {
+         return 0;
+      }
+
+      @Override
+      public int durableUp() {
+         return 0;
+      }
+
+      @Override
+      public int durableDown() {
          return 0;
       }
 

@@ -24,13 +24,9 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
@@ -44,6 +40,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.Predicate;
 
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffers;
@@ -82,6 +79,8 @@ import org.apache.activemq.artemis.utils.actors.OrderedExecutorFactory;
 import org.apache.activemq.artemis.utils.collections.ConcurrentHashSet;
 import org.apache.activemq.artemis.utils.collections.ConcurrentLongHashMap;
 import org.apache.activemq.artemis.utils.collections.ConcurrentLongHashSet;
+import org.apache.activemq.artemis.utils.collections.LongHashSet;
+import org.apache.activemq.artemis.utils.collections.SparseArrayLinkedList;
 import org.jboss.logging.Logger;
 
 import static org.apache.activemq.artemis.core.journal.impl.Reclaimer.scan;
@@ -885,7 +884,7 @@ public class JournalImpl extends JournalBase implements TestableJournal, Journal
                                   final IOCompletion callback) throws Exception {
       checkJournalIsLoaded();
       lineUpContext(callback);
-      checkKnownRecordID(id);
+      checkKnownRecordID(id, true);
 
       if (logger.isTraceEnabled()) {
          logger.trace("scheduling appendUpdateRecord::id=" + id +
@@ -893,8 +892,47 @@ public class JournalImpl extends JournalBase implements TestableJournal, Journal
                          recordType);
       }
 
-      final SimpleFuture<Boolean> result = newSyncAndCallbackResult(sync, callback);
+      internalAppendUpdateRecord(id, recordType, persister, record, sync, callback);
+   }
 
+
+   @Override
+   public boolean tryAppendUpdateRecord(final long id,
+                                  final byte recordType,
+                                  final Persister persister,
+                                  final Object record,
+                                  final boolean sync,
+                                  final IOCompletion callback) throws Exception {
+      checkJournalIsLoaded();
+      lineUpContext(callback);
+
+      if (!checkKnownRecordID(id, false)) {
+         if (callback != null) {
+            callback.done();
+         }
+         return false;
+      }
+
+      if (logger.isTraceEnabled()) {
+         logger.trace("scheduling appendUpdateRecord::id=" + id +
+                         ", userRecordType=" +
+                         recordType);
+      }
+
+
+      internalAppendUpdateRecord(id, recordType, persister, record, sync, callback);
+
+      return true;
+   }
+
+
+   private void internalAppendUpdateRecord(long id,
+                                           byte recordType,
+                                           Persister persister,
+                                           Object record,
+                                           boolean sync,
+                                           IOCompletion callback) throws InterruptedException, java.util.concurrent.ExecutionException {
+      final SimpleFuture<Boolean> result = newSyncAndCallbackResult(sync, callback);
       appendExecutor.execute(new Runnable() {
          @Override
          public void run() {
@@ -947,8 +985,37 @@ public class JournalImpl extends JournalBase implements TestableJournal, Journal
 
       checkJournalIsLoaded();
       lineUpContext(callback);
-      checkKnownRecordID(id);
+      checkKnownRecordID(id, true);
 
+      internalAppendDeleteRecord(id, sync, callback);
+      return;
+   }
+
+
+   @Override
+   public boolean tryAppendDeleteRecord(final long id, final boolean sync, final IOCompletion callback) throws Exception {
+
+      if (logger.isTraceEnabled()) {
+         logger.trace("scheduling appendDeleteRecord::id=" + id);
+      }
+
+
+      checkJournalIsLoaded();
+      lineUpContext(callback);
+      if (!checkKnownRecordID(id, false)) {
+         if (callback != null) {
+            callback.done();
+         }
+         return false;
+      }
+
+      internalAppendDeleteRecord(id, sync, callback);
+      return true;
+   }
+
+   private void internalAppendDeleteRecord(long id,
+                                           boolean sync,
+                                           IOCompletion callback) throws InterruptedException, java.util.concurrent.ExecutionException {
       final SimpleFuture<Boolean> result = newSyncAndCallbackResult(sync, callback);
       appendExecutor.execute(new Runnable() {
          @Override
@@ -1030,6 +1097,8 @@ public class JournalImpl extends JournalBase implements TestableJournal, Journal
                   tx.checkErrorCondition();
                }
                JournalInternalRecord addRecord = new JournalAddRecordTX(true, txID, id, recordType, persister, record);
+               // we need to calculate the encodeSize here, as it may use caches that are eliminated once the record is written
+               int encodeSize = addRecord.getEncodeSize();
                JournalFile usedFile = appendRecord(addRecord, false, false, tx, null);
 
                if (logger.isTraceEnabled()) {
@@ -1043,7 +1112,7 @@ public class JournalImpl extends JournalBase implements TestableJournal, Journal
                                   usedFile);
                }
 
-               tx.addPositive(usedFile, id, addRecord.getEncodeSize());
+               tx.addPositive(usedFile, id, encodeSize);
             } catch (Throwable e) {
                logger.error("appendAddRecordTransactional:" + e, e);
                setErrorCondition(null, tx, e);
@@ -1054,9 +1123,9 @@ public class JournalImpl extends JournalBase implements TestableJournal, Journal
       });
    }
 
-   private void checkKnownRecordID(final long id) throws Exception {
+   private boolean checkKnownRecordID(final long id, boolean strict) throws Exception {
       if (records.containsKey(id) || pendingRecords.contains(id) || (compactor != null && compactor.containsRecord(id))) {
-         return;
+         return true;
       }
 
       final SimpleFuture<Boolean> known = new SimpleFutureImpl<>();
@@ -1078,7 +1147,12 @@ public class JournalImpl extends JournalBase implements TestableJournal, Journal
       });
 
       if (!known.get()) {
-         throw new IllegalStateException("Cannot find add info " + id + " on compactor or current records");
+         if (strict) {
+            throw new IllegalStateException("Cannot find add info " + id + " on compactor or current records");
+         }
+         return false;
+      } else {
+         return true;
       }
    }
 
@@ -1441,17 +1515,35 @@ public class JournalImpl extends JournalBase implements TestableJournal, Journal
       return load(DummyLoader.INSTANCE, true, syncState);
    }
 
+   @Override
+   public JournalLoadInformation load(List<RecordInfo> committedRecords,
+                                      List<PreparedTransactionInfo> preparedTransactions,
+                                      TransactionFailureCallback transactionFailure,
+                                      boolean fixBadTx) throws Exception {
+      // suboptimal method: it would perform an additional copy!
+      // Implementors should override this to provide their optimized version
+      final SparseArrayLinkedList<RecordInfo> records = new SparseArrayLinkedList<>();
+      final JournalLoadInformation info = load(records, preparedTransactions, transactionFailure, fixBadTx);
+      if (committedRecords instanceof ArrayList) {
+         final long survivedRecordsCount = records.size();
+         if (survivedRecordsCount <= Integer.MAX_VALUE) {
+            ((ArrayList) committedRecords).ensureCapacity((int) survivedRecordsCount);
+         }
+      }
+      records.clear(committedRecords::add);
+      return info;
+   }
+
    /**
     * @see JournalImpl#load(LoaderCallback)
     */
    @Override
-   public synchronized JournalLoadInformation load(final List<RecordInfo> committedRecords,
+   public synchronized JournalLoadInformation load(final SparseArrayLinkedList<RecordInfo> committedRecords,
                                                    final List<PreparedTransactionInfo> preparedTransactions,
                                                    final TransactionFailureCallback failureCallback,
                                                    final boolean fixBadTX) throws Exception {
-      final Set<Long> recordsToDelete = new HashSet<>();
-      // ArrayList was taking too long to delete elements on checkDeleteSize
-      final List<RecordInfo> records = new LinkedList<>();
+      final LongHashSet recordsToDelete = new LongHashSet(1024);
+      final Predicate<RecordInfo> toDeleteFilter = recordInfo -> recordsToDelete.contains(recordInfo.id);
 
       final int DELETE_FLUSH = 20000;
 
@@ -1461,18 +1553,15 @@ public class JournalImpl extends JournalBase implements TestableJournal, Journal
          private void checkDeleteSize() {
             // HORNETQ-482 - Flush deletes only if memory is critical
             if (recordsToDelete.size() > DELETE_FLUSH && runtime.freeMemory() < runtime.maxMemory() * 0.2) {
-               logger.debug("Flushing deletes during loading, deleteCount = " + recordsToDelete.size());
+               if (logger.isDebugEnabled()) {
+                  logger.debugf("Flushing deletes during loading, deleteCount = %d", recordsToDelete.size());
+               }
                // Clean up when the list is too large, or it won't be possible to load large sets of files
                // Done as part of JBMESSAGING-1678
-               Iterator<RecordInfo> iter = records.iterator();
-               while (iter.hasNext()) {
-                  RecordInfo record = iter.next();
-
-                  if (recordsToDelete.contains(record.id)) {
-                     iter.remove();
-                  }
+               final long removed = committedRecords.remove(toDeleteFilter);
+               if (logger.isDebugEnabled()) {
+                  logger.debugf("Removed records during loading = %d", removed);
                }
-
                recordsToDelete.clear();
 
                logger.debug("flush delete done");
@@ -1487,13 +1576,13 @@ public class JournalImpl extends JournalBase implements TestableJournal, Journal
 
          @Override
          public void addRecord(final RecordInfo info) {
-            records.add(info);
+            committedRecords.add(info);
             checkDeleteSize();
          }
 
          @Override
          public void updateRecord(final RecordInfo info) {
-            records.add(info);
+            committedRecords.add(info);
             checkDeleteSize();
          }
 
@@ -1513,12 +1602,9 @@ public class JournalImpl extends JournalBase implements TestableJournal, Journal
          }
       }, fixBadTX, null);
 
-      for (RecordInfo record : records) {
-         if (!recordsToDelete.contains(record.id)) {
-            committedRecords.add(record);
-         }
+      if (!recordsToDelete.isEmpty()) {
+         committedRecords.remove(toDeleteFilter);
       }
-
       return info;
    }
 
@@ -1760,7 +1846,8 @@ public class JournalImpl extends JournalBase implements TestableJournal, Journal
    /**
     * <p>Load data accordingly to the record layouts</p>
     * <p>Basic record layout:</p>
-    * <table border=1 summary="">
+    * <table border=1>
+    * <caption></caption>
     * <tr><td><b>Field Name</b></td><td><b>Size</b></td></tr>
     * <tr><td>RecordType</td><td>Byte (1)</td></tr>
     * <tr><td>FileID</td><td>Integer (4 bytes)</td></tr>
@@ -1774,7 +1861,8 @@ public class JournalImpl extends JournalBase implements TestableJournal, Journal
     * </table>
     * <p> The check-size is used to validate if the record is valid and complete </p>
     * <p>Commit/Prepare record layout:</p>
-    * <table border=1 summary="">
+    * <table border=1>
+    * <caption></caption>
     * <tr><td><b>Field Name</b></td><td><b>Size</b></td></tr>
     * <tr><td>RecordType</td><td>Byte (1)</td></tr>
     * <tr><td>FileID</td><td>Integer (4 bytes)</td></tr>

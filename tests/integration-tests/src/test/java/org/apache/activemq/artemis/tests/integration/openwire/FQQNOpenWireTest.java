@@ -31,6 +31,7 @@ import java.util.Arrays;
 import java.util.Collection;
 
 import org.apache.activemq.ActiveMQConnectionFactory;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
@@ -106,7 +107,7 @@ public class FQQNOpenWireTest extends OpenWireTestBase {
 
          Bindings bindings = server.getPostOffice().getBindingsForAddress(multicastAddress);
          for (Binding b : bindings.getBindings()) {
-            System.out.println("checking binidng " + b.getUniqueName() + " " + ((LocalQueueBinding)b).getQueue().getDeliveringMessages());
+            instanceLog.debug("checking binidng " + b.getUniqueName() + " " + ((LocalQueueBinding)b).getQueue().getDeliveringMessages());
             SimpleString qName = b.getUniqueName();
             //do FQQN query
             QueueQueryResult result = server.queueQuery(CompositeAddress.toFullyQualified(multicastAddress, qName));
@@ -123,12 +124,53 @@ public class FQQNOpenWireTest extends OpenWireTestBase {
    }
 
    @Test
+   public void testTopicFQQNSendAndConsumeAutoCreate() throws Exception {
+      internalTopicFQQNSendAndConsume(true);
+   }
+
+   @Test
+   public void testTopicFQQNSendAndConsumeManualCreate() throws Exception {
+      internalTopicFQQNSendAndConsume(false);
+   }
+
+   private void internalTopicFQQNSendAndConsume(boolean autocreate) throws Exception {
+      if (autocreate) {
+         server.getAddressSettingsRepository().addMatch("#", new AddressSettings().setAutoCreateAddresses(true).setAutoCreateQueues(true));
+      } else {
+         server.createQueue(new QueueConfiguration(anycastQ1).setAddress(multicastAddress).setDurable(false));
+      }
+
+      try (Connection connection = factory.createConnection()) {
+         connection.setClientID("FQQNconn");
+         connection.start();
+         Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
+         Topic topic = session.createTopic(CompositeAddress.toFullyQualified(multicastAddress, anycastQ1).toString());
+
+         MessageConsumer consumer1 = session.createConsumer(topic);
+         MessageConsumer consumer2 = session.createConsumer(topic);
+         MessageConsumer consumer3 = session.createConsumer(topic);
+
+         MessageProducer producer = session.createProducer(topic);
+
+         producer.send(session.createMessage());
+
+         //only 1 consumer receives the message as they're all connected to the same FQQN
+         Message m = consumer1.receive(2000);
+         assertNotNull(m);
+         m = consumer2.receiveNoWait();
+         assertNull(m);
+         m = consumer3.receiveNoWait();
+         assertNull(m);
+      }
+   }
+
+   @Test
    public void testQueueConsumerReceiveTopicUsingFQQN() throws Exception {
 
       SimpleString queueName1 = new SimpleString("sub.queue1");
       SimpleString queueName2 = new SimpleString("sub.queue2");
-      server.createQueue(multicastAddress, RoutingType.MULTICAST, queueName1, null, false, false);
-      server.createQueue(multicastAddress, RoutingType.MULTICAST, queueName2, null, false, false);
+      server.createQueue(new QueueConfiguration(queueName1).setAddress(multicastAddress).setDurable(false));
+      server.createQueue(new QueueConfiguration(queueName2).setAddress(multicastAddress).setDurable(false));
       Connection connection = factory.createConnection();
 
       try {
@@ -191,7 +233,6 @@ public class FQQNOpenWireTest extends OpenWireTestBase {
          producer3.send(session.createMessage());
          assertTrue(Wait.waitFor(() -> server.locateQueue(anycastQ3).getMessageCount() == 5, 2000, 200));
 
-         System.out.println("Queue is: " + q1);
          MessageConsumer consumer1 = session.createConsumer(q1);
          MessageConsumer consumer2 = session.createConsumer(q2);
          MessageConsumer consumer3 = session.createConsumer(q3);
@@ -236,7 +277,7 @@ public class FQQNOpenWireTest extends OpenWireTestBase {
       Connection exConn = null;
 
       SimpleString durableQueue = new SimpleString("myqueue");
-      this.server.createQueue(durableQueue, RoutingType.ANYCAST, durableQueue, null, true, false, -1, false, true);
+      this.server.createQueue(new QueueConfiguration(durableQueue).setRoutingType(RoutingType.ANYCAST));
 
       try {
          ActiveMQConnectionFactory exFact = new ActiveMQConnectionFactory();
@@ -274,7 +315,7 @@ public class FQQNOpenWireTest extends OpenWireTestBase {
       Connection exConn = null;
 
       SimpleString durableQueue = new SimpleString("myqueue");
-      this.server.createQueue(durableQueue, RoutingType.ANYCAST, durableQueue, null, true, false, -1, false, true);
+      this.server.createQueue(new QueueConfiguration(durableQueue).setRoutingType(RoutingType.ANYCAST));
 
       try {
          ActiveMQConnectionFactory exFact = new ActiveMQConnectionFactory();
@@ -325,7 +366,7 @@ public class FQQNOpenWireTest extends OpenWireTestBase {
       SimpleString subscriptionQ = new SimpleString("Consumer.A");
 
       this.server.addAddressInfo(new AddressInfo(topic, RoutingType.MULTICAST));
-      this.server.createQueue(topic, RoutingType.MULTICAST, subscriptionQ, null, true, false, -1, false, true);
+      this.server.createQueue(new QueueConfiguration(subscriptionQ).setAddress(topic));
 
       try {
          ActiveMQConnectionFactory exFact = new ActiveMQConnectionFactory();

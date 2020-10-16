@@ -25,6 +25,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
@@ -153,6 +154,10 @@ public class AmqpClientTestSupport extends AmqpTestSupport {
    }
 
    protected ActiveMQServer createServer(int port) throws Exception {
+      return createServer(port, true);
+   }
+
+   protected ActiveMQServer createServer(int port, boolean start) throws Exception {
 
       final ActiveMQServer server = this.createServer(true, true);
 
@@ -162,8 +167,15 @@ public class AmqpClientTestSupport extends AmqpTestSupport {
       server.getConfiguration().setJournalDirectory(server.getConfiguration().getJournalDirectory() + port);
       server.getConfiguration().setBindingsDirectory(server.getConfiguration().getBindingsDirectory() + port);
       server.getConfiguration().setPagingDirectory(server.getConfiguration().getPagingDirectory() + port);
+      if (port == AMQP_PORT) {
+         // we use the default large directory if the default port
+         // as some tests will assert number of files
+         server.getConfiguration().setLargeMessagesDirectory(server.getConfiguration().getLargeMessagesDirectory());
+      } else {
+         server.getConfiguration().setLargeMessagesDirectory(server.getConfiguration().getLargeMessagesDirectory() + port);
+      }
       server.getConfiguration().setJMXManagementEnabled(true);
-      server.getConfiguration().setMessageExpiryScanPeriod(5000);
+      server.getConfiguration().setMessageExpiryScanPeriod(100);
       server.setMBeanServer(mBeanServer);
 
       // Add any additional Acceptors needed for tests
@@ -178,10 +190,13 @@ public class AmqpClientTestSupport extends AmqpTestSupport {
       // Add extra configuration
       addConfiguration(server);
 
-      server.start();
+      if (start) {
+         server.start();
 
-      // Prepare all addresses and queues for client tests.
-      createAddressAndQueues(server);
+         // Prepare all addresses and queues for client tests.
+         createAddressAndQueues(server);
+      }
+
 
       return server;
    }
@@ -227,20 +242,20 @@ public class AmqpClientTestSupport extends AmqpTestSupport {
    protected void createAddressAndQueues(ActiveMQServer server) throws Exception {
       // Default Queue
       server.addAddressInfo(new AddressInfo(SimpleString.toSimpleString(getQueueName()), RoutingType.ANYCAST));
-      server.createQueue(SimpleString.toSimpleString(getQueueName()), RoutingType.ANYCAST, SimpleString.toSimpleString(getQueueName()), null, true, false, -1, false, true);
+      server.createQueue(new QueueConfiguration(getQueueName()).setRoutingType(RoutingType.ANYCAST));
 
       // Default DLQ
       server.addAddressInfo(new AddressInfo(SimpleString.toSimpleString(getDeadLetterAddress()), RoutingType.ANYCAST));
-      server.createQueue(SimpleString.toSimpleString(getDeadLetterAddress()), RoutingType.ANYCAST, SimpleString.toSimpleString(getDeadLetterAddress()), null, true, false, -1, false, true);
+      server.createQueue(new QueueConfiguration(getDeadLetterAddress()).setRoutingType(RoutingType.ANYCAST));
 
       // Default Topic
       server.addAddressInfo(new AddressInfo(SimpleString.toSimpleString(getTopicName()), RoutingType.MULTICAST));
-      server.createQueue(SimpleString.toSimpleString(getTopicName()), RoutingType.MULTICAST, SimpleString.toSimpleString(getTopicName()), null, true, false, -1, false, true);
+      server.createQueue(new QueueConfiguration(getTopicName()));
 
       // Additional Test Queues
       for (int i = 0; i < getPrecreatedQueueSize(); ++i) {
          server.addAddressInfo(new AddressInfo(SimpleString.toSimpleString(getQueueName(i)), RoutingType.ANYCAST));
-         server.createQueue(SimpleString.toSimpleString(getQueueName(i)), RoutingType.ANYCAST, SimpleString.toSimpleString(getQueueName(i)), null, true, false, -1, false, true);
+         server.createQueue(new QueueConfiguration(getQueueName(i)).setRoutingType(RoutingType.ANYCAST));
       }
    }
 
@@ -323,6 +338,9 @@ public class AmqpClientTestSupport extends AmqpTestSupport {
       sendMessages(destinationName, count, routingType, durable, Collections.emptyMap());
    }
 
+   protected void setData(AmqpMessage amqpMessage) throws Exception {
+   }
+
    protected void sendMessages(String destinationName,
                                int count,
                                RoutingType routingType,
@@ -344,6 +362,7 @@ public class AmqpClientTestSupport extends AmqpTestSupport {
             if (routingType != null) {
                message.setMessageAnnotation(AMQPMessageSupport.ROUTING_TYPE.toString(), routingType.getType());
             }
+            setData(message);
             sender.send(message);
          }
       } finally {

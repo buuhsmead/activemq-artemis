@@ -148,6 +148,11 @@ public class TypedProperties {
       otherProps.forEachInternal(this::doPutValue);
    }
 
+   public TypedProperties putProperty(final SimpleString key, final Object value) {
+      setObjectProperty(key, value, this);
+      return this;
+   }
+
    public Object getProperty(final SimpleString key) {
       return doGetProperty(key);
    }
@@ -370,6 +375,79 @@ public class TypedProperties {
       if (properties != null) {
          properties.forEach(action::accept);
       }
+   }
+
+   /**
+    * Performs a search among the valid key properties contained in {@code buffer}, starting from {@code from}
+    * assuming it to be a valid encoded {@link TypedProperties} content.
+    *
+    * @throws IllegalStateException if any not-valid property is found while searching the {@code key} property
+    */
+   public static boolean searchProperty(SimpleString key, ByteBuf buffer, int startIndex) {
+      // It won't implement a straight linear search for key
+      // because it would risk to find a SimpleString encoded property value
+      // equals to the key we're searching for!
+      int index = startIndex;
+      byte b = buffer.getByte(index);
+      index++;
+      if (b == DataConstants.NULL) {
+         return false;
+      }
+      final int numHeaders = buffer.getInt(index);
+      index += Integer.BYTES;
+      for (int i = 0; i < numHeaders; i++) {
+         final int keyLength = buffer.getInt(index);
+         index += Integer.BYTES;
+         if (key.equals(buffer, index, keyLength)) {
+            return true;
+         }
+         if (i == numHeaders - 1) {
+            return false;
+         }
+         index += keyLength;
+         byte type = buffer.getByte(index);
+         index++;
+         switch (type) {
+            case NULL: {
+               break;
+            }
+            case CHAR:
+            case SHORT: {
+               index += Short.BYTES;
+               break;
+            }
+            case BOOLEAN:
+            case BYTE: {
+               index += Byte.BYTES;
+               break;
+            }
+            case BYTES:
+            case STRING: {
+               index += (Integer.BYTES + buffer.getInt(index));
+               break;
+            }
+            case INT: {
+               index += Integer.BYTES;
+               break;
+            }
+            case LONG: {
+               index += Long.BYTES;
+               break;
+            }
+            case FLOAT: {
+               index += Float.BYTES;
+               break;
+            }
+            case DOUBLE: {
+               index += Double.BYTES;
+               break;
+            }
+            default: {
+               throw ActiveMQUtilBundle.BUNDLE.invalidType(type);
+            }
+         }
+      }
+      return false;
    }
 
    public synchronized void decode(final ByteBuf buffer,
@@ -956,12 +1034,16 @@ public class TypedProperties {
 
       public static final class ByteBufStringValuePool extends AbstractByteBufPool<StringValue> {
 
-         private static final int UUID_LENGTH = 36;
+         public static final int DEFAULT_MAX_LENGTH = 36;
 
          private final int maxLength;
 
          public ByteBufStringValuePool() {
-            this.maxLength = UUID_LENGTH;
+            this.maxLength = DEFAULT_MAX_LENGTH;
+         }
+
+         public ByteBufStringValuePool(final int capacity) {
+            this(capacity, DEFAULT_MAX_LENGTH);
          }
 
          public ByteBufStringValuePool(final int capacity, final int maxCharsLength) {
@@ -1001,9 +1083,9 @@ public class TypedProperties {
          this.propertyValuesPool = new TypedProperties.StringValue.ByteBufStringValuePool();
       }
 
-      public TypedPropertiesDecoderPools(int keyPoolCapacity, int valuePoolCapacity, int maxCharsLength) {
-         this.propertyKeysPool = new SimpleString.ByteBufSimpleStringPool(keyPoolCapacity, maxCharsLength);
-         this.propertyValuesPool = new TypedProperties.StringValue.ByteBufStringValuePool(valuePoolCapacity, maxCharsLength);
+      public TypedPropertiesDecoderPools(int keyPoolCapacity, int valuePoolCapacity) {
+         this.propertyKeysPool = new SimpleString.ByteBufSimpleStringPool(keyPoolCapacity);
+         this.propertyValuesPool = new TypedProperties.StringValue.ByteBufStringValuePool(valuePoolCapacity);
       }
 
       public SimpleString.ByteBufSimpleStringPool getPropertyKeysPool() {

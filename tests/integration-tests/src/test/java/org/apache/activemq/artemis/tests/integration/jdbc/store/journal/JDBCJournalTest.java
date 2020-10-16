@@ -116,6 +116,8 @@ public class JDBCJournalTest extends ActiveMQTestBase {
       if (useAuthentication) {
          System.setProperty("derby.connection.requireAuthentication", "true");
          System.setProperty("derby.user." + getJdbcUser(), getJdbcPassword());
+         dbConf.setJdbcUser(getJdbcUser());
+         dbConf.setJdbcPassword(getJdbcPassword());
       }
       sqlProvider = JDBCUtils.getSQLProvider(
          dbConf.getJdbcDriverClassName(),
@@ -123,7 +125,7 @@ public class JDBCJournalTest extends ActiveMQTestBase {
          SQLProvider.DatabaseStoreType.MESSAGE_JOURNAL);
       scheduledExecutorService = new ScheduledThreadPoolExecutor(5);
       executorService = Executors.newSingleThreadExecutor();
-      journal = new JDBCJournalImpl(dbConf.getJdbcConnectionUrl(), getJdbcUser(), getJdbcPassword(), dbConf.getJdbcDriverClassName(), sqlProvider, scheduledExecutorService, executorService, new IOCriticalErrorListener() {
+      journal = new JDBCJournalImpl(dbConf.getConnectionProvider(), sqlProvider, scheduledExecutorService, executorService, new IOCriticalErrorListener() {
          @Override
          public void onIOException(Throwable code, String message, SequentialFile file) {
 
@@ -145,10 +147,7 @@ public class JDBCJournalTest extends ActiveMQTestBase {
    public void testConcurrentEmptyJournal() throws SQLException {
       Assert.assertTrue(journal.isStarted());
       Assert.assertEquals(0, journal.getNumberOfRecords());
-      final JDBCJournalImpl secondJournal = new JDBCJournalImpl(dbConf.getJdbcConnectionUrl(),
-                                                                          getJdbcUser(),
-                                                                          getJdbcPassword(),
-                                                                          dbConf.getJdbcDriverClassName(),
+      final JDBCJournalImpl secondJournal = new JDBCJournalImpl(dbConf.getConnectionProvider(),
                                                                           sqlProvider, scheduledExecutorService,
                                                                           executorService, (code, message, file) -> {
          Assert.fail(message);
@@ -175,6 +174,19 @@ public class JDBCJournalTest extends ActiveMQTestBase {
    public void testCleanupTxRecords() throws Exception {
       journal.appendDeleteRecordTransactional(1, 1);
       journal.appendCommitRecord(1, true);
+      assertEquals(0, journal.getNumberOfRecords());
+   }
+
+   @Test
+   public void testCleanupTxRecords4TransactionalRecords() throws Exception {
+      // add committed transactional record e.g. paging
+      journal.appendAddRecordTransactional(152, 154, (byte) 13, new byte[0]);
+      journal.appendCommitRecord(152, true);
+      assertEquals(2, journal.getNumberOfRecords());
+
+      // delete transactional record in new transaction e.g. depaging
+      journal.appendDeleteRecordTransactional(236, 154);
+      journal.appendCommitRecord(236, true);
       assertEquals(0, journal.getNumberOfRecords());
    }
 

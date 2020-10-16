@@ -31,6 +31,7 @@ import javax.jms.Session;
 import javax.jms.StreamMessage;
 import javax.jms.TextMessage;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.management.AddressControl;
@@ -57,7 +58,7 @@ public class JMSMessageTypesTest extends JMSClientTestSupport {
    @Test(timeout = 60000)
    public void testAddressControlSendMessage() throws Exception {
       SimpleString address = RandomUtil.randomSimpleString();
-      server.createQueue(address, RoutingType.ANYCAST, address, null, true, false);
+      server.createQueue(new QueueConfiguration(address).setRoutingType(RoutingType.ANYCAST));
 
       AddressControl addressControl = ManagementControlHelper.createAddressControl(address, mBeanServer);
       Assert.assertEquals(1, addressControl.getQueueNames().length);
@@ -87,7 +88,7 @@ public class JMSMessageTypesTest extends JMSClientTestSupport {
    @Test(timeout = 60000)
    public void testAddressControlSendMessageWithText() throws Exception {
       SimpleString address = RandomUtil.randomSimpleString();
-      server.createQueue(address, RoutingType.ANYCAST, address, null, true, false);
+      server.createQueue(new QueueConfiguration(address).setRoutingType(RoutingType.ANYCAST));
 
       AddressControl addressControl = ManagementControlHelper.createAddressControl(address, mBeanServer);
       Assert.assertEquals(1, addressControl.getQueueNames().length);
@@ -128,7 +129,7 @@ public class JMSMessageTypesTest extends JMSClientTestSupport {
 
       MessageProducer producer = session.createProducer(queue);
       for (int i = 0; i < NUM_MESSAGES; i++) {
-         System.out.println("Sending " + i);
+         instanceLog.debug("Sending " + i);
          BytesMessage message = session.createBytesMessage();
 
          message.writeBytes(bytes);
@@ -150,13 +151,13 @@ public class JMSMessageTypesTest extends JMSClientTestSupport {
          byte[] bytesReceived = new byte[(int) size];
          m.readBytes(bytesReceived);
 
-         System.out.println("Received " + ByteUtil.bytesToHex(bytesReceived, 1) + " count - " + m.getIntProperty("count"));
+         instanceLog.debug("Received " + ByteUtil.bytesToHex(bytesReceived, 1) + " count - " + m.getIntProperty("count"));
 
          Assert.assertArrayEquals(bytes, bytesReceived);
       }
 
       long taken = (System.currentTimeMillis() - time) / 1000;
-      System.out.println("taken = " + taken);
+      instanceLog.debug("taken = " + taken);
    }
 
    @Test(timeout = 60000)
@@ -187,7 +188,7 @@ public class JMSMessageTypesTest extends JMSClientTestSupport {
 
       MessageProducer producer = session.createProducer(queue);
       for (int i = 0; i < NUM_MESSAGES; i++) {
-         System.out.println("Sending " + i);
+         instanceLog.debug("Sending " + i);
          Message message = session.createMessage();
 
          message.setIntProperty("count", i);
@@ -204,7 +205,7 @@ public class JMSMessageTypesTest extends JMSClientTestSupport {
       }
 
       long taken = (System.currentTimeMillis() - time) / 1000;
-      System.out.println("taken = " + taken);
+      instanceLog.debug("taken = " + taken);
    }
 
    @Test(timeout = 60000)
@@ -230,7 +231,7 @@ public class JMSMessageTypesTest extends JMSClientTestSupport {
 
       MessageProducer producer = session.createProducer(queue);
       for (int i = 0; i < NUM_MESSAGES; i++) {
-         System.out.println("Sending " + i);
+         instanceLog.debug("Sending " + i);
          MapMessage message = session.createMapMessage();
 
          message.setInt("i", i);
@@ -251,7 +252,7 @@ public class JMSMessageTypesTest extends JMSClientTestSupport {
       }
 
       long taken = (System.currentTimeMillis() - time) / 1000;
-      System.out.println("taken = " + taken);
+      instanceLog.debug("taken = " + taken);
    }
 
    @Test(timeout = 60000)
@@ -277,7 +278,7 @@ public class JMSMessageTypesTest extends JMSClientTestSupport {
 
       MessageProducer producer = session.createProducer(queue);
       for (int i = 0; i < NUM_MESSAGES; i++) {
-         System.out.println("Sending " + i);
+         instanceLog.debug("Sending " + i);
          TextMessage message = session.createTextMessage("text" + i);
          message.setStringProperty("text", "text" + i);
          producer.send(message);
@@ -294,7 +295,7 @@ public class JMSMessageTypesTest extends JMSClientTestSupport {
       }
 
       long taken = (System.currentTimeMillis() - time) / 1000;
-      System.out.println("taken = " + taken);
+      instanceLog.debug("taken = " + taken);
    }
 
    @Test(timeout = 60000)
@@ -402,7 +403,7 @@ public class JMSMessageTypesTest extends JMSClientTestSupport {
 
       MessageProducer producer = session.createProducer(queue);
       for (int i = 0; i < NUM_MESSAGES; i++) {
-         System.out.println("Sending " + i);
+         instanceLog.debug("Sending " + i);
          ObjectMessage message = session.createObjectMessage(new AnythingSerializable(i));
          producer.send(message);
       }
@@ -420,7 +421,7 @@ public class JMSMessageTypesTest extends JMSClientTestSupport {
       }
 
       long taken = (System.currentTimeMillis() - time) / 1000;
-      System.out.println("taken = " + taken);
+      instanceLog.debug("taken = " + taken);
    }
 
    @Test(timeout = 60000)

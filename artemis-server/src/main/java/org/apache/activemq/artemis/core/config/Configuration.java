@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.core.server.metrics.ActiveMQMetricsPlugin;
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerFederationPlugin;
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerAddressPlugin;
@@ -34,6 +35,7 @@ import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerConsumerPlug
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerCriticalPlugin;
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerMessagePlugin;
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerQueuePlugin;
+import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerResourcePlugin;
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerSessionPlugin;
 import org.apache.activemq.artemis.utils.critical.CriticalAnalyzerPolicy;
 import org.apache.activemq.artemis.api.core.BroadcastGroupConfiguration;
@@ -208,6 +210,28 @@ public interface Configuration {
     * Sets the interval time (in milliseconds) to invalidate security credentials.
     */
    Configuration setSecurityInvalidationInterval(long interval);
+
+   /**
+    * Sets the size of the authentication cache.
+    */
+   Configuration setAuthenticationCacheSize(long size);
+
+   /**
+    * Returns the configured size of the authentication cache. <br>
+    * Default value is {@link org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration#DEFAULT_AUTHENTICATION_CACHE_SIZE}.
+    */
+   long getAuthenticationCacheSize();
+
+   /**
+    * Sets the size of the authorization cache.
+    */
+   Configuration setAuthorizationCacheSize(long size);
+
+   /**
+    * Returns the configured size of the authorization cache. <br>
+    * Default value is {@link org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration#DEFAULT_AUTHORIZATION_CACHE_SIZE}.
+    */
+   long getAuthorizationCacheSize();
 
    /**
     * Returns whether security is enabled for this server. <br>
@@ -463,14 +487,27 @@ public interface Configuration {
    /**
     * Returns the queues configured for this server.
     */
+   @Deprecated
    List<CoreQueueConfiguration> getQueueConfigurations();
+
+
+   List<QueueConfiguration> getQueueConfigs();
 
    /**
     * Sets the queues configured for this server.
     */
+   @Deprecated
    Configuration setQueueConfigurations(List<CoreQueueConfiguration> configs);
 
+   /**
+    * Sets the queues configured for this server.
+    */
+   Configuration setQueueConfigs(List<QueueConfiguration> configs);
+
+   @Deprecated
    Configuration addQueueConfiguration(CoreQueueConfiguration config);
+
+   Configuration addQueueConfiguration(QueueConfiguration config);
 
    /**
     * Returns the addresses configured for this server.
@@ -981,11 +1018,13 @@ public interface Configuration {
     * Returns the priority of the thread used to scan message expiration. <br>
     * Default value is {@link org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration#DEFAULT_MESSAGE_EXPIRY_THREAD_PRIORITY}.
     */
+   @Deprecated
    int getMessageExpiryThreadPriority();
 
    /**
     * Sets the priority of the thread used to scan message expiration.
     */
+   @Deprecated
    Configuration setMessageExpiryThreadPriority(int messageExpiryThreadPriority);
 
    /**
@@ -1040,7 +1079,10 @@ public interface Configuration {
 
    Configuration addSecuritySettingPlugin(SecuritySettingPlugin plugin);
 
+   @Deprecated
    Configuration setMetricsPlugin(ActiveMQMetricsPlugin plugin);
+
+   Configuration setMetricsConfiguration(MetricsConfiguration metricsConfiguration);
 
    /**
     * @return list of {@link ConnectorServiceConfiguration}
@@ -1049,7 +1091,10 @@ public interface Configuration {
 
    List<SecuritySettingPlugin> getSecuritySettingPlugins();
 
+   @Deprecated
    ActiveMQMetricsPlugin getMetricsPlugin();
+
+   MetricsConfiguration getMetricsConfiguration();
 
    /**
     * The default password decoder
@@ -1281,4 +1326,12 @@ public interface Configuration {
     */
    List<FederationConfiguration> getFederationConfigurations();
 
+   /**
+    * @return
+    */
+   List<ActiveMQServerResourcePlugin> getBrokerResourcePlugins();
+
+   String getTemporaryQueueNamespace();
+
+   Configuration setTemporaryQueueNamespace(String temporaryQueueNamespace);
 }

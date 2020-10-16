@@ -375,6 +375,11 @@ public class ChannelImplTest {
             }
 
             @Override
+            public void write(ActiveMQBuffer buffer, boolean requestFlush) {
+
+            }
+
+            @Override
             public void write(ActiveMQBuffer buffer, boolean flush, boolean batched) {
 
             }
@@ -492,6 +497,16 @@ public class ChannelImplTest {
       @Override
       public boolean isSupportsFlowControl() {
          return false;
+      }
+
+      @Override
+      public void setAuditSubject(Subject subject) {
+
+      }
+
+      @Override
+      public Subject getAuditSubject() {
+         return null;
       }
 
       @Override

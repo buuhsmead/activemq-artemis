@@ -71,8 +71,12 @@ public class QueueAutoDeleteTest extends JMSTestBase {
          Queue queue = session.createQueue(testQueueName + "?auto-delete=true");
          ActiveMQDestination activeMQDestination = (ActiveMQDestination) queue;
 
+         final MessageConsumer consumer1 = session.createConsumer(queue);
+
+
          assertEquals(testQueueName, queue.getQueueName());
          assertEquals(true, activeMQDestination.getQueueAttributes().getAutoDelete());
+         assertEquals(true, activeMQDestination.getQueueConfiguration().isAutoDelete());
 
          MessageProducer producer = session.createProducer(queue);
          producer.send(session.createTextMessage("hello1"));
@@ -82,25 +86,22 @@ public class QueueAutoDeleteTest extends JMSTestBase {
          assertTrue(queueBinding.getQueue().isAutoDelete());
          Wait.assertEquals(2, queueBinding.getQueue()::getMessageCount);
 
-         MessageConsumer consumer = session.createConsumer(queue);
-         Message message = consumer.receive(5000);
+         Message message = consumer1.receive(5000);
          assertNotNull(message);
          message.acknowledge();
 
-         consumer.close();
 
          queueBinding = (QueueBinding) server.getPostOffice().getBinding(SimpleString.toSimpleString(testQueueName));
          Wait.assertEquals(1, queueBinding.getQueue()::getMessageCount);
 
-         consumer = session.createConsumer(queue);
-         message = consumer.receive(5000);
+         final MessageConsumer consumer2 = session.createConsumer(queue);
+         consumer1.close();
+
+         message = consumer2.receive(5000);
          assertNotNull(message);
          message.acknowledge();
 
-         consumer.close();
-
-         //Wait longer than scan period.
-         Thread.sleep(20);
+         consumer2.close();
 
          Wait.assertTrue(() -> server.getPostOffice().getBinding(SimpleString.toSimpleString(testQueueName)) == null, 5000, 10);
 
@@ -127,6 +128,7 @@ public class QueueAutoDeleteTest extends JMSTestBase {
 
          assertEquals(testQueueName, topic.getTopicName());
          assertEquals(true, activeMQDestination.getQueueAttributes().getAutoDelete());
+         assertEquals(true, activeMQDestination.getQueueConfiguration().isAutoDelete());
 
 
          MessageConsumer consumer = session.createSharedDurableConsumer(topic, sub);
@@ -240,6 +242,7 @@ public class QueueAutoDeleteTest extends JMSTestBase {
 
          assertEquals(testQueueName, queue.getQueueName());
          assertEquals(false, activeMQDestination.getQueueAttributes().getAutoDelete());
+         assertEquals(false, activeMQDestination.getQueueConfiguration().isAutoDelete());
 
          MessageProducer producer = session.createProducer(queue);
          producer.send(session.createTextMessage("hello1"));
@@ -295,6 +298,7 @@ public class QueueAutoDeleteTest extends JMSTestBase {
 
          assertEquals(testQueueName, queue.getQueueName());
          assertEquals(Long.valueOf(100), activeMQDestination.getQueueAttributes().getAutoDeleteDelay());
+         assertEquals(Long.valueOf(100), activeMQDestination.getQueueConfiguration().getAutoDeleteDelay());
 
          MessageProducer producer = session.createProducer(queue);
          producer.send(session.createTextMessage("hello1"));
@@ -354,6 +358,7 @@ public class QueueAutoDeleteTest extends JMSTestBase {
 
          assertEquals(testQueueName, queue.getQueueName());
          assertEquals(Long.valueOf(1), activeMQDestination.getQueueAttributes().getAutoDeleteMessageCount());
+         assertEquals(Long.valueOf(1), activeMQDestination.getQueueConfiguration().getAutoDeleteMessageCount());
 
          MessageProducer producer = session.createProducer(queue);
          producer.send(session.createTextMessage("hello1"));
@@ -398,6 +403,7 @@ public class QueueAutoDeleteTest extends JMSTestBase {
 
          assertEquals(testQueueName, queue.getQueueName());
          assertEquals(Long.valueOf(-1), activeMQDestination.getQueueAttributes().getAutoDeleteMessageCount());
+         assertEquals(Long.valueOf(-1), activeMQDestination.getQueueConfiguration().getAutoDeleteMessageCount());
 
          MessageProducer producer = session.createProducer(queue);
          for (int i = 0; i < 100; i++) {

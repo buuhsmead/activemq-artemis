@@ -28,9 +28,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
 import org.apache.activemq.artemis.api.core.BroadcastGroupConfiguration;
 import org.apache.activemq.artemis.api.core.DiscoveryGroupConfiguration;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
@@ -39,10 +41,10 @@ import org.apache.activemq.artemis.core.config.BridgeConfiguration;
 import org.apache.activemq.artemis.core.config.ClusterConnectionConfiguration;
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.config.CoreAddressConfiguration;
-import org.apache.activemq.artemis.core.config.CoreQueueConfiguration;
 import org.apache.activemq.artemis.core.config.DivertConfiguration;
 import org.apache.activemq.artemis.core.config.FileDeploymentManager;
 import org.apache.activemq.artemis.core.config.HAPolicyConfiguration;
+import org.apache.activemq.artemis.core.config.MetricsConfiguration;
 import org.apache.activemq.artemis.core.config.ha.LiveOnlyPolicyConfiguration;
 import org.apache.activemq.artemis.core.journal.impl.JournalImpl;
 import org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants;
@@ -58,6 +60,7 @@ import org.apache.activemq.artemis.core.server.metrics.ActiveMQMetricsPlugin;
 import org.apache.activemq.artemis.core.server.metrics.plugins.SimpleMetricsPlugin;
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerBasePlugin;
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerPlugin;
+import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.core.settings.impl.SlowConsumerPolicy;
 import org.apache.activemq.artemis.utils.RandomUtil;
 import org.apache.activemq.artemis.utils.critical.CriticalAnalyzerPolicy;
@@ -99,6 +102,8 @@ public class FileConfigurationTest extends ConfigurationImplTest {
       Assert.assertEquals(54321, conf.getThreadPoolMaxSize());
       Assert.assertEquals(false, conf.isSecurityEnabled());
       Assert.assertEquals(5423, conf.getSecurityInvalidationInterval());
+      Assert.assertEquals(333, conf.getAuthenticationCacheSize());
+      Assert.assertEquals(444, conf.getAuthorizationCacheSize());
       Assert.assertEquals(true, conf.isWildcardRoutingEnabled());
       Assert.assertEquals(new SimpleString("Giraffe"), conf.getManagementAddress());
       Assert.assertEquals(new SimpleString("Whatever"), conf.getManagementNotificationAddress());
@@ -113,7 +118,6 @@ public class FileConfigurationTest extends ConfigurationImplTest {
       Assert.assertEquals(98765, conf.getTransactionTimeout());
       Assert.assertEquals(56789, conf.getTransactionTimeoutScanPeriod());
       Assert.assertEquals(10111213, conf.getMessageExpiryScanPeriod());
-      Assert.assertEquals(8, conf.getMessageExpiryThreadPriority());
       Assert.assertEquals(25000, conf.getAddressQueueScanPeriod());
       Assert.assertEquals(127, conf.getIDCacheSize());
       Assert.assertEquals(true, conf.isPersistIDCache());
@@ -146,6 +150,7 @@ public class FileConfigurationTest extends ConfigurationImplTest {
       Assert.assertEquals(false, conf.isRejectEmptyValidatedUser());
       Assert.assertEquals(98765, conf.getConnectionTtlCheckInterval());
       Assert.assertEquals(1234567, conf.getConfigurationFileRefreshPeriod());
+      Assert.assertEquals("TEMP", conf.getTemporaryQueueNamespace());
 
       Assert.assertEquals("127.0.0.1", conf.getNetworkCheckList());
       Assert.assertEquals("some-nick", conf.getNetworkCheckNIC());
@@ -341,7 +346,16 @@ public class FileConfigurationTest extends ConfigurationImplTest {
       assertTrue(conf.getAddressesSettings().get("a2") != null);
 
       assertEquals("a1.1", conf.getAddressesSettings().get("a1").getDeadLetterAddress().toString());
+      assertEquals(AddressSettings.DEFAULT_AUTO_CREATE_DEAD_LETTER_RESOURCES, conf.getAddressesSettings().get("a1").isAutoCreateDeadLetterResources());
+      assertEquals(AddressSettings.DEFAULT_DEAD_LETTER_QUEUE_PREFIX, conf.getAddressesSettings().get("a1").getDeadLetterQueuePrefix());
+      assertEquals(AddressSettings.DEFAULT_DEAD_LETTER_QUEUE_SUFFIX, conf.getAddressesSettings().get("a1").getDeadLetterQueueSuffix());
       assertEquals("a1.2", conf.getAddressesSettings().get("a1").getExpiryAddress().toString());
+      assertEquals(1L, (long) conf.getAddressesSettings().get("a1").getExpiryDelay());
+      assertEquals(2L, (long) conf.getAddressesSettings().get("a1").getMinExpiryDelay());
+      assertEquals(3L, (long) conf.getAddressesSettings().get("a1").getMaxExpiryDelay());
+      assertEquals(AddressSettings.DEFAULT_AUTO_CREATE_EXPIRY_RESOURCES, conf.getAddressesSettings().get("a1").isAutoCreateExpiryResources());
+      assertEquals(AddressSettings.DEFAULT_EXPIRY_QUEUE_PREFIX, conf.getAddressesSettings().get("a1").getExpiryQueuePrefix());
+      assertEquals(AddressSettings.DEFAULT_EXPIRY_QUEUE_SUFFIX, conf.getAddressesSettings().get("a1").getExpiryQueueSuffix());
       assertEquals(1, conf.getAddressesSettings().get("a1").getRedeliveryDelay());
       assertEquals(0.5, conf.getAddressesSettings().get("a1").getRedeliveryCollisionAvoidanceFactor(), 0);
       assertEquals(856686592L, conf.getAddressesSettings().get("a1").getMaxSizeBytes());
@@ -363,9 +377,21 @@ public class FileConfigurationTest extends ConfigurationImplTest {
       assertEquals(RoutingType.MULTICAST, conf.getAddressesSettings().get("a1").getDefaultAddressRoutingType());
       assertEquals(3, conf.getAddressesSettings().get("a1").getDefaultRingSize());
       assertEquals(0, conf.getAddressesSettings().get("a1").getRetroactiveMessageCount());
+      assertTrue(conf.getAddressesSettings().get("a1").isEnableMetrics());
+      assertNull("none fonfigured", conf.getAddressesSettings().get("a1").getPageStoreName());
+      assertEquals(new SimpleString("a2.shared"), conf.getAddressesSettings().get("a2").getPageStoreName());
 
       assertEquals("a2.1", conf.getAddressesSettings().get("a2").getDeadLetterAddress().toString());
+      assertEquals(true, conf.getAddressesSettings().get("a2").isAutoCreateDeadLetterResources());
+      assertEquals("", conf.getAddressesSettings().get("a2").getDeadLetterQueuePrefix().toString());
+      assertEquals(".DLQ", conf.getAddressesSettings().get("a2").getDeadLetterQueueSuffix().toString());
       assertEquals("a2.2", conf.getAddressesSettings().get("a2").getExpiryAddress().toString());
+      assertEquals(-1L, (long) conf.getAddressesSettings().get("a2").getExpiryDelay());
+      assertEquals(-1L, (long) conf.getAddressesSettings().get("a2").getMinExpiryDelay());
+      assertEquals(-1L, (long) conf.getAddressesSettings().get("a2").getMaxExpiryDelay());
+      assertEquals(true, conf.getAddressesSettings().get("a2").isAutoCreateDeadLetterResources());
+      assertEquals("", conf.getAddressesSettings().get("a2").getExpiryQueuePrefix().toString());
+      assertEquals(".EXP", conf.getAddressesSettings().get("a2").getExpiryQueueSuffix().toString());
       assertEquals(5, conf.getAddressesSettings().get("a2").getRedeliveryDelay());
       assertEquals(0.0, conf.getAddressesSettings().get("a2").getRedeliveryCollisionAvoidanceFactor(), 0);
       assertEquals(932489234928324L, conf.getAddressesSettings().get("a2").getMaxSizeBytes());
@@ -388,22 +414,23 @@ public class FileConfigurationTest extends ConfigurationImplTest {
       assertEquals(10000, conf.getAddressesSettings().get("a2").getDefaultConsumerWindowSize());
       assertEquals(-1, conf.getAddressesSettings().get("a2").getDefaultRingSize());
       assertEquals(10, conf.getAddressesSettings().get("a2").getRetroactiveMessageCount());
+      assertFalse(conf.getAddressesSettings().get("a2").isEnableMetrics());
 
       assertTrue(conf.getResourceLimitSettings().containsKey("myUser"));
       assertEquals(104, conf.getResourceLimitSettings().get("myUser").getMaxConnections());
       assertEquals(13, conf.getResourceLimitSettings().get("myUser").getMaxQueues());
 
-      assertEquals(2, conf.getQueueConfigurations().size());
+      assertEquals(2, conf.getQueueConfigs().size());
 
-      assertEquals("queue1", conf.getQueueConfigurations().get(0).getName());
-      assertEquals("address1", conf.getQueueConfigurations().get(0).getAddress());
-      assertEquals("color='red'", conf.getQueueConfigurations().get(0).getFilterString());
-      assertEquals(false, conf.getQueueConfigurations().get(0).isDurable());
+      assertEquals("queue1", conf.getQueueConfigs().get(0).getName().toString());
+      assertEquals("address1", conf.getQueueConfigs().get(0).getAddress().toString());
+      assertEquals("color='red'", conf.getQueueConfigs().get(0).getFilterString().toString());
+      assertEquals(false, conf.getQueueConfigs().get(0).isDurable());
 
-      assertEquals("queue2", conf.getQueueConfigurations().get(1).getName());
-      assertEquals("address2", conf.getQueueConfigurations().get(1).getAddress());
-      assertEquals("color='blue'", conf.getQueueConfigurations().get(1).getFilterString());
-      assertEquals(false, conf.getQueueConfigurations().get(1).isDurable());
+      assertEquals("queue2", conf.getQueueConfigs().get(1).getName().toString());
+      assertEquals("address2", conf.getQueueConfigs().get(1).getAddress().toString());
+      assertEquals("color='blue'", conf.getQueueConfigs().get(1).getFilterString().toString());
+      assertEquals(false, conf.getQueueConfigs().get(1).isDurable());
 
       verifyAddresses();
 
@@ -445,12 +472,23 @@ public class FileConfigurationTest extends ConfigurationImplTest {
 
       assertEquals(false, conf.isJournalDatasync());
 
+      // keep test for backwards compatibility
       ActiveMQMetricsPlugin metricsPlugin = conf.getMetricsPlugin();
       assertTrue(metricsPlugin instanceof SimpleMetricsPlugin);
       Map<String, String> options = ((SimpleMetricsPlugin) metricsPlugin).getOptions();
       assertEquals("x", options.get("foo"));
       assertEquals("y", options.get("bar"));
       assertEquals("z", options.get("baz"));
+
+      MetricsConfiguration metricsConfiguration = conf.getMetricsConfiguration();
+      assertTrue(metricsConfiguration.getPlugin() instanceof SimpleMetricsPlugin);
+      options = ((SimpleMetricsPlugin) metricsPlugin).getOptions();
+      assertEquals("x", options.get("foo"));
+      assertEquals("y", options.get("bar"));
+      assertEquals("z", options.get("baz"));
+      assertFalse(metricsConfiguration.isJvmMemory());
+      assertTrue(metricsConfiguration.isJvmGc());
+      assertTrue(metricsConfiguration.isJvmThread());
    }
 
    private void verifyAddresses() {
@@ -462,30 +500,30 @@ public class FileConfigurationTest extends ConfigurationImplTest {
       Set<RoutingType> routingTypes = new HashSet<>();
       routingTypes.add(RoutingType.ANYCAST);
       assertEquals(routingTypes, addressConfiguration.getRoutingTypes());
-      assertEquals(2, addressConfiguration.getQueueConfigurations().size());
+      assertEquals(2, addressConfiguration.getQueueConfigs().size());
 
       // Addr 1 Queue 1
-      CoreQueueConfiguration queueConfiguration = addressConfiguration.getQueueConfigurations().get(0);
+      QueueConfiguration queueConfiguration = addressConfiguration.getQueueConfigs().get(0);
 
-      assertEquals("q1", queueConfiguration.getName());
+      assertEquals("q1", queueConfiguration.getName().toString());
       assertEquals(3L, queueConfiguration.getRingSize().longValue());
       assertFalse(queueConfiguration.isDurable());
-      assertEquals("color='blue'", queueConfiguration.getFilterString());
-      assertEquals(ActiveMQDefaultConfiguration.getDefaultPurgeOnNoConsumers(), queueConfiguration.getPurgeOnNoConsumers());
-      assertEquals("addr1", queueConfiguration.getAddress());
+      assertEquals("color='blue'", queueConfiguration.getFilterString().toString());
+      assertEquals(ActiveMQDefaultConfiguration.getDefaultPurgeOnNoConsumers(), queueConfiguration.isPurgeOnNoConsumers());
+      assertEquals("addr1", queueConfiguration.getAddress().toString());
       // If null, then default will be taken from address-settings (which defaults to ActiveMQDefaultConfiguration.getDefaultMaxQueueConsumers())
       assertEquals(null, queueConfiguration.getMaxConsumers());
 
       // Addr 1 Queue 2
-      queueConfiguration = addressConfiguration.getQueueConfigurations().get(1);
+      queueConfiguration = addressConfiguration.getQueueConfigs().get(1);
 
-      assertEquals("q2", queueConfiguration.getName());
+      assertEquals("q2", queueConfiguration.getName().toString());
       assertEquals(-1, queueConfiguration.getRingSize().longValue());
       assertTrue(queueConfiguration.isDurable());
-      assertEquals("color='green'", queueConfiguration.getFilterString());
+      assertEquals("color='green'", queueConfiguration.getFilterString().toString());
       assertEquals(Queue.MAX_CONSUMERS_UNLIMITED, queueConfiguration.getMaxConsumers().intValue());
-      assertFalse(queueConfiguration.getPurgeOnNoConsumers());
-      assertEquals("addr1", queueConfiguration.getAddress());
+      assertFalse(queueConfiguration.isPurgeOnNoConsumers());
+      assertEquals("addr1", queueConfiguration.getAddress().toString());
 
       // Addr 2
       addressConfiguration = conf.getAddressConfigurations().get(1);
@@ -493,28 +531,28 @@ public class FileConfigurationTest extends ConfigurationImplTest {
       routingTypes = new HashSet<>();
       routingTypes.add(RoutingType.MULTICAST);
       assertEquals(routingTypes, addressConfiguration.getRoutingTypes());
-      assertEquals(2, addressConfiguration.getQueueConfigurations().size());
+      assertEquals(2, addressConfiguration.getQueueConfigs().size());
 
       // Addr 2 Queue 1
-      queueConfiguration = addressConfiguration.getQueueConfigurations().get(0);
+      queueConfiguration = addressConfiguration.getQueueConfigs().get(0);
 
-      assertEquals("q3", queueConfiguration.getName());
+      assertEquals("q3", queueConfiguration.getName().toString());
       assertTrue(queueConfiguration.isDurable());
-      assertEquals("color='red'", queueConfiguration.getFilterString());
+      assertEquals("color='red'", queueConfiguration.getFilterString().toString());
       assertEquals(10, queueConfiguration.getMaxConsumers().intValue());
-      assertEquals(ActiveMQDefaultConfiguration.getDefaultPurgeOnNoConsumers(), queueConfiguration.getPurgeOnNoConsumers());
-      assertEquals("addr2", queueConfiguration.getAddress());
+      assertEquals(ActiveMQDefaultConfiguration.getDefaultPurgeOnNoConsumers(), queueConfiguration.isPurgeOnNoConsumers());
+      assertEquals("addr2", queueConfiguration.getAddress().toString());
 
       // Addr 2 Queue 2
-      queueConfiguration = addressConfiguration.getQueueConfigurations().get(1);
+      queueConfiguration = addressConfiguration.getQueueConfigs().get(1);
 
-      assertEquals("q4", queueConfiguration.getName());
+      assertEquals("q4", queueConfiguration.getName().toString());
       assertTrue(queueConfiguration.isDurable());
       assertNull(queueConfiguration.getFilterString());
       // If null, then default will be taken from address-settings (which defaults to ActiveMQDefaultConfiguration.getDefaultMaxQueueConsumers())
       assertEquals(null, queueConfiguration.getMaxConsumers());
-      assertTrue(queueConfiguration.getPurgeOnNoConsumers());
-      assertEquals("addr2", queueConfiguration.getAddress());
+      assertTrue(queueConfiguration.isPurgeOnNoConsumers());
+      assertEquals("addr2", queueConfiguration.getAddress().toString());
 
       // Addr 3
       addressConfiguration = conf.getAddressConfigurations().get(2);
@@ -726,6 +764,60 @@ public class FileConfigurationTest extends ConfigurationImplTest {
       }
    }
 
+   @Test
+   public void testMetricsPlugin() throws Exception {
+      FileConfiguration fc = new FileConfiguration();
+      FileDeploymentManager deploymentManager = new FileDeploymentManager("metricsPlugin.xml");
+      deploymentManager.addDeployable(fc);
+      deploymentManager.readConfiguration();
+
+      ActiveMQMetricsPlugin metricPlugin = fc.getMetricsConfiguration().getPlugin();
+      assertTrue(metricPlugin instanceof FakeMetricPlugin);
+
+      Map<String, String> metricPluginOptions = ((FakeMetricPlugin)metricPlugin).getOptions();
+      assertEquals("value1", metricPluginOptions.get("key1"));
+      assertEquals("value2", metricPluginOptions.get("key2"));
+      assertEquals("value3", metricPluginOptions.get("key3"));
+   }
+
+   @Test
+   public void testMetrics() throws Exception {
+      FileConfiguration fc = new FileConfiguration();
+      FileDeploymentManager deploymentManager = new FileDeploymentManager("metrics.xml");
+      deploymentManager.addDeployable(fc);
+      deploymentManager.readConfiguration();
+
+
+      MetricsConfiguration metricsConfiguration = fc.getMetricsConfiguration();
+      assertTrue(metricsConfiguration.isJvmMemory());
+      assertTrue(metricsConfiguration.isJvmGc());
+      assertTrue(metricsConfiguration.isJvmThread());
+
+      ActiveMQMetricsPlugin metricPlugin = metricsConfiguration.getPlugin();
+      assertTrue(metricPlugin instanceof FakeMetricPlugin);
+
+      Map<String, String> metricPluginOptions = ((FakeMetricPlugin)metricPlugin).getOptions();
+      assertEquals("value1", metricPluginOptions.get("key1"));
+      assertEquals("value2", metricPluginOptions.get("key2"));
+      assertEquals("value3", metricPluginOptions.get("key3"));
+   }
+
+   @Test
+   public void testMetricsConflict() throws Exception {
+      FileConfiguration fc = new FileConfiguration();
+      FileDeploymentManager deploymentManager = new FileDeploymentManager("metricsConflict.xml");
+      deploymentManager.addDeployable(fc);
+      deploymentManager.readConfiguration();
+
+      ActiveMQMetricsPlugin metricPlugin = fc.getMetricsConfiguration().getPlugin();
+      assertTrue(metricPlugin instanceof FakeMetricPlugin);
+
+      Map<String, String> metricPluginOptions = ((FakeMetricPlugin)metricPlugin).getOptions();
+      assertEquals("value1", metricPluginOptions.get("key1"));
+      assertEquals("value2", metricPluginOptions.get("key2"));
+      assertEquals("value3", metricPluginOptions.get("key3"));
+   }
+
    @Override
    protected Configuration createConfiguration() throws Exception {
       // This may be set for the entire testsuite, but on this test we need this out
@@ -751,5 +843,24 @@ public class FileConfigurationTest extends ConfigurationImplTest {
 
    public static class EmptyPlugin2 implements ActiveMQServerPlugin {
 
+   }
+
+   public static class FakeMetricPlugin implements ActiveMQMetricsPlugin {
+      private Map<String, String> options;
+
+      public Map<String, String> getOptions() {
+         return options;
+      }
+
+      @Override
+      public ActiveMQMetricsPlugin init(Map<String, String> options) {
+         this.options = options;
+         return this;
+      }
+
+      @Override
+      public MeterRegistry getRegistry() {
+         return null;
+      }
    }
 }

@@ -30,11 +30,14 @@ import org.apache.activemq.artemis.core.server.JournalType;
 import org.apache.activemq.artemis.core.server.plugin.impl.LoggingActiveMQServerPlugin;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.utils.RandomUtil;
+import org.jboss.logging.Logger;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 public class ConfigurationImplTest extends ActiveMQTestBase {
+
+   private static final Logger log = Logger.getLogger(ConfigurationImplTest.class);
 
    protected Configuration conf;
 
@@ -57,7 +60,6 @@ public class ConfigurationImplTest extends ActiveMQTestBase {
       Assert.assertEquals(ActiveMQDefaultConfiguration.isDefaultWildcardRoutingEnabled(), conf.isWildcardRoutingEnabled());
       Assert.assertEquals(ActiveMQDefaultConfiguration.getDefaultTransactionTimeout(), conf.getTransactionTimeout());
       Assert.assertEquals(ActiveMQDefaultConfiguration.getDefaultMessageExpiryScanPeriod(), conf.getMessageExpiryScanPeriod()); // OK
-      Assert.assertEquals(ActiveMQDefaultConfiguration.getDefaultMessageExpiryThreadPriority(), conf.getMessageExpiryThreadPriority()); // OK
       Assert.assertEquals(ActiveMQDefaultConfiguration.getDefaultTransactionTimeoutScanPeriod(), conf.getTransactionTimeoutScanPeriod()); // OK
       Assert.assertEquals(ActiveMQDefaultConfiguration.getDefaultManagementAddress(), conf.getManagementAddress()); // OK
       Assert.assertEquals(ActiveMQDefaultConfiguration.getDefaultManagementNotificationAddress(), conf.getManagementNotificationAddress()); // OK
@@ -90,6 +92,7 @@ public class ConfigurationImplTest extends ActiveMQTestBase {
       Assert.assertNull(conf.getJournalDeviceBlockSize());
       Assert.assertEquals(ActiveMQDefaultConfiguration.isDefaultReadWholePage(), conf.isReadWholePage());
       Assert.assertEquals(ActiveMQDefaultConfiguration.getDefaultJournalBufferTimeoutNio(), conf.getPageSyncTimeout());
+      Assert.assertEquals(ActiveMQDefaultConfiguration.getDefaultTemporaryQueueNamespace(), conf.getTemporaryQueueNamespace());
    }
 
    @Test
@@ -162,10 +165,6 @@ public class ConfigurationImplTest extends ActiveMQTestBase {
          s = RandomUtil.randomString();
          conf.setManagementAddress(new SimpleString(s));
          Assert.assertEquals(s, conf.getManagementAddress().toString());
-
-         i = RandomUtil.randomInt();
-         conf.setMessageExpiryThreadPriority(i);
-         Assert.assertEquals(i, conf.getMessageExpiryThreadPriority());
 
          l = RandomUtil.randomLong();
          conf.setMessageExpiryScanPeriod(l);
@@ -365,10 +364,6 @@ public class ConfigurationImplTest extends ActiveMQTestBase {
       conf.setManagementAddress(new SimpleString(s));
       Assert.assertEquals(s, conf.getManagementAddress().toString());
 
-      i = RandomUtil.randomInt();
-      conf.setMessageExpiryThreadPriority(i);
-      Assert.assertEquals(i, conf.getMessageExpiryThreadPriority());
-
       l = RandomUtil.randomLong();
       conf.setMessageExpiryScanPeriod(l);
       Assert.assertEquals(l, conf.getMessageExpiryScanPeriod());
@@ -541,7 +536,7 @@ public class ConfigurationImplTest extends ActiveMQTestBase {
          tempFolder = new File(tempFolder.getAbsolutePath());
          tempFolder.mkdirs();
 
-         System.out.println("TempFolder = " + tempFolder.getAbsolutePath());
+         log.debug("TempFolder = " + tempFolder.getAbsolutePath());
 
          ConfigurationImpl configuration = new ConfigurationImpl();
          configuration.setJournalDirectory(tempFolder.getAbsolutePath());
@@ -559,7 +554,7 @@ public class ConfigurationImplTest extends ActiveMQTestBase {
          tempFolder = new File(tempFolder.getAbsolutePath());
          tempFolder.mkdirs();
 
-         System.out.println("TempFolder = " + tempFolder.getAbsolutePath());
+         log.debug("TempFolder = " + tempFolder.getAbsolutePath());
          configuration.setNodeManagerLockDirectory(tempFolder.getAbsolutePath());
          File lockLocation = configuration.getNodeManagerLockLocation();
          Assert.assertTrue(lockLocation.exists());

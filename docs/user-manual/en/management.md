@@ -115,6 +115,8 @@ The `ActiveMQServerControl` interface is the entry point for broker management.
   operations `createBridge()` and `destroyBridge()` (resp.  `createDivert()` and
   `destroyDivert()`).
 
+  Diverts can be updated using the management operation `updateDivert()`.
+  
 - It is possible to stop the server and force failover to occur with any
   currently attached clients.
 
@@ -211,6 +213,15 @@ a given property.)
   The `QueueControl` can pause and resume the underlying queue. When a queue is
   paused, it will receive messages but will not deliver them.  When it's resumed,
   it'll begin delivering the queued messages, if any.
+  
+- Disabling and Enabling Queues
+  
+  The `QueueControl` can disable and enable the underlying queue. When a queue is
+  disabled, it will not longer have messages routed to it.  When it's enabled,
+  it'll begin having messages routed to it again. 
+  
+  This is useful where you may need to disable message routing to a queue but wish to keep consumers active
+  to investigate issues, without causing further message build up in the queue.
 
 #### Other Resources Management
 
@@ -400,6 +411,10 @@ also match, allowing prefix match for the mBean properties.
    <access method="*" roles="amq"/>
 </match>
 ```
+
+In case of multiple matches, the exact matches have higher priority than the
+wildcard matches and the longer wildcard matches have higher priority than the
+shorter wildcard matches.
 
 Access to JMX mBean attributes are converted to method calls so these are
 controlled via the `set*`, `get*` and `is*`.  The `*` access is the catch all
@@ -907,6 +922,10 @@ Message counters give additional information about the queues:
 - `lastAddTimestamp`
 
   The timestamp of the last time a message was added to the queue
+
+- `lastAckTimestamp`
+
+  The timestamp of the last time a message from the queue was acknowledged
 
 - `udpateTimestamp`
 

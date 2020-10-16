@@ -17,20 +17,25 @@
 package org.apache.activemq.artemis.core.server;
 
 import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
+import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.filter.Filter;
 import org.apache.activemq.artemis.core.filter.FilterUtils;
+import org.apache.activemq.artemis.core.filter.impl.FilterImpl;
 import org.apache.activemq.artemis.core.paging.PagingManager;
 import org.apache.activemq.artemis.core.paging.PagingStore;
 import org.apache.activemq.artemis.core.paging.cursor.PageSubscription;
 
+@Deprecated
 public final class QueueConfig {
 
    private final long id;
    private final SimpleString address;
    private final SimpleString name;
    private final Filter filter;
+   final PagingStore pagingStore;
    private final PageSubscription pageSubscription;
    private final SimpleString user;
    private final boolean durable;
@@ -54,6 +59,7 @@ public final class QueueConfig {
    private final long autoDeleteMessageCount;
    private final long ringSize;
 
+   @Deprecated
    public static final class Builder {
 
       private final long id;
@@ -259,10 +265,11 @@ public final class QueueConfig {
        * @throws IllegalStateException if the creation of {@link PageSubscription} fails
        */
       public QueueConfig build() {
+         final PagingStore pageStore;
          final PageSubscription pageSubscription;
          if (pagingManager != null && !FilterUtils.isTopicIdentification(filter)) {
             try {
-               final PagingStore pageStore = this.pagingManager.getPageStore(address);
+               pageStore = this.pagingManager.getPageStore(address);
                if (pageStore != null) {
                   pageSubscription = pageStore.getCursorProvider().createSubscription(id, filter, durable);
                } else {
@@ -273,8 +280,9 @@ public final class QueueConfig {
             }
          } else {
             pageSubscription = null;
+            pageStore = null;
          }
-         return new QueueConfig(id, address, name, filter, pageSubscription, user, durable, temporary, autoCreated, routingType, maxConsumers, exclusive, lastValue, lastValueKey, nonDestructive, consumersBeforeDispatch, delayBeforeDispatch, purgeOnNoConsumers, groupRebalance, groupBuckets, groupFirstKey, autoDelete, autoDeleteDelay, autoDeleteMessageCount, ringSize, configurationManaged);
+         return new QueueConfig(id, address, name, filter, pageStore, pageSubscription, user, durable, temporary, autoCreated, routingType, maxConsumers, exclusive, lastValue, lastValueKey, nonDestructive, consumersBeforeDispatch, delayBeforeDispatch, purgeOnNoConsumers, groupRebalance, groupBuckets, groupFirstKey, autoDelete, autoDeleteDelay, autoDeleteMessageCount, ringSize, configurationManaged);
       }
 
    }
@@ -311,6 +319,7 @@ public final class QueueConfig {
                        final SimpleString address,
                        final SimpleString name,
                        final Filter filter,
+                       final PagingStore pagingStore,
                        final PageSubscription pageSubscription,
                        final SimpleString user,
                        final boolean durable,
@@ -337,6 +346,7 @@ public final class QueueConfig {
       this.address = address;
       this.name = name;
       this.filter = filter;
+      this.pagingStore = pagingStore;
       this.pageSubscription = pageSubscription;
       this.user = user;
       this.durable = durable;
@@ -359,6 +369,36 @@ public final class QueueConfig {
       this.autoDeleteMessageCount = autoDeleteMessageCount;
       this.ringSize = ringSize;
       this.configurationManaged = configurationManaged;
+   }
+
+   public static QueueConfig fromQueueConfiguration(QueueConfiguration queueConfiguration) throws ActiveMQException {
+      return new QueueConfig(queueConfiguration.getId() == null ? 0 : queueConfiguration.getId(),
+                             queueConfiguration.getAddress(),
+                             queueConfiguration.getName(),
+                             queueConfiguration.getFilterString() == null ? null : FilterImpl.createFilter(queueConfiguration.getFilterString()),
+                             null,
+                             null,
+                             queueConfiguration.getUser(),
+                             queueConfiguration.isDurable(),
+                             queueConfiguration.isTemporary(),
+                             queueConfiguration.isAutoCreated(),
+                             queueConfiguration.getRoutingType(),
+                             queueConfiguration.getMaxConsumers(),
+                             queueConfiguration.isExclusive(),
+                             queueConfiguration.isLastValue(),
+                             queueConfiguration.getLastValueKey(),
+                             queueConfiguration.isNonDestructive(),
+                             queueConfiguration.getConsumersBeforeDispatch(),
+                             queueConfiguration.getDelayBeforeDispatch(),
+                             queueConfiguration.isPurgeOnNoConsumers(),
+                             queueConfiguration.isGroupRebalance(),
+                             queueConfiguration.getGroupBuckets(),
+                             queueConfiguration.getGroupFirstKey(),
+                             queueConfiguration.isAutoDelete(),
+                             queueConfiguration.getAutoDeleteDelay(),
+                             queueConfiguration.getAutoDeleteMessageCount(),
+                             queueConfiguration.getRingSize(),
+                             queueConfiguration.isConfigurationManaged());
    }
 
    public long id() {
@@ -463,6 +503,10 @@ public final class QueueConfig {
 
    public long getRingSize() {
       return ringSize;
+   }
+
+   public PagingStore getPagingStore() {
+      return pagingStore;
    }
 
    @Override

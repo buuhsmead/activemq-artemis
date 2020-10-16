@@ -160,6 +160,12 @@ public final class ActiveMQDefaultConfiguration {
    // how long (in ms) to wait before invalidating the security cache
    private static long DEFAULT_SECURITY_INVALIDATION_INTERVAL = 10000;
 
+   // how large to make the authentication cache
+   private static long DEFAULT_AUTHENTICATION_CACHE_SIZE = 1000;
+
+   // how large to make the authorization cache
+   private static long DEFAULT_AUTHORIZATION_CACHE_SIZE = 1000;
+
    // how long (in ms) to wait to acquire a file lock on the journal
    private static long DEFAULT_JOURNAL_LOCK_ACQUISITION_TIMEOUT = -1;
 
@@ -228,6 +234,7 @@ public final class ActiveMQDefaultConfiguration {
    private static long DEFAULT_ADDRESS_QUEUE_SCAN_PERIOD = 30000;
 
    // the priority of the thread expiring messages
+   @Deprecated
    private static int DEFAULT_MESSAGE_EXPIRY_THREAD_PRIORITY = 3;
 
    // the size of the cache for pre-creating message ID's
@@ -448,6 +455,9 @@ public final class ActiveMQDefaultConfiguration {
    // Default JDBC Driver class name, derby by default just for demo purposes
    private static String DEFAULT_JDBC_DRIVER_CLASS_NAME = "org.apache.derby.jdbc.EmbeddedDriver";
 
+   // Default JDBC Driver class name. DBCP2 BasicDataSource is used by default.
+   private static String DEFAULT_JDBC_DATA_SOURCE_CLASS_NAME = "org.apache.commons.dbcp2.BasicDataSource";
+
    // Default message table name, used with Database storage type
    private static String DEFAULT_MESSAGE_TABLE_NAME = "MESSAGES";
 
@@ -513,6 +523,8 @@ public final class ActiveMQDefaultConfiguration {
 
    public static final boolean DEFAULT_PURGE_ON_NO_CONSUMERS = false;
 
+   public static final boolean DEFAULT_ENABLED = true;
+
    public static final boolean DEFAULT_QUEUE_AUTO_DELETE = true;
 
    public static final boolean DEFAULT_CREATED_QUEUE_AUTO_DELETE = false;
@@ -530,6 +542,8 @@ public final class ActiveMQDefaultConfiguration {
    public static final int DEFAULT_GROUP_BUCKETS = -1;
 
    public static final boolean DEFAULT_GROUP_REBALANCE = false;
+
+   public static final boolean DEFAULT_GROUP_REBALANCE_PAUSE_DISPATCH = false;
 
    public static final SimpleString DEFAULT_GROUP_FIRST_KEY = null;
 
@@ -599,6 +613,17 @@ public final class ActiveMQDefaultConfiguration {
    // How long to wait for a reply if in the middle of a fail-over. -1 means wait forever.
    private static long DEFAULT_FEDERATION_CALL_FAILOVER_TIMEOUT = -1;
 
+   // Whether or not to report JVM memory metrics
+   private static final boolean DEFAULT_JVM_MEMORY_METRICS = true;
+
+   // Whether or not to report JVM GC metrics
+   private static final boolean DEFAULT_JVM_GC_METRICS = false;
+
+   // Whether or not to report JVM thread metrics
+   private static final boolean DEFAULT_JVM_THREAD_METRICS = false;
+
+   public static final String DEFAULT_TEMPORARY_QUEUE_NAMESPACE = "";
+
    /**
     * If true then the ActiveMQ Artemis Server will make use of any Protocol Managers that are in available on the classpath. If false then only the core protocol will be available, unless in Embedded mode where users can inject their own Protocol Managers.
     */
@@ -664,6 +689,20 @@ public final class ActiveMQDefaultConfiguration {
     */
    public static long getDefaultSecurityInvalidationInterval() {
       return DEFAULT_SECURITY_INVALIDATION_INTERVAL;
+   }
+
+   /**
+    * how large to make the authentication cache
+    */
+   public static long getDefaultAuthenticationCacheSize() {
+      return DEFAULT_AUTHENTICATION_CACHE_SIZE;
+   }
+
+   /**
+    * how large to make the authorization cache
+    */
+   public static long getDefaultAuthorizationCacheSize() {
+      return DEFAULT_AUTHORIZATION_CACHE_SIZE;
    }
 
    /**
@@ -817,6 +856,7 @@ public final class ActiveMQDefaultConfiguration {
    /**
     * the priority of the thread expiring messages
     */
+   @Deprecated
    public static int getDefaultMessageExpiryThreadPriority() {
       return DEFAULT_MESSAGE_EXPIRY_THREAD_PRIORITY;
    }
@@ -1355,6 +1395,10 @@ public final class ActiveMQDefaultConfiguration {
       return DEFAULT_JDBC_DRIVER_CLASS_NAME;
    }
 
+   public static String getDefaultDataSourceClassName() {
+      return DEFAULT_JDBC_DATA_SOURCE_CLASS_NAME;
+   }
+
    public static String getDefaultLargeMessagesTableName() {
       return DEFAULT_LARGE_MESSAGES_TABLE_NAME;
    }
@@ -1442,6 +1486,10 @@ public final class ActiveMQDefaultConfiguration {
       return DEFAULT_PURGE_ON_NO_CONSUMERS;
    }
 
+   public static boolean getDefaultEnabled() {
+      return DEFAULT_ENABLED;
+   }
+
    public static boolean getDefaultQueueAutoDelete(boolean autoCreated) {
       return autoCreated ? getDefaultQueueAutoDelete() : getDefaultCreatedQueueAutoDelete();
    }
@@ -1484,6 +1532,10 @@ public final class ActiveMQDefaultConfiguration {
 
    public static boolean getDefaultGroupRebalance() {
       return DEFAULT_GROUP_REBALANCE;
+   }
+
+   public static boolean getDefaultGroupRebalancePauseDispatch() {
+      return DEFAULT_GROUP_REBALANCE_PAUSE_DISPATCH;
    }
 
    public static SimpleString getDefaultGroupFirstKey() {
@@ -1628,4 +1680,28 @@ public final class ActiveMQDefaultConfiguration {
       return DEFAULT_FEDERATION_CALL_FAILOVER_TIMEOUT;
    }
 
+   /**
+    * Whether or not to report JVM memory metrics
+    */
+   public static boolean getDefaultJvmMemoryMetrics() {
+      return DEFAULT_JVM_MEMORY_METRICS;
+   }
+
+   /**
+    * Whether or not to report JVM GC metrics
+    */
+   public static boolean getDefaultJvmGcMetrics() {
+      return DEFAULT_JVM_GC_METRICS;
+   }
+
+   /**
+    * Whether or not to report JVM thread metrics
+    */
+   public static boolean getDefaultJvmThreadMetrics() {
+      return DEFAULT_JVM_THREAD_METRICS;
+   }
+
+   public static String getDefaultTemporaryQueueNamespace() {
+      return DEFAULT_TEMPORARY_QUEUE_NAMESPACE;
+   }
 }

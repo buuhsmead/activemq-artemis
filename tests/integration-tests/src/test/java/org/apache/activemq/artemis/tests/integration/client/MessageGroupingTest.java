@@ -24,6 +24,7 @@ import java.util.concurrent.TimeUnit;
 
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -36,8 +37,8 @@ import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ActiveMQServers;
 import org.apache.activemq.artemis.core.transaction.impl.XidImpl;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.jboss.logging.Logger;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
@@ -45,7 +46,7 @@ import org.junit.Test;
 
 public class MessageGroupingTest extends ActiveMQTestBase {
 
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
+   private static final Logger log = Logger.getLogger(MessageGroupingTest.class);
 
    private ActiveMQServer server;
 
@@ -198,7 +199,7 @@ public class MessageGroupingTest extends ActiveMQTestBase {
          Assert.assertEquals(cm.getBodyBuffer().readString(), "m" + i);
       }
 
-      MessageGroupingTest.log.info("closing consumer2");
+      log.debug("closing consumer2");
 
       consumer2.close();
 
@@ -293,7 +294,6 @@ public class MessageGroupingTest extends ActiveMQTestBase {
    }
 
    private void doTestMultipleGroupingTXRollback() throws Exception {
-      log.info("*** starting test");
       ServerLocator locator = createInVMNonHALocator();
       locator.setBlockOnAcknowledge(true);
       ClientSessionFactory sessionFactory = createSessionFactory(locator);
@@ -536,7 +536,7 @@ public class MessageGroupingTest extends ActiveMQTestBase {
       locator = createInVMNonHALocator();
       clientSessionFactory = createSessionFactory(locator);
       clientSession = addClientSession(clientSessionFactory.createSession(false, true, true));
-      clientSession.createQueue(qName, qName, null, false);
+      clientSession.createQueue(new QueueConfiguration(qName).setDurable(false));
    }
 
    private static class DummyMessageHandler implements MessageHandler {

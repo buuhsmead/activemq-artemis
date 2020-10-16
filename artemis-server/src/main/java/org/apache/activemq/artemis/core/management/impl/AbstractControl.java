@@ -70,7 +70,7 @@ public abstract class AbstractControl extends StandardMBean {
 
    protected void blockOnIO() {
       // the storage manager could be null on the backup on certain components
-      if (storageManager != null) {
+      if (storageManager != null && storageManager.isStarted()) {
          try {
             storageManager.waitOnOperations();
             storageManager.clearContext();
@@ -128,7 +128,7 @@ public abstract class AbstractControl extends StandardMBean {
                                                          Integer.MAX_VALUE, fakeConnection,
                                                          true, true, false,
                                                          false, address.toString(), fakeConnection.callback,
-                                                         false, new DummyOperationContext(), Collections.emptyMap());
+                                                         false, new DummyOperationContext(), Collections.emptyMap(), null);
       try {
          CoreMessage message = new CoreMessage(storageManager.generateID(), 50);
          if (headers != null) {

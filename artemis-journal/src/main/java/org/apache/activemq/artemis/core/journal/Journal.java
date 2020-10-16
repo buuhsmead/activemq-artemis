@@ -23,6 +23,7 @@ import org.apache.activemq.artemis.core.io.SequentialFileFactory;
 import org.apache.activemq.artemis.core.journal.impl.JournalFile;
 import org.apache.activemq.artemis.core.persistence.Persister;
 import org.apache.activemq.artemis.core.server.ActiveMQComponent;
+import org.apache.activemq.artemis.utils.collections.SparseArrayLinkedList;
 
 /**
  * Most methods on the journal provide a blocking version where you select the sync mode and a non
@@ -84,18 +85,34 @@ public interface Journal extends ActiveMQComponent {
 
    void appendUpdateRecord(long id, byte recordType, byte[] record, boolean sync) throws Exception;
 
+   boolean tryAppendUpdateRecord(long id, byte recordType, byte[] record, boolean sync) throws Exception;
+
    default void appendUpdateRecord(long id, byte recordType, EncodingSupport record, boolean sync) throws Exception {
       appendUpdateRecord(id, recordType, EncoderPersister.getInstance(), record, sync);
    }
 
+   default boolean tryAppendUpdateRecord(long id, byte recordType, EncodingSupport record, boolean sync) throws Exception {
+      return tryAppendUpdateRecord(id, recordType, EncoderPersister.getInstance(), record, sync);
+   }
+
    void appendUpdateRecord(long id, byte recordType, Persister persister, Object record, boolean sync) throws Exception;
 
+   boolean tryAppendUpdateRecord(long id, byte recordType, Persister persister, Object record, boolean sync) throws Exception;
+
    default void appendUpdateRecord(long id,
-                           byte recordType,
-                           EncodingSupport record,
-                           boolean sync,
-                           IOCompletion completionCallback) throws Exception {
+                                   byte recordType,
+                                   EncodingSupport record,
+                                   boolean sync,
+                                   IOCompletion completionCallback) throws Exception {
       appendUpdateRecord(id, recordType, EncoderPersister.getInstance(), record, sync, completionCallback);
+   }
+
+   default boolean tryAppendUpdateRecord(long id,
+                                   byte recordType,
+                                   EncodingSupport record,
+                                   boolean sync,
+                                   IOCompletion completionCallback) throws Exception {
+      return tryAppendUpdateRecord(id, recordType, EncoderPersister.getInstance(), record, sync, completionCallback);
    }
 
    void appendUpdateRecord(long id,
@@ -105,9 +122,20 @@ public interface Journal extends ActiveMQComponent {
                            boolean sync,
                            IOCompletion callback) throws Exception;
 
+   boolean tryAppendUpdateRecord(long id,
+                           byte recordType,
+                           Persister persister,
+                           Object record,
+                           boolean sync,
+                           IOCompletion callback) throws Exception;
+
    void appendDeleteRecord(long id, boolean sync) throws Exception;
 
+   boolean tryAppendDeleteRecord(long id, boolean sync) throws Exception;
+
    void appendDeleteRecord(long id, boolean sync, IOCompletion completionCallback) throws Exception;
+
+   boolean tryAppendDeleteRecord(long id, boolean sync, IOCompletion completionCallback) throws Exception;
 
    // Transactional operations
 
@@ -201,6 +229,17 @@ public interface Journal extends ActiveMQComponent {
    }
 
    JournalLoadInformation load(List<RecordInfo> committedRecords,
+                               List<PreparedTransactionInfo> preparedTransactions,
+                               TransactionFailureCallback transactionFailure,
+                               boolean fixBadTx) throws Exception;
+
+   default JournalLoadInformation load(SparseArrayLinkedList<RecordInfo> committedRecords,
+                                       List<PreparedTransactionInfo> preparedTransactions,
+                                       TransactionFailureCallback transactionFailure) throws Exception {
+      return load(committedRecords, preparedTransactions, transactionFailure, true);
+   }
+
+   JournalLoadInformation load(SparseArrayLinkedList<RecordInfo> committedRecords,
                                List<PreparedTransactionInfo> preparedTransactions,
                                TransactionFailureCallback transactionFailure,
                                boolean fixBadTx) throws Exception;

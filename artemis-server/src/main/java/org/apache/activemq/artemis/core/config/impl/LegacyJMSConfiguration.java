@@ -21,11 +21,12 @@ import java.io.InputStream;
 import java.net.URL;
 import java.util.Map;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.config.CoreAddressConfiguration;
-import org.apache.activemq.artemis.core.config.CoreQueueConfiguration;
 import org.apache.activemq.artemis.core.deployers.Deployable;
+import org.apache.activemq.artemis.core.server.ActivateCallback;
 import org.apache.activemq.artemis.core.server.ActiveMQComponent;
 import org.apache.activemq.artemis.spi.core.security.ActiveMQSecurityManager;
 import org.apache.activemq.artemis.utils.XMLConfigurationUtil;
@@ -90,7 +91,7 @@ public class LegacyJMSConfiguration implements Deployable {
    public void buildService(ActiveMQSecurityManager securityManager,
                             MBeanServer mBeanServer,
                             Map<String, Deployable> deployables,
-                            Map<String, ActiveMQComponent> components) throws Exception {
+                            Map<String, ActiveMQComponent> components, ActivateCallback activateCallback) throws Exception {
    }
 
    @Override
@@ -139,7 +140,6 @@ public class LegacyJMSConfiguration implements Deployable {
     * Parse the topic node as a TopicConfiguration object
     *
     * @param node
-    * @return topic configuration
     * @throws Exception
     */
    public void parseTopicConfiguration(final Node node) throws Exception {
@@ -153,7 +153,6 @@ public class LegacyJMSConfiguration implements Deployable {
     * Parse the Queue Configuration node as a QueueConfiguration object
     *
     * @param node
-    * @return jms queue configuration
     * @throws Exception
     */
    public void parseQueueConfiguration(final Node node) throws Exception {
@@ -176,9 +175,7 @@ public class LegacyJMSConfiguration implements Deployable {
       configuration.addAddressConfiguration(new CoreAddressConfiguration()
                                                .setName(queueName)
                                                .addRoutingType(RoutingType.ANYCAST)
-                                               .addQueueConfiguration(new CoreQueueConfiguration()
-                                                                         .setAddress(queueName)
-                                                                         .setName(queueName)
+                                               .addQueueConfiguration(new QueueConfiguration(queueName)
                                                                          .setFilterString(selectorString)
                                                                          .setDurable(durable)
                                                                          .setRoutingType(RoutingType.ANYCAST)));

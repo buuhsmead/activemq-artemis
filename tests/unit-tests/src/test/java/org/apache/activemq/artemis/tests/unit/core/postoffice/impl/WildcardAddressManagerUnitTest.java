@@ -39,12 +39,14 @@ import org.apache.activemq.artemis.core.server.RoutingContext;
 import org.apache.activemq.artemis.core.server.cluster.impl.MessageLoadBalancingType;
 import org.apache.activemq.artemis.core.server.impl.AddressInfo;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.jboss.logging.Logger;
 import org.junit.Test;
 
 /**
  * This test is replicating the behaviour from https://issues.jboss.org/browse/HORNETQ-988.
  */
 public class WildcardAddressManagerUnitTest extends ActiveMQTestBase {
+   private static final Logger log = Logger.getLogger(WildcardAddressManagerUnitTest.class);
 
    @Test
    public void testUnitOnWildCardFailingScenario() throws Exception {
@@ -149,21 +151,21 @@ public class WildcardAddressManagerUnitTest extends ActiveMQTestBase {
 
       assertEquals(1, ad.getBindingsForRoutingAddress(SimpleString.toSimpleString("Topic1.>")).getBindings().size());
       assertEquals(1, ad.getBindingsForRoutingAddress(SimpleString.toSimpleString("Topic1.test")).getBindings().size());
-      assertEquals(0, ad.getDirectBindings(SimpleString.toSimpleString("Topic1.test")).getBindings().size());
-      assertEquals(1, ad.getDirectBindings(SimpleString.toSimpleString("Topic1.>")).getBindings().size());
+      assertEquals(0, ad.getDirectBindings(SimpleString.toSimpleString("Topic1.test")).size());
+      assertEquals(1, ad.getDirectBindings(SimpleString.toSimpleString("Topic1.>")).size());
 
       //Remove the address
       ad.removeAddressInfo(SimpleString.toSimpleString("Topic1.test"));
 
       //should still have 1 address and binding
       assertEquals(1, ad.getAddresses().size());
-      assertEquals(1, ad.getBindings().size());
+      assertEquals(1, ad.getBindings().count());
 
       ad.removeBinding(SimpleString.toSimpleString("one"), null);
       ad.removeAddressInfo(SimpleString.toSimpleString("Topic1.>"));
 
       assertEquals(0, ad.getAddresses().size());
-      assertEquals(0, ad.getBindings().size());
+      assertEquals(0, ad.getBindings().count());
    }
 
    @Test
@@ -187,12 +189,12 @@ public class WildcardAddressManagerUnitTest extends ActiveMQTestBase {
       assertEquals(1, ad.getBindingsForRoutingAddress(SimpleString.toSimpleString("Topic1.test.test1")).getBindings().size());
       assertEquals(1, ad.getBindingsForRoutingAddress(SimpleString.toSimpleString("Topic1.test.test2")).getBindings().size());
 
-      assertEquals(1, ad.getDirectBindings(SimpleString.toSimpleString("Topic1.>")).getBindings().size());
-      assertEquals(1, ad.getDirectBindings(SimpleString.toSimpleString("Topic1.test")).getBindings().size());
-      assertEquals(0, ad.getDirectBindings(SimpleString.toSimpleString("Topic1.test1")).getBindings().size());
-      assertEquals(0, ad.getDirectBindings(SimpleString.toSimpleString("Topic1.test2")).getBindings().size());
-      assertEquals(0, ad.getDirectBindings(SimpleString.toSimpleString("Topic2.>")).getBindings().size());
-      assertEquals(1, ad.getDirectBindings(SimpleString.toSimpleString("Topic2.test")).getBindings().size());
+      assertEquals(1, ad.getDirectBindings(SimpleString.toSimpleString("Topic1.>")).size());
+      assertEquals(1, ad.getDirectBindings(SimpleString.toSimpleString("Topic1.test")).size());
+      assertEquals(0, ad.getDirectBindings(SimpleString.toSimpleString("Topic1.test1")).size());
+      assertEquals(0, ad.getDirectBindings(SimpleString.toSimpleString("Topic1.test2")).size());
+      assertEquals(0, ad.getDirectBindings(SimpleString.toSimpleString("Topic2.>")).size());
+      assertEquals(1, ad.getDirectBindings(SimpleString.toSimpleString("Topic2.test")).size());
 
    }
 
@@ -348,7 +350,7 @@ public class WildcardAddressManagerUnitTest extends ActiveMQTestBase {
 
       @Override
       public void route(Message message, RoutingContext context) throws Exception {
-         System.out.println("routing message: " + message);
+         log.debug("routing message: " + message);
       }
 
       @Override

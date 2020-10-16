@@ -29,8 +29,11 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
+import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.Pair;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
@@ -58,6 +61,7 @@ import org.apache.activemq.artemis.core.persistence.QueueBindingInfo;
 import org.apache.activemq.artemis.core.persistence.AddressQueueStatus;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
 import org.apache.activemq.artemis.core.persistence.config.PersistedAddressSetting;
+import org.apache.activemq.artemis.core.persistence.config.PersistedDivertConfiguration;
 import org.apache.activemq.artemis.core.persistence.config.PersistedRoles;
 import org.apache.activemq.artemis.core.persistence.impl.PageCountPending;
 import org.apache.activemq.artemis.core.postoffice.Binding;
@@ -134,7 +138,7 @@ public class SendAckFailTest extends SpawnedTestBase {
 
             ClientSession session = sf.createSession();
             session.createAddress(SimpleString.toSimpleString("T1"), RoutingType.ANYCAST, true);
-            session.createQueue(SimpleString.toSimpleString("T1"), RoutingType.ANYCAST, SimpleString.toSimpleString("T1"), true);
+            session.createQueue(new QueueConfiguration("T1").setRoutingType(RoutingType.ANYCAST));
 
             ClientProducer producer = session.createProducer("T1");
 
@@ -183,14 +187,14 @@ public class SendAckFailTest extends SpawnedTestBase {
                ClientMessage message = consumer.receive(1000);
                if (message == null) {
                   for (Integer msgi : listSent) {
-                     System.out.println("Message " + msgi + " was lost");
+                     instanceLog.debug("Message " + msgi + " was lost");
                   }
                   fail("missed messages!");
                }
                message.acknowledge();
 
                if (!listSent.remove(message.getIntProperty("myid"))) {
-                  System.out.println("Message " + message + " with id " + message.getIntProperty("myid") + " received in duplicate");
+                  instanceLog.debug("Message " + message + " with id " + message.getIntProperty("myid") + " received in duplicate");
                   fail("Message " + message + " with id " + message.getIntProperty("myid") + " received in duplicate");
                }
             }
@@ -249,8 +253,6 @@ public class SendAckFailTest extends SpawnedTestBase {
 
                      if (fail) {
                         if (count.incrementAndGet() == 110) {
-                           System.out.println("Failing " + message);
-                           System.out.flush();
                            Thread.sleep(100);
                            Runtime.getRuntime().halt(-1);
                         }
@@ -265,7 +267,7 @@ public class SendAckFailTest extends SpawnedTestBase {
 
 
 
-         System.out.println("Location::" + server.getConfiguration().getJournalLocation().getAbsolutePath());
+         instanceLog.debug("Location::" + server.getConfiguration().getJournalLocation().getAbsolutePath());
          addServer(server);
          server.start();
          return server;
@@ -281,6 +283,11 @@ public class SendAckFailTest extends SpawnedTestBase {
       @Override
       public void start() throws Exception {
          manager.start();
+      }
+
+      @Override
+      public LargeServerMessage largeMessageCreated(long id, LargeServerMessage largeMessage) throws Exception {
+         return manager.largeMessageCreated(id, largeMessage);
       }
 
       @Override
@@ -431,8 +438,8 @@ public class SendAckFailTest extends SpawnedTestBase {
       }
 
       @Override
-      public void deleteMessage(long messageID) throws Exception {
-         manager.deleteMessage(messageID);
+      public boolean deleteMessage(long messageID) throws Exception {
+         return manager.deleteMessage(messageID);
       }
 
       @Override
@@ -446,13 +453,13 @@ public class SendAckFailTest extends SpawnedTestBase {
       }
 
       @Override
-      public void updateDeliveryCount(MessageReference ref) throws Exception {
-         manager.updateDeliveryCount(ref);
+      public boolean updateDeliveryCount(MessageReference ref) throws Exception {
+         return manager.updateDeliveryCount(ref);
       }
 
       @Override
-      public void updateScheduledDeliveryTime(MessageReference ref) throws Exception {
-         manager.updateScheduledDeliveryTime(ref);
+      public boolean updateScheduledDeliveryTime(MessageReference ref) throws Exception {
+         return manager.updateScheduledDeliveryTime(ref);
       }
 
       @Override
@@ -702,6 +709,21 @@ public class SendAckFailTest extends SpawnedTestBase {
       }
 
       @Override
+      public void storeDivertConfiguration(PersistedDivertConfiguration persistedDivertConfiguration) throws Exception {
+
+      }
+
+      @Override
+      public void deleteDivertConfiguration(String divertName) throws Exception {
+
+      }
+
+      @Override
+      public List<PersistedDivertConfiguration> recoverDivertConfigurations() {
+         return null;
+      }
+
+      @Override
       public long storePageCounter(long txID, long queueID, long value, long size) throws Exception {
          return manager.storePageCounter(txID, queueID, value, size);
       }
@@ -801,6 +823,16 @@ public class SendAckFailTest extends SpawnedTestBase {
       @Override
       public void injectMonitor(FileStoreMonitor monitor) throws Exception {
          manager.injectMonitor(monitor);
+      }
+
+      @Override
+      public void deleteLargeMessageBody(LargeServerMessage largeServerMessage) throws ActiveMQException {
+         manager.deleteLargeMessageBody(largeServerMessage);
+      }
+
+      @Override
+      public void addBytesToLargeMessage(SequentialFile file, long messageId, ActiveMQBuffer bytes) throws Exception {
+         manager.addBytesToLargeMessage(file, messageId, bytes);
       }
 
       private final StorageManager manager;

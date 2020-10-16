@@ -19,6 +19,7 @@ package org.apache.activemq.artemis.rest.test;
 import java.util.HashMap;
 
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
@@ -36,6 +37,7 @@ import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ActiveMQServers;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.core.server.impl.AddressInfo;
+import org.jboss.logging.Logger;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -45,6 +47,7 @@ import org.junit.Test;
  * Play with ActiveMQ
  */
 public class RawAckTest {
+   private static final Logger log = Logger.getLogger(RawAckTest.class);
 
    protected static ActiveMQServer activeMQServer;
    static ServerLocator serverLocator;
@@ -68,7 +71,7 @@ public class RawAckTest {
 
       SimpleString addr = SimpleString.toSimpleString("testQueue");
       activeMQServer.addAddressInfo(new AddressInfo(addr, RoutingType.MULTICAST));
-      activeMQServer.createQueue(addr, RoutingType.MULTICAST, addr, null, false, false);
+      activeMQServer.createQueue(new QueueConfiguration(addr).setDurable(false));
       session = sessionFactory.createSession(true, true);
       producer = session.createProducer(addr);
       session.start();
@@ -98,7 +101,7 @@ public class RawAckTest {
             byte[] bytes = new byte[size];
             message.getBodyBuffer().readBytes(bytes);
             String str = new String(bytes);
-            System.out.println(str);
+            log.debug(str);
             message.acknowledge();
             message = consumer.receive(1);
             if (message != null) {

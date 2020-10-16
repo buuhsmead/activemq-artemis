@@ -294,6 +294,14 @@
             </xsd:annotation>
          </xsd:element>
 
+         <xsd:element name="temporary-queue-namespace" type="xsd:string" default="" maxOccurs="1" minOccurs="0">
+            <xsd:annotation>
+               <xsd:documentation>
+                  the namespace to use for looking up address settings for temporary queues
+               </xsd:documentation>
+            </xsd:annotation>
+         </xsd:element>
+
          <xsd:element name="async-connection-execution-enabled" type="xsd:boolean" default="true" maxOccurs="1"
                       minOccurs="0">
             <xsd:annotation>
@@ -331,7 +339,7 @@
          <xsd:element name="message-expiry-thread-priority" type="xsd:int" default="3" maxOccurs="1" minOccurs="0">
             <xsd:annotation>
                <xsd:documentation>
-                  the priority of the thread expiring messages
+                  DEPRECATED: the priority of the thread expiring messages
                </xsd:documentation>
             </xsd:annotation>
          </xsd:element>
@@ -518,6 +526,7 @@
                         <xsd:attribute name="purge-on-no-consumers" type="xsd:boolean" use="optional"/>
                         <xsd:attribute name="exclusive" type="xsd:boolean" use="optional"/>
                         <xsd:attribute name="group-rebalance" type="xsd:boolean" use="optional"/>
+                        <xsd:attribute name="group-rebalance-pause-dispatch" type="xsd:boolean" use="optional"/>
                         <xsd:attribute name="group-buckets" type="xsd:int" use="optional"/>
                         <xsd:attribute name="group-first-key" type="xsd:string" use="optional"/>
                         <xsd:attribute name="last-value" type="xsd:boolean" use="optional"/>
@@ -1696,6 +1705,7 @@
       <xsd:attribute name="auto-delete-message-count" type="xsd:long" use="optional" />
       <xsd:attribute name="max-hops" type="xsd:int" use="optional" />
       <xsd:attribute name="name" type="xsd:ID" use="required" />
+      <xsd:attribute name="enable-divert-bindings" type="xsd:boolean" use="optional" />
       <xsd:attributeGroup ref="xml:specialAttrs"/>
    </xsd:complexType>
 
@@ -2916,10 +2926,35 @@
             </xsd:documentation>
          </xsd:annotation>
          <xsd:all>
-            <xsd:element maxOccurs="1" minOccurs="0" name="dead-letter-address" type="xsd:string">
+            <xsd:element name="dead-letter-address" type="xsd:string" maxOccurs="1" minOccurs="0">
                <xsd:annotation>
                   <xsd:documentation>
                      the address to send dead messages to
+                  </xsd:documentation>
+               </xsd:annotation>
+            </xsd:element>
+
+            <xsd:element name="auto-create-dead-letter-resources" type="xsd:boolean" default="false" maxOccurs="1" minOccurs="0">
+               <xsd:annotation>
+                  <xsd:documentation>
+                     whether or not to automatically create the dead-letter-address and/or a corresponding queue
+                     on that address when any matching queue is created
+                  </xsd:documentation>
+               </xsd:annotation>
+            </xsd:element>
+
+            <xsd:element name="dead-letter-queue-prefix" type="xsd:string" default="DLQ." maxOccurs="1" minOccurs="0">
+               <xsd:annotation>
+                  <xsd:documentation>
+                     the prefix to use for auto-created dead letter queues
+                  </xsd:documentation>
+               </xsd:annotation>
+            </xsd:element>
+
+            <xsd:element name="dead-letter-queue-suffix" type="xsd:string" default="" maxOccurs="1" minOccurs="0">
+               <xsd:annotation>
+                  <xsd:documentation>
+                     the suffix to use for auto-created dead letter queues
                   </xsd:documentation>
                </xsd:annotation>
             </xsd:element>
@@ -2932,11 +2967,52 @@
                </xsd:annotation>
             </xsd:element>
 
+            <xsd:element name="auto-create-expiry-resources" type="xsd:boolean" default="false" maxOccurs="1" minOccurs="0">
+               <xsd:annotation>
+                  <xsd:documentation>
+                     whether or not to automatically create the expiry-address and/or a corresponding queue
+                     on that address when a message is sent to a matching queue
+                  </xsd:documentation>
+               </xsd:annotation>
+            </xsd:element>
+
+            <xsd:element name="expiry-queue-prefix" type="xsd:string" default="EXP." maxOccurs="1" minOccurs="0">
+               <xsd:annotation>
+                  <xsd:documentation>
+                     the prefix to use for auto-created expiry queues
+                  </xsd:documentation>
+               </xsd:annotation>
+            </xsd:element>
+
+            <xsd:element name="expiry-queue-suffix" type="xsd:string" default="" maxOccurs="1" minOccurs="0">
+               <xsd:annotation>
+                  <xsd:documentation>
+                     the suffix to use for auto-created expiry queues
+                  </xsd:documentation>
+               </xsd:annotation>
+            </xsd:element>
+
             <xsd:element name="expiry-delay" type="xsd:long" default="-1" maxOccurs="1" minOccurs="0">
                <xsd:annotation>
                   <xsd:documentation>
                      Overrides the expiration time for messages using the default value for expiration time. "-1"
                      disables this setting.
+                  </xsd:documentation>
+               </xsd:annotation>
+            </xsd:element>
+
+            <xsd:element name="min-expiry-delay" type="xsd:long" default="-1" maxOccurs="1" minOccurs="0">
+               <xsd:annotation>
+                  <xsd:documentation>
+                     Overrides the expiration time for messages using a lower value. "-1" disables this setting.
+                  </xsd:documentation>
+               </xsd:annotation>
+            </xsd:element>
+
+            <xsd:element name="max-expiry-delay" type="xsd:long" default="-1" maxOccurs="1" minOccurs="0">
+               <xsd:annotation>
+                  <xsd:documentation>
+                     Overrides the expiration time for messages using a higher value. "-1" disables this setting.
                   </xsd:documentation>
                </xsd:annotation>
             </xsd:element>
@@ -3087,6 +3163,14 @@
                <xsd:annotation>
                   <xsd:documentation>
                      whether to rebalance groups when a consumer is added
+                  </xsd:documentation>
+               </xsd:annotation>
+            </xsd:element>
+
+            <xsd:element name="default-group-rebalance-pause-dispatch" type="xsd:boolean" default="false" maxOccurs="1" minOccurs="0">
+               <xsd:annotation>
+                  <xsd:documentation>
+                     whether to pause dispatch when rebalancing groups
                   </xsd:documentation>
                </xsd:annotation>
             </xsd:element>
@@ -3506,6 +3590,7 @@
       <xsd:attribute name="consumers-before-dispatch" type="xsd:int" use="optional"/>
       <xsd:attribute name="delay-before-dispatch" type="xsd:long" use="optional"/>
       <xsd:attribute name="ring-size" type="xsd:long" use="optional"/>
+      <xsd:attribute name="enabled" type="xsd:boolean" use="optional"/>
       <xsd:attributeGroup ref="xml:specialAttrs"/>
    </xsd:complexType>
 

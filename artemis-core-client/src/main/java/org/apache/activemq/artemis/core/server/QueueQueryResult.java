@@ -51,6 +51,8 @@ public class QueueQueryResult {
 
    private Boolean groupRebalance;
 
+   private Boolean groupRebalancePauseDispatch;
+
    private Integer groupBuckets;
 
    private SimpleString groupFirstKey;
@@ -75,6 +77,8 @@ public class QueueQueryResult {
 
    private Long ringSize;
 
+   private Boolean enabled;
+
    public QueueQueryResult(final SimpleString name,
                            final SimpleString address,
                            final boolean durable,
@@ -90,6 +94,7 @@ public class QueueQueryResult {
                            final int maxConsumers,
                            final Boolean exclusive,
                            final Boolean groupRebalance,
+                           final Boolean groupRebalancePauseDispatch,
                            final Integer groupBuckets,
                            final SimpleString groupFirstKey,
                            final Boolean lastValue,
@@ -101,7 +106,8 @@ public class QueueQueryResult {
                            final Long autoDeleteDelay,
                            final Long autoDeleteMessageCount,
                            final Integer defaultConsumerWindowSize,
-                           final Long ringSize) {
+                           final Long ringSize,
+                           final Boolean enabled) {
       this.durable = durable;
 
       this.temporary = temporary;
@@ -132,6 +138,8 @@ public class QueueQueryResult {
 
       this.groupRebalance = groupRebalance;
 
+      this.groupRebalancePauseDispatch = groupRebalancePauseDispatch;
+
       this.groupBuckets = groupBuckets;
 
       this.groupFirstKey = groupFirstKey;
@@ -155,6 +163,8 @@ public class QueueQueryResult {
       this.defaultConsumerWindowSize = defaultConsumerWindowSize;
 
       this.ringSize = ringSize;
+
+      this.enabled = enabled;
    }
 
    public boolean isExists() {
@@ -245,6 +255,10 @@ public class QueueQueryResult {
       return groupRebalance;
    }
 
+   public Boolean isGroupRebalancePauseDispatch() {
+      return groupRebalancePauseDispatch;
+   }
+
    public Integer getGroupBuckets() {
       return groupBuckets;
    }
@@ -267,5 +281,9 @@ public class QueueQueryResult {
 
    public Long getRingSize() {
       return ringSize;
+   }
+
+   public Boolean isEnabled() {
+      return enabled;
    }
 }

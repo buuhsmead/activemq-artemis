@@ -16,13 +16,16 @@
  */
 package org.apache.activemq.artemis.tests.unit.core.server.impl.fakes;
 
+import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
+import java.util.stream.Stream;
 
 import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.Pair;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.filter.Filter;
 import org.apache.activemq.artemis.core.persistence.impl.nullpm.NullStorageManager;
@@ -36,7 +39,6 @@ import org.apache.activemq.artemis.core.postoffice.impl.DuplicateIDCacheImpl;
 import org.apache.activemq.artemis.core.server.MessageReference;
 import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.server.RoutingContext;
-import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.core.server.cluster.impl.MessageLoadBalancingType;
 import org.apache.activemq.artemis.core.server.impl.AddressInfo;
 import org.apache.activemq.artemis.core.server.impl.MessageReferenceImpl;
@@ -78,6 +80,16 @@ public class FakePostOffice implements PostOffice {
                                    SimpleString user,
                                    Boolean configurationManaged,
                                    Long ringSize) throws Exception {
+      return null;
+   }
+
+   @Override
+   public QueueBinding updateQueue(QueueConfiguration queueConfiguration) throws Exception {
+      return updateQueue(queueConfiguration, false);
+   }
+
+   @Override
+   public QueueBinding updateQueue(QueueConfiguration queueConfiguration, boolean forceUpdate) throws Exception {
       return null;
    }
 
@@ -166,7 +178,7 @@ public class FakePostOffice implements PostOffice {
    }
 
    @Override
-   public Map<SimpleString, Binding> getAllBindings() {
+   public Stream<Binding> getAllBindings() {
       return null;
    }
 
@@ -182,13 +194,13 @@ public class FakePostOffice implements PostOffice {
    }
 
    @Override
-   public Bindings getMatchingBindings(final SimpleString address) {
+   public Collection<Binding> getMatchingBindings(final SimpleString address) {
 
       return null;
    }
 
    @Override
-   public Bindings getDirectBindings(final SimpleString address) {
+   public Collection<Binding> getDirectBindings(final SimpleString address) {
 
       return null;
    }
@@ -230,10 +242,10 @@ public class FakePostOffice implements PostOffice {
    }
 
    @Override
-   public MessageReference reroute(final Message message,
+   public MessageReference reload(final Message message,
                                    final Queue queue,
                                    final Transaction tx) throws Exception {
-      message.incrementRefCount();
+      message.refUp();
       return new MessageReferenceImpl();
    }
 

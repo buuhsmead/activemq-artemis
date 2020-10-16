@@ -117,6 +117,26 @@ public final class AddressSettingsInfo {
 
    private final long retroactiveMessageCount;
 
+   private final boolean autoCreateDeadLetterResources;
+
+   private final String deadLetterQueuePrefix;
+
+   private final String deadLetterQueueSuffix;
+
+   private final boolean autoCreateExpiryResources;
+
+   private final String expiryQueuePrefix;
+
+   private final String expiryQueueSuffix;
+
+   private final long expiryDelay;
+
+   private final long minExpiryDelay;
+
+   private final long maxExpiryDelay;
+
+   private final boolean enableMetrics;
+
    // Static --------------------------------------------------------
 
    public static AddressSettingsInfo from(final String jsonString) {
@@ -167,7 +187,17 @@ public final class AddressSettingsInfo {
                                      object.getJsonNumber("autoDeleteQueuesMessageCount").longValue(),
                                      object.getJsonNumber("autoDeleteAddressesDelay").longValue(),
                                      object.getJsonNumber("redeliveryCollisionAvoidanceFactor").doubleValue(),
-                                     object.getJsonNumber("retroactiveMessageCount").longValue());
+                                     object.getJsonNumber("retroactiveMessageCount").longValue(),
+                                     object.getBoolean("autoCreateDeadLetterResources"),
+                                     object.getString("deadLetterQueuePrefix"),
+                                     object.getString("deadLetterQueueSuffix"),
+                                     object.getBoolean("autoCreateExpiryResources"),
+                                     object.getString("expiryQueuePrefix"),
+                                     object.getString("expiryQueueSuffix"),
+                                     object.getJsonNumber("expiryDelay").longValue(),
+                                     object.getJsonNumber("minExpiryDelay").longValue(),
+                                     object.getJsonNumber("maxExpiryDelay").longValue(),
+                                     object.getBoolean("enableMetrics"));
    }
 
    // Constructors --------------------------------------------------
@@ -218,7 +248,17 @@ public final class AddressSettingsInfo {
                               long autoDeleteQueuesMessageCount,
                               long autoDeleteAddressesDelay,
                               double redeliveryCollisionAvoidanceFactor,
-                              long retroactiveMessageCount) {
+                              long retroactiveMessageCount,
+                              boolean autoCreateDeadLetterResources,
+                              String deadLetterQueuePrefix,
+                              String deadLetterQueueSuffix,
+                              boolean autoCreateExpiryResources,
+                              String expiryQueuePrefix,
+                              String expiryQueueSuffix,
+                              long expiryDelay,
+                              long minExpiryDelay,
+                              long maxExpiryDelay,
+                              boolean enableMetrics) {
       this.addressFullMessagePolicy = addressFullMessagePolicy;
       this.maxSizeBytes = maxSizeBytes;
       this.pageSizeBytes = pageSizeBytes;
@@ -266,6 +306,16 @@ public final class AddressSettingsInfo {
       this.autoDeleteAddressesDelay = autoDeleteAddressesDelay;
       this.redeliveryCollisionAvoidanceFactor = redeliveryCollisionAvoidanceFactor;
       this.retroactiveMessageCount = retroactiveMessageCount;
+      this.autoCreateDeadLetterResources = autoCreateDeadLetterResources;
+      this.deadLetterQueuePrefix = deadLetterQueuePrefix;
+      this.deadLetterQueueSuffix = deadLetterQueueSuffix;
+      this.autoCreateExpiryResources = autoCreateExpiryResources;
+      this.expiryQueuePrefix = expiryQueuePrefix;
+      this.expiryQueueSuffix = expiryQueueSuffix;
+      this.expiryDelay = expiryDelay;
+      this.minExpiryDelay = minExpiryDelay;
+      this.maxExpiryDelay = maxExpiryDelay;
+      this.enableMetrics = enableMetrics;
    }
 
    // Public --------------------------------------------------------
@@ -464,6 +514,46 @@ public final class AddressSettingsInfo {
 
    public long getRetroactiveMessageCount() {
       return retroactiveMessageCount;
+   }
+
+   public boolean isAutoCreateDeadLetterResources() {
+      return autoCreateDeadLetterResources;
+   }
+
+   public String getDeadLetterQueuePrefix() {
+      return deadLetterQueuePrefix;
+   }
+
+   public String getDeadLetterQueueSuffix() {
+      return deadLetterQueueSuffix;
+   }
+
+   public boolean isAutoCreateExpiryResources() {
+      return autoCreateExpiryResources;
+   }
+
+   public String getExpiryQueuePrefix() {
+      return expiryQueuePrefix;
+   }
+
+   public String getExpiryQueueSuffix() {
+      return expiryQueueSuffix;
+   }
+
+   public long getExpiryDelay() {
+      return expiryDelay;
+   }
+
+   public long getMinExpiryDelay() {
+      return minExpiryDelay;
+   }
+
+   public long getMaxExpiryDelay() {
+      return maxExpiryDelay;
+   }
+
+   public boolean isEnableMetrics() {
+      return enableMetrics;
    }
 }
 

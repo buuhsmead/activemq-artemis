@@ -37,11 +37,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.config.CoreAddressConfiguration;
-import org.apache.activemq.artemis.core.config.CoreQueueConfiguration;
 import org.apache.activemq.artemis.core.postoffice.Binding;
 import org.apache.activemq.artemis.core.postoffice.QueueBinding;
 import org.apache.activemq.artemis.core.protocol.mqtt.MQTTUtil;
@@ -69,12 +69,14 @@ import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import static org.apache.activemq.artemis.utils.collections.IterableStream.iterableOf;
+
 /**
  * MQTT Test imported from ActiveMQ MQTT component.
  */
 public class MQTTTest extends MQTTTestSupport {
 
-   private static final Logger LOG = LoggerFactory.getLogger(MQTTTest.class);
+   private static final Logger log = LoggerFactory.getLogger(MQTTTest.class);
 
    private static final String AMQP_URI = "tcp://localhost:61616";
 
@@ -149,10 +151,8 @@ public class MQTTTest extends MQTTTestSupport {
       subscriptionProvider.subscribe("foo/bah", AT_MOST_ONCE);
 
 
-      for (Binding b : server.getPostOffice().getAllBindings().values()) {
-         if (b instanceof QueueBinding) {
-            Assert.assertFalse("Queue " + ((QueueBinding) b).getQueue().getName(), ((QueueBinding)b).getQueue().isDirectDeliver());
-         }
+      for (Binding b : iterableOf(server.getPostOffice().getAllBindings().filter(QueueBinding.class::isInstance))) {
+         Assert.assertFalse("Queue " + ((QueueBinding) b).getQueue().getName(), ((QueueBinding)b).getQueue().isDirectDeliver());
       }
 
       subscriptionProvider.disconnect();
@@ -588,7 +588,7 @@ public class MQTTTest extends MQTTTestSupport {
 
       final String[] clientIds = {null, "foo", "durable"};
       for (String clientId : clientIds) {
-         LOG.info("Testing now with Client ID: {}", clientId);
+         log.debug("Testing now with Client ID: {}", clientId);
 
          mqtt.setClientId(clientId);
          mqtt.setCleanSession(!"durable".equals(clientId));
@@ -657,7 +657,7 @@ public class MQTTTest extends MQTTTestSupport {
 
       final String[] clientIds = {null, "foo", "durable"};
       for (String clientId : clientIds) {
-         LOG.info("Testing now with Client ID: {}", clientId);
+         log.debug("Testing now with Client ID: {}", clientId);
 
          mqtt.setClientId(clientId);
          mqtt.setCleanSession(!"durable".equals(clientId));
@@ -710,7 +710,7 @@ public class MQTTTest extends MQTTTestSupport {
          msg.ack();
          assertNull(connection.receive(100, TimeUnit.MILLISECONDS));
 
-         LOG.info("Test now unsubscribing from: {} for the last time", TOPICA);
+         log.debug("Test now unsubscribing from: {} for the last time", TOPICA);
          connection.unsubscribe(new String[]{TOPICA});
          connection.disconnect();
       }
@@ -727,7 +727,7 @@ public class MQTTTest extends MQTTTestSupport {
       mqtt.setTracer(new Tracer() {
          @Override
          public void onReceive(MQTTFrame frame) {
-            LOG.info("Client received:\n" + frame);
+            log.debug("Client received:\n" + frame);
             if (frame.messageType() == PUBLISH.TYPE) {
                PUBLISH publish = new PUBLISH();
                try {
@@ -741,7 +741,7 @@ public class MQTTTest extends MQTTTestSupport {
 
          @Override
          public void onSend(MQTTFrame frame) {
-            LOG.info("Client sent:\n" + frame);
+            log.debug("Client sent:\n" + frame);
          }
       });
 
@@ -813,7 +813,7 @@ public class MQTTTest extends MQTTTestSupport {
       mqtt.setTracer(new Tracer() {
          @Override
          public void onReceive(MQTTFrame frame) {
-            LOG.info("Client received:\n" + frame);
+            log.debug("Client received:\n" + frame);
             if (frame.messageType() == PUBLISH.TYPE) {
                PUBLISH publish = new PUBLISH();
                try {
@@ -827,7 +827,7 @@ public class MQTTTest extends MQTTTestSupport {
 
          @Override
          public void onSend(MQTTFrame frame) {
-            LOG.info("Client sent:\n" + frame);
+            log.debug("Client sent:\n" + frame);
          }
       });
 
@@ -870,12 +870,12 @@ public class MQTTTest extends MQTTTestSupport {
       mqtt.setTracer(new Tracer() {
          @Override
          public void onReceive(MQTTFrame frame) {
-            LOG.info("Client received:\n" + frame);
+            log.debug("Client received:\n" + frame);
             if (frame.messageType() == PUBLISH.TYPE) {
                PUBLISH publish = new PUBLISH();
                try {
                   publish.decode(frame);
-                  LOG.info("PUBLISH " + publish);
+                  log.debug("PUBLISH " + publish);
                } catch (ProtocolException e) {
                   fail("Error decoding publish " + e.getMessage());
                }
@@ -888,7 +888,7 @@ public class MQTTTest extends MQTTTestSupport {
 
          @Override
          public void onSend(MQTTFrame frame) {
-            LOG.info("Client sent:\n" + frame);
+            log.debug("Client sent:\n" + frame);
          }
       });
 
@@ -950,12 +950,12 @@ public class MQTTTest extends MQTTTestSupport {
          mqtts[i].setTracer(new Tracer() {
             @Override
             public void onReceive(MQTTFrame frame) {
-               LOG.info("Client received:\n" + frame);
+               log.debug("Client received:\n" + frame);
                if (frame.messageType() == PUBLISH.TYPE) {
                   PUBLISH publish = new PUBLISH();
                   try {
                      publish.decode(frame);
-                     LOG.info("PUBLISH " + publish);
+                     log.debug("PUBLISH " + publish);
                   } catch (ProtocolException e) {
                      fail("Error decoding publish " + e.getMessage());
                   }
@@ -968,7 +968,7 @@ public class MQTTTest extends MQTTTestSupport {
 
             @Override
             public void onSend(MQTTFrame frame) {
-               LOG.info("Client sent:\n" + frame);
+               log.debug("Client sent:\n" + frame);
             }
          });
       }
@@ -1027,7 +1027,7 @@ public class MQTTTest extends MQTTTestSupport {
 
    @Test(timeout = 60 * 1000)
    public void testClientConnectionFailureSendsWillMessage() throws Exception {
-      getServer().createQueue(SimpleString.toSimpleString("will"), RoutingType.MULTICAST, SimpleString.toSimpleString("will"), null, true, false);
+      getServer().createQueue(new QueueConfiguration("will"));
 
       MQTT mqtt = createMQTTConnection("1", false);
       mqtt.setKeepAlive((short) 1);
@@ -1053,7 +1053,7 @@ public class MQTTTest extends MQTTTestSupport {
 
    @Test(timeout = 60 * 1000)
    public void testWillMessageIsRetained() throws Exception {
-      getServer().createQueue(SimpleString.toSimpleString("will"), RoutingType.MULTICAST, SimpleString.toSimpleString("will"), null, true, false);
+      getServer().createQueue(new QueueConfiguration("will"));
 
       MQTT mqtt = createMQTTConnection("1", false);
       mqtt.setKeepAlive((short) 1);
@@ -1367,7 +1367,7 @@ public class MQTTTest extends MQTTTestSupport {
 
       for (int i = 1; i <= 10; ++i) {
 
-         LOG.info("Creating MQTT Connection {}", i);
+         log.debug("Creating MQTT Connection {}", i);
 
          MQTT mqtt = createMQTTConnection(clientId, false);
          mqtt.setKeepAlive((short) 2);
@@ -1464,7 +1464,7 @@ public class MQTTTest extends MQTTTestSupport {
          received++;
          payload = message.getPayload();
          String messageContent = new String(payload);
-         LOG.info("Received message from topic: " + message.getTopic() + " Message content: " + messageContent);
+         log.debug("Received message from topic: " + message.getTopic() + " Message content: " + messageContent);
          message.ack();
       }
 
@@ -1593,7 +1593,7 @@ public class MQTTTest extends MQTTTestSupport {
       for (int i = 0; i < 5; ++i) {
          Message message = connectionSub.receive(5, TimeUnit.SECONDS);
          assertNotNull("Missing message " + i, message);
-         LOG.info("Message is " + new String(message.getPayload()));
+         log.debug("Message is " + new String(message.getPayload()));
          received++;
          message.ack();
       }
@@ -1642,7 +1642,7 @@ public class MQTTTest extends MQTTTestSupport {
    //         @Override
    //         public void onReceive(MQTTFrame frame) {
    //            if (frame.messageType() == PUBLISH.TYPE) {
-   //               LOG.info("Received message with retain=" + frame.retain());
+   //               log.debug("Received message with retain=" + frame.retain());
    //               if (frame.retain()) {
    //                  retain[0]++;
    //               } else {
@@ -1746,7 +1746,7 @@ public class MQTTTest extends MQTTTestSupport {
          SimpleString coreAddress = new SimpleString("foo.bar");
          Topic[] mqttSubscription = new Topic[]{new Topic("foo/bar", QoS.AT_LEAST_ONCE)};
 
-         getServer().createQueue(coreAddress, RoutingType.MULTICAST, new SimpleString(clientId + "." + coreAddress), null, false, true, 0, false, true);
+         getServer().createQueue(new QueueConfiguration(new SimpleString(clientId + "." + coreAddress)).setAddress(coreAddress).setRoutingType(RoutingType.MULTICAST).setDurable(false).setTemporary(true).setMaxConsumers(0));
 
          MQTT mqtt = createMQTTConnection();
          mqtt.setClientId(clientId);
@@ -1900,15 +1900,12 @@ public class MQTTTest extends MQTTTestSupport {
    public void testBrokerRestartAfterSubHashWithConfigurationQueues() throws Exception {
 
       // Add some pre configured queues
-      CoreQueueConfiguration coreQueueConfiguration = new CoreQueueConfiguration();
-      coreQueueConfiguration.setName("DLQ");
-      coreQueueConfiguration.setRoutingType(RoutingType.ANYCAST);
-      coreQueueConfiguration.setAddress("DLA");
-
       CoreAddressConfiguration coreAddressConfiguration = new CoreAddressConfiguration();
       coreAddressConfiguration.setName("DLA");
       coreAddressConfiguration.addRoutingType(RoutingType.ANYCAST);
-      coreAddressConfiguration.addQueueConfiguration(coreQueueConfiguration);
+      coreAddressConfiguration.addQueueConfiguration(new QueueConfiguration("DLQ")
+                                                        .setAddress("DLA")
+                                                        .setRoutingType(RoutingType.ANYCAST));
 
       getServer().getConfiguration().getAddressConfigurations().add(coreAddressConfiguration);
 

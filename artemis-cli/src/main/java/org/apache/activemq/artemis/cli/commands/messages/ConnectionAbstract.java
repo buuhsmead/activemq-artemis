@@ -21,16 +21,29 @@ import javax.jms.Connection;
 import javax.jms.ConnectionFactory;
 import javax.jms.JMSException;
 import javax.jms.JMSSecurityException;
+import java.io.File;
+import java.net.InetAddress;
+import java.net.URI;
+import java.util.Map;
 
 import io.airlift.airline.Option;
+import org.apache.activemq.artemis.api.core.TransportConfiguration;
+import org.apache.activemq.artemis.cli.commands.ActionContext;
 import org.apache.activemq.artemis.cli.commands.InputAbstract;
+import org.apache.activemq.artemis.core.config.FileDeploymentManager;
+import org.apache.activemq.artemis.core.config.impl.FileConfiguration;
+import org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants;
 import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
+import org.apache.activemq.artemis.utils.ConfigurationHelper;
+import org.apache.activemq.artemis.utils.uri.SchemaConstants;
 import org.apache.qpid.jms.JmsConnectionFactory;
 
 public class ConnectionAbstract extends InputAbstract {
 
+   private static final String DEFAULT_BROKER_URL = "tcp://localhost:61616";
+
    @Option(name = "--url", description = "URL towards the broker. (default: tcp://localhost:61616)")
-   protected String brokerURL = "tcp://localhost:61616";
+   protected String brokerURL = DEFAULT_BROKER_URL;
 
    @Option(name = "--user", description = "User used to connect")
    protected String user;
@@ -48,24 +61,27 @@ public class ConnectionAbstract extends InputAbstract {
       return user;
    }
 
-   public void setUser(String user) {
+   public ConnectionAbstract setUser(String user) {
       this.user = user;
+      return this;
    }
 
    public String getPassword() {
       return password;
    }
 
-   public void setPassword(String password) {
+   public ConnectionAbstract setPassword(String password) {
       this.password = password;
+      return this;
    }
 
    public String getClientID() {
       return clientID;
    }
 
-   public void setClientID(String clientID) {
+   public ConnectionAbstract setClientID(String clientID) {
       this.clientID = clientID;
+      return this;
    }
 
    public String getProtocol() {
@@ -74,6 +90,64 @@ public class ConnectionAbstract extends InputAbstract {
 
    public void setProtocol(String protocol) {
       this.protocol = protocol;
+   }
+
+   @SuppressWarnings("StringEquality")
+   @Override
+   public Object execute(ActionContext context) throws Exception {
+      super.execute(context);
+
+      // it is intentional to make a comparison on the String object here
+      // this is to test if the original option was switched or not.
+      // we don't care about being .equals at all.
+      // as a matter of fact if you pass brokerURL in a way it's equals to DEFAULT_BROKER_URL,
+      // we should not the broker URL Instance
+      // and still honor the one passed by parameter.
+      // SupressWarnings was added to this method to supress the false positive here from error-prone.
+      if (brokerURL == DEFAULT_BROKER_URL) {
+         String brokerURLInstance = getBrokerURLInstance();
+
+         if (brokerURLInstance != null) {
+            brokerURL = brokerURLInstance;
+         }
+      }
+
+      System.out.println("Connection brokerURL = " + brokerURL);
+
+      return null;
+   }
+
+   private String getBrokerURLInstance() {
+      if (getBrokerInstance() != null) {
+         try {
+            FileConfiguration fileConfiguration = new FileConfiguration();
+            String brokerConfiguration = new File(new File(getBrokerEtc()), "broker.xml").toURI().toASCIIString();
+            FileDeploymentManager fileDeploymentManager = new FileDeploymentManager(brokerConfiguration);
+            fileDeploymentManager.addDeployable(fileConfiguration);
+            fileDeploymentManager.readConfiguration();
+
+            for (TransportConfiguration acceptorConfiguration: fileConfiguration.getAcceptorConfigurations()) {
+               if (acceptorConfiguration.getName().equals("artemis")) {
+                  Map<String, Object> acceptorParams = acceptorConfiguration.getParams();
+                  String scheme = ConfigurationHelper.getStringProperty(TransportConstants.SCHEME_PROP_NAME, SchemaConstants.TCP, acceptorParams);
+                  String host = ConfigurationHelper.getStringProperty(TransportConstants.HOST_PROP_NAME, "localhost", acceptorParams);
+                  int port = ConfigurationHelper.getIntProperty(TransportConstants.PORT_PROP_NAME, 61616, acceptorParams);
+
+                  if (InetAddress.getByName(host).isAnyLocalAddress()) {
+                     host = "localhost";
+                  }
+
+                  return new URI(scheme, null, host, port, null, null, null).toString();
+               }
+            }
+         } catch (Exception e) {
+            if (isVerbose()) {
+               System.out.print("Can not get the broker url instance: " + e.toString());
+            }
+         }
+      }
+
+      return null;
    }
 
    protected ConnectionFactory createConnectionFactory() throws Exception {

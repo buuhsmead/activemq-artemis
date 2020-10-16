@@ -17,9 +17,9 @@
 
 package org.apache.activemq.artemis.tests.integration.cluster.failover;
 
-import java.net.InetAddress;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
@@ -70,7 +70,7 @@ public class NetworkIsolationTest extends FailoverTestBase {
 
       Assert.assertTrue(Wait.waitFor(liveServer::isActive));
 
-      liveServer.getServer().getNetworkHealthCheck().addAddress(InetAddress.getByName(badAddress));
+      liveServer.getServer().getNetworkHealthCheck().addAddress(badAddress);
 
       Assert.assertTrue(Wait.waitFor(() -> !liveServer.isStarted()));
 
@@ -88,27 +88,27 @@ public class NetworkIsolationTest extends FailoverTestBase {
 
          // this block here is just to validate if ignoring loopback addresses logic is in place
          {
-            backupServer.getServer().getNetworkHealthCheck().addAddress(InetAddress.getByName("127.0.0.1"));
+            backupServer.getServer().getNetworkHealthCheck().addAddress("127.0.0.1");
 
             Assert.assertTrue(AssertionLoggerHandler.findText("AMQ202001"));
 
             AssertionLoggerHandler.clear();
 
-            backupServer.getServer().getNetworkHealthCheck().setIgnoreLoopback(true).addAddress(InetAddress.getByName("127.0.0.1"));
+            backupServer.getServer().getNetworkHealthCheck().setIgnoreLoopback(true).addAddress("127.0.0.1");
 
             Assert.assertFalse(AssertionLoggerHandler.findText("AMQ202001"));
 
             backupServer.getServer().getNetworkHealthCheck().clearAddresses();
          }
 
-         backupServer.getServer().getNetworkHealthCheck().addAddress(InetAddress.getByName(badAddress));
+         backupServer.getServer().getNetworkHealthCheck().addAddress(badAddress);
          backupServer.getServer().start();
 
          ClientSessionFactory sf = addSessionFactory(locator.createSessionFactory());
 
          ClientSession session = createSession(sf, false, true, true);
 
-         session.createQueue(FailoverTestBase.ADDRESS, FailoverTestBase.ADDRESS, null, true);
+         session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
          Assert.assertFalse(backupServer.getServer().getNetworkHealthCheck().check());
 
@@ -161,7 +161,7 @@ public class NetworkIsolationTest extends FailoverTestBase {
 
          Assert.assertFalse(liveServer.isStarted());
 
-         liveServer.getServer().getNetworkHealthCheck().setIgnoreLoopback(true).addAddress(InetAddress.getByName("127.0.0.1"));
+         liveServer.getServer().getNetworkHealthCheck().setIgnoreLoopback(true).addAddress("127.0.0.1");
 
          timeout = System.currentTimeMillis() + 30000;
          while (!liveServer.isStarted() && System.currentTimeMillis() < timeout) {

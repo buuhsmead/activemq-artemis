@@ -26,9 +26,8 @@ import org.apache.activemq.artemis.api.core.ICoreMessage;
 import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.SendAcknowledgementHandler;
-import org.apache.activemq.artemis.core.client.ActiveMQClientLogger;
 import org.apache.activemq.artemis.core.client.ActiveMQClientMessageBundle;
-import org.apache.activemq.artemis.core.message.LargeBodyEncoder;
+import org.apache.activemq.artemis.core.message.LargeBodyReader;
 import org.apache.activemq.artemis.spi.core.remoting.SessionContext;
 import org.apache.activemq.artemis.utils.ActiveMQBufferInputStream;
 import org.apache.activemq.artemis.utils.DeflaterReader;
@@ -42,8 +41,6 @@ import org.jboss.logging.Logger;
 public class ClientProducerImpl implements ClientProducerInternal {
 
    private static final Logger logger = Logger.getLogger(ClientProducerImpl.class);
-
-   private static boolean confirmationNotSetLogged = false;
 
    private final SimpleString address;
 
@@ -118,14 +115,14 @@ public class ClientProducerImpl implements ClientProducerInternal {
    public void send(final Message msg) throws ActiveMQException {
       checkClosed();
 
-      doSend(null, msg, null);
+      send(null, msg, sessionContext.getSendAcknowledgementHandler());
    }
 
    @Override
    public void send(final SimpleString address1, final Message msg) throws ActiveMQException {
       checkClosed();
 
-      doSend(address1, msg, null);
+      send(address1, msg, sessionContext.getSendAcknowledgementHandler());
    }
 
    @Override
@@ -138,24 +135,20 @@ public class ClientProducerImpl implements ClientProducerInternal {
                     Message message,
                     SendAcknowledgementHandler handler) throws ActiveMQException {
       checkClosed();
-      boolean confirmationWindowEnabled = session.isConfirmationWindowEnabled();
-      if (confirmationWindowEnabled) {
-         doSend(address1, message, handler);
-      } else {
-         doSend(address1, message, null);
-         if (handler != null) {
-            if (logger.isDebugEnabled()) {
-               logger.debug("Handler was used on producing messages towards address " + (address1 == null ? null : address1.toString()) + " however there is no confirmationWindowEnabled");
-            }
 
-            if (!confirmationNotSetLogged) {
-               // will log thisonly once
-               ActiveMQClientLogger.LOGGER.confirmationNotSet();
-            }
+      if (handler != null) {
+         handler = new SendAcknowledgementHandlerWrapper(handler);
+      }
 
-            // if there is no confirmation enabled, we will at least call the handler after the sent is done
-            session.scheduleConfirmation(handler, message);
+      doSend(address1, message, handler);
+
+      if (handler != null && !session.isConfirmationWindowEnabled()) {
+         if (logger.isDebugEnabled()) {
+            logger.debug("Handler was used on producing messages towards address " + address1 + " however there is no confirmationWindowEnabled");
          }
+
+         // if there is no confirmation enabled, we will at least call the handler after the sent is done
+         session.scheduleConfirmation(handler, message);
       }
    }
 
@@ -265,7 +258,7 @@ public class ClientProducerImpl implements ClientProducerInternal {
 
          final boolean sendBlockingConfig = msg.isDurable() ? blockOnDurableSend : blockOnNonDurableSend;
          // if Handler != null, we will send non blocking
-         final boolean sendBlocking = sendBlockingConfig && handler == null;
+         final boolean sendBlocking = sendBlockingConfig && handler == null && sessionContext.getSendAcknowledgementHandler() == null;
 
          session.workDone();
 
@@ -369,9 +362,9 @@ public class ClientProducerImpl implements ClientProducerInternal {
                                        SendAcknowledgementHandler handler) throws ActiveMQException {
       sendInitialLargeMessageHeader(msgI, credits);
 
-      LargeBodyEncoder context = msgI.getBodyEncoder();
+      LargeBodyReader context = msgI.getLargeBodyReader();
 
-      final long bodySize = context.getLargeBodySize();
+      final long bodySize = context.getSize();
       context.open();
       try {
 
@@ -382,7 +375,7 @@ public class ClientProducerImpl implements ClientProducerInternal {
 
             final ByteBuffer bodyBuffer = ByteBuffer.allocate(chunkLength);
 
-            final int encodedSize = context.encode(bodyBuffer);
+            final int encodedSize = context.readInto(bodyBuffer);
 
             assert encodedSize == chunkLength;
 

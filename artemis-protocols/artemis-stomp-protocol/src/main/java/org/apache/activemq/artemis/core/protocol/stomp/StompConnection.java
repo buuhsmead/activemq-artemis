@@ -36,6 +36,7 @@ import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ActiveMQQueueExistsException;
 import org.apache.activemq.artemis.api.core.ActiveMQSecurityException;
 import org.apache.activemq.artemis.api.core.ICoreMessage;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
@@ -53,6 +54,7 @@ import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
 import org.apache.activemq.artemis.spi.core.remoting.Acceptor;
 import org.apache.activemq.artemis.spi.core.remoting.Connection;
 import org.apache.activemq.artemis.spi.core.remoting.ReadyListener;
+import org.apache.activemq.artemis.utils.CompositeAddress;
 import org.apache.activemq.artemis.utils.ConfigurationHelper;
 import org.apache.activemq.artemis.utils.ExecutorFactory;
 import org.apache.activemq.artemis.utils.VersionLoader;
@@ -113,6 +115,7 @@ public final class StompConnection implements RemotingConnection {
    private final ScheduledExecutorService scheduledExecutorService;
 
    private final ExecutorFactory executorFactory;
+   private Subject subject;
 
    @Override
    public boolean isSupportReconnect() {
@@ -181,8 +184,8 @@ public final class StompConnection implements RemotingConnection {
 
       this.acceptorUsed = acceptorUsed;
 
-      this.enableMessageID = ConfigurationHelper.getBooleanProperty(TransportConstants.STOMP_ENABLE_MESSAGE_ID, false, acceptorUsed.getConfiguration());
-      this.minLargeMessageSize = ConfigurationHelper.getIntProperty(TransportConstants.STOMP_MIN_LARGE_MESSAGE_SIZE, ActiveMQClient.DEFAULT_MIN_LARGE_MESSAGE_SIZE, acceptorUsed.getConfiguration());
+      this.enableMessageID = ConfigurationHelper.getBooleanProperty(TransportConstants.STOMP_ENABLE_MESSAGE_ID_DEPRECATED, false, acceptorUsed.getConfiguration()) || ConfigurationHelper.getBooleanProperty(TransportConstants.STOMP_ENABLE_MESSAGE_ID, false, acceptorUsed.getConfiguration());
+      this.minLargeMessageSize = ConfigurationHelper.getIntProperty(TransportConstants.STOMP_MIN_LARGE_MESSAGE_SIZE, ConfigurationHelper.getIntProperty(TransportConstants.STOMP_MIN_LARGE_MESSAGE_SIZE_DEPRECATED, ActiveMQClient.DEFAULT_MIN_LARGE_MESSAGE_SIZE, acceptorUsed.getConfiguration()), acceptorUsed.getConfiguration());
    }
 
    @Override
@@ -273,20 +276,20 @@ public final class StompConnection implements RemotingConnection {
       }
    }
 
-   public void autoCreateDestinationIfPossible(String queue, RoutingType routingType) throws ActiveMQStompException {
+   public void autoCreateDestinationIfPossible(String destination, RoutingType routingType) throws ActiveMQStompException {
       try {
-         ServerSession session = getSession().getCoreSession();
-         SimpleString simpleQueue = SimpleString.toSimpleString(queue);
-         AddressInfo addressInfo = manager.getServer().getAddressInfo(simpleQueue);
-         AddressSettings addressSettings = manager.getServer().getAddressSettingsRepository().getMatch(queue);
+         SimpleString simpleDestination = SimpleString.toSimpleString(destination);
+         AddressInfo addressInfo = manager.getServer().getAddressInfo(simpleDestination);
+         AddressSettings addressSettings = manager.getServer().getAddressSettingsRepository().getMatch(destination);
          RoutingType effectiveAddressRoutingType = routingType == null ? addressSettings.getDefaultAddressRoutingType() : routingType;
+         ServerSession session = getSession().getCoreSession();
          /**
           * If the address doesn't exist then it is created if possible.
           * If the address does exist but doesn't support the routing-type then the address is updated if possible.
           */
          if (addressInfo == null) {
             if (addressSettings.isAutoCreateAddresses()) {
-               session.createAddress(simpleQueue, effectiveAddressRoutingType, true);
+               session.createAddress(simpleDestination, effectiveAddressRoutingType, true);
             }
          } else if (!addressInfo.getRoutingTypes().contains(effectiveAddressRoutingType)) {
             if (addressSettings.isAutoCreateAddresses()) {
@@ -295,13 +298,13 @@ public final class StompConnection implements RemotingConnection {
                   routingTypes.add(existingRoutingType);
                }
                routingTypes.add(effectiveAddressRoutingType);
-               manager.getServer().updateAddressInfo(simpleQueue, routingTypes);
+               manager.getServer().updateAddressInfo(simpleDestination, routingTypes);
             }
          }
 
-         // only auto create the queue if the address is ANYCAST
-         if (effectiveAddressRoutingType == RoutingType.ANYCAST && addressSettings.isAutoCreateQueues() && manager.getServer().locateQueue(simpleQueue) == null) {
-            session.createQueue(simpleQueue, simpleQueue, routingType == null ? addressSettings.getDefaultQueueRoutingType() : routingType, null, false, true, true);
+         // auto create the queue if the address is ANYCAST or FQQN
+         if ((CompositeAddress.isFullyQualified(destination) || effectiveAddressRoutingType == RoutingType.ANYCAST) && addressSettings.isAutoCreateQueues() && manager.getServer().locateQueue(simpleDestination) == null) {
+            session.createQueue(new QueueConfiguration(destination).setRoutingType(effectiveAddressRoutingType).setAutoCreated(true));
          }
       } catch (ActiveMQQueueExistsException e) {
          // ignore
@@ -720,12 +723,13 @@ public final class StompConnection implements RemotingConnection {
    }
 
    StompPostReceiptFunction subscribe(String destination,
-                  String selector,
-                  String ack,
-                  String id,
-                  String durableSubscriptionName,
-                  boolean noLocal,
-                  RoutingType subscriptionType) throws ActiveMQStompException {
+                                      String selector,
+                                      String ack,
+                                      String id,
+                                      String durableSubscriptionName,
+                                      boolean noLocal,
+                                      RoutingType subscriptionType,
+                                      Integer consumerWindowSize) throws ActiveMQStompException {
       autoCreateDestinationIfPossible(destination, subscriptionType);
       checkDestination(destination);
       checkRoutingSemantics(destination, subscriptionType);
@@ -753,7 +757,7 @@ public final class StompConnection implements RemotingConnection {
       }
 
       try {
-         return manager.subscribe(this, subscriptionID, durableSubscriptionName, destination, selector, ack, noLocal);
+         return manager.subscribe(this, subscriptionID, durableSubscriptionName, destination, selector, ack, noLocal, consumerWindowSize);
       } catch (ActiveMQStompException e) {
          throw e;
       } catch (Exception e) {
@@ -851,6 +855,16 @@ public final class StompConnection implements RemotingConnection {
    @Override
    public boolean isSupportsFlowControl() {
       return false;
+   }
+
+   @Override
+   public void setAuditSubject(Subject subject) {
+      this.subject = subject;
+   }
+
+   @Override
+   public Subject getAuditSubject() {
+      return subject;
    }
 
    @Override

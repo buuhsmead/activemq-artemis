@@ -38,9 +38,11 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.activemq.artemis.api.config.ServerLocatorConfig;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ActiveMQExceptionType;
 import org.apache.activemq.artemis.api.core.ActiveMQIllegalStateException;
+import org.apache.activemq.artemis.api.core.ActiveMQInternalErrorException;
 import org.apache.activemq.artemis.api.core.ActiveMQInterruptedException;
 import org.apache.activemq.artemis.api.core.DiscoveryGroupConfiguration;
 import org.apache.activemq.artemis.api.core.Interceptor;
@@ -66,6 +68,7 @@ import org.apache.activemq.artemis.uri.ServerLocatorParser;
 import org.apache.activemq.artemis.utils.ActiveMQThreadFactory;
 import org.apache.activemq.artemis.utils.ActiveMQThreadPoolExecutor;
 import org.apache.activemq.artemis.utils.ClassloadingUtil;
+import org.apache.activemq.artemis.utils.ThreadDumpUtil;
 import org.apache.activemq.artemis.utils.UUIDGenerator;
 import org.apache.activemq.artemis.utils.actors.Actor;
 import org.apache.activemq.artemis.utils.actors.OrderedExecutor;
@@ -120,7 +123,11 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
 
    private volatile boolean receivedTopology;
 
-   private boolean compressLargeMessage;
+
+   /** This specifies serverLocator.connect was used,
+    *  which means it's a cluster connection.
+    *  We should not use retries */
+   private volatile boolean disableDiscoveryRetries = false;
 
    // if the system should shutdown the pool when shutting down
    private transient boolean shutdownPool;
@@ -133,61 +140,10 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
 
    private transient ConnectionLoadBalancingPolicy loadBalancingPolicy;
 
+   private final Object discoveryGroupGuardian = new Object();
+
    // Settable attributes:
 
-   private boolean cacheLargeMessagesClient;
-
-   private long clientFailureCheckPeriod;
-
-   private long connectionTTL;
-
-   private long callTimeout;
-
-   private long callFailoverTimeout;
-
-   private int minLargeMessageSize;
-
-   private int consumerWindowSize;
-
-   private int consumerMaxRate;
-
-   private int confirmationWindowSize;
-
-   private int producerWindowSize;
-
-   private int producerMaxRate;
-
-   private boolean blockOnAcknowledge;
-
-   private boolean blockOnDurableSend;
-
-   private boolean blockOnNonDurableSend;
-
-   private boolean autoGroup;
-
-   private boolean preAcknowledge;
-
-   private String connectionLoadBalancingPolicyClassName;
-
-   private int ackBatchSize;
-
-   private boolean useGlobalPools;
-
-   private int scheduledThreadPoolMaxSize;
-
-   private int threadPoolMaxSize;
-
-   private long retryInterval;
-
-   private double retryIntervalMultiplier;
-
-   private long maxRetryInterval;
-
-   private int reconnectAttempts;
-
-   private int initialConnectAttempts;
-
-   private int initialMessagePacketSize;
 
    private final Object stateGuard = new Object();
    private transient STATE state;
@@ -209,9 +165,14 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
 
    private TransportConfiguration clusterTransportConfiguration;
 
-   private boolean useTopologyForLoadBalancing;
+   /** For tests only */
+   public DiscoveryGroup getDiscoveryGroup() {
+      return discoveryGroup;
+   }
 
    private final Exception traceException = new Exception();
+
+   private ServerLocatorConfig config = new ServerLocatorConfig();
 
    public static synchronized void clearThreadPools() {
       ActiveMQClient.clearThreadPools();
@@ -220,7 +181,7 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
    private synchronized void setThreadPools() {
       if (threadPool != null) {
          return;
-      } else if (useGlobalPools) {
+      } else if (config.useGlobalPools) {
          threadPool = ActiveMQClient.getGlobalThreadPool();
 
          scheduledThreadPool = ActiveMQClient.getGlobalScheduledThreadPool();
@@ -230,14 +191,14 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
          ThreadFactory factory = AccessController.doPrivileged(new PrivilegedAction<ThreadFactory>() {
             @Override
             public ThreadFactory run() {
-               return new ActiveMQThreadFactory("ActiveMQ-client-factory-threads-" + System.identityHashCode(this), true, ClientSessionFactoryImpl.class.getClassLoader());
+               return new ActiveMQThreadFactory("ActiveMQ-client-factory-threads-" + System.identityHashCode(this), true, ServerLocatorImpl.class.getClassLoader());
             }
          });
 
-         if (threadPoolMaxSize == -1) {
+         if (config.threadPoolMaxSize == -1) {
             threadPool = Executors.newCachedThreadPool(factory);
          } else {
-            threadPool = new ActiveMQThreadPoolExecutor(0, threadPoolMaxSize, 60L, TimeUnit.SECONDS, factory);
+            threadPool = new ActiveMQThreadPoolExecutor(0, config.threadPoolMaxSize, 60L, TimeUnit.SECONDS, factory);
          }
 
          factory = AccessController.doPrivileged(new PrivilegedAction<ThreadFactory>() {
@@ -247,7 +208,7 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
             }
          });
 
-         scheduledThreadPool = Executors.newScheduledThreadPool(scheduledThreadPoolMaxSize, factory);
+         scheduledThreadPool = Executors.newScheduledThreadPool(config.scheduledThreadPoolMaxSize, factory);
       }
       this.updateArrayActor = new Actor<>(threadPool, this::internalUpdateArray);
    }
@@ -259,7 +220,7 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
          return false;
 
       if (this.threadPool == null && this.scheduledThreadPool == null) {
-         useGlobalPools = false;
+         config.useGlobalPools = false;
          shutdownPool = false;
          this.threadPool = threadPool;
          this.scheduledThreadPool = scheduledThreadPool;
@@ -270,13 +231,13 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
    }
 
    private void instantiateLoadBalancingPolicy() {
-      if (connectionLoadBalancingPolicyClassName == null) {
+      if (config.connectionLoadBalancingPolicyClassName == null) {
          throw new IllegalStateException("Please specify a load balancing policy class name on the session factory");
       }
       AccessController.doPrivileged(new PrivilegedAction<Object>() {
          @Override
          public Object run() {
-               loadBalancingPolicy = (ConnectionLoadBalancingPolicy) ClassloadingUtil.newInstanceFromClassLoader(ServerLocatorImpl.class, connectionLoadBalancingPolicyClassName);
+               loadBalancingPolicy = (ConnectionLoadBalancingPolicy) ClassloadingUtil.newInstanceFromClassLoader(ServerLocatorImpl.class, config.connectionLoadBalancingPolicyClassName);
                return null;
          }
       });
@@ -299,18 +260,37 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
 
             instantiateLoadBalancingPolicy();
 
-            if (discoveryGroupConfiguration != null) {
-               discoveryGroup = createDiscoveryGroup(nodeID, discoveryGroupConfiguration);
+            startDiscovery();
 
-               discoveryGroup.registerListener(this);
-
-               discoveryGroup.start();
-            }
          } catch (Exception e) {
             state = null;
             throw ActiveMQClientMessageBundle.BUNDLE.failedToInitialiseSessionFactory(e);
          }
       }
+   }
+
+   private void startDiscovery() throws ActiveMQException {
+      if (discoveryGroupConfiguration != null) {
+         try {
+            discoveryGroup = createDiscoveryGroup(nodeID, discoveryGroupConfiguration);
+
+            discoveryGroup.registerListener(this);
+
+            discoveryGroup.start();
+         } catch (Exception e) {
+            throw new ActiveMQInternalErrorException(e.getMessage(), e);
+         }
+      }
+   }
+
+   @Override
+   public ServerLocatorConfig getLocatorConfig() {
+      return config;
+   }
+
+   @Override
+   public void setLocatorConfig(ServerLocatorConfig config) {
+      this.config = config;
    }
 
    private static DiscoveryGroup createDiscoveryGroup(String nodeID,
@@ -334,67 +314,7 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
 
       this.nodeID = UUIDGenerator.getInstance().generateStringUUID();
 
-      clientFailureCheckPeriod = ActiveMQClient.DEFAULT_CLIENT_FAILURE_CHECK_PERIOD;
-
-      connectionTTL = ActiveMQClient.DEFAULT_CONNECTION_TTL;
-
-      callTimeout = ActiveMQClient.DEFAULT_CALL_TIMEOUT;
-
-      callFailoverTimeout = ActiveMQClient.DEFAULT_CALL_FAILOVER_TIMEOUT;
-
-      minLargeMessageSize = ActiveMQClient.DEFAULT_MIN_LARGE_MESSAGE_SIZE;
-
-      consumerWindowSize = ActiveMQClient.DEFAULT_CONSUMER_WINDOW_SIZE;
-
-      consumerMaxRate = ActiveMQClient.DEFAULT_CONSUMER_MAX_RATE;
-
-      confirmationWindowSize = ActiveMQClient.DEFAULT_CONFIRMATION_WINDOW_SIZE;
-
-      producerWindowSize = ActiveMQClient.DEFAULT_PRODUCER_WINDOW_SIZE;
-
-      producerMaxRate = ActiveMQClient.DEFAULT_PRODUCER_MAX_RATE;
-
-      blockOnAcknowledge = ActiveMQClient.DEFAULT_BLOCK_ON_ACKNOWLEDGE;
-
-      blockOnDurableSend = ActiveMQClient.DEFAULT_BLOCK_ON_DURABLE_SEND;
-
-      blockOnNonDurableSend = ActiveMQClient.DEFAULT_BLOCK_ON_NON_DURABLE_SEND;
-
-      autoGroup = ActiveMQClient.DEFAULT_AUTO_GROUP;
-
-      preAcknowledge = ActiveMQClient.DEFAULT_PRE_ACKNOWLEDGE;
-
-      ackBatchSize = ActiveMQClient.DEFAULT_ACK_BATCH_SIZE;
-
-      connectionLoadBalancingPolicyClassName = ActiveMQClient.DEFAULT_CONNECTION_LOAD_BALANCING_POLICY_CLASS_NAME;
-
-      useGlobalPools = ActiveMQClient.DEFAULT_USE_GLOBAL_POOLS;
-
-      threadPoolMaxSize = ActiveMQClient.DEFAULT_THREAD_POOL_MAX_SIZE;
-
-      scheduledThreadPoolMaxSize = ActiveMQClient.DEFAULT_SCHEDULED_THREAD_POOL_MAX_SIZE;
-
-      retryInterval = ActiveMQClient.DEFAULT_RETRY_INTERVAL;
-
-      retryIntervalMultiplier = ActiveMQClient.DEFAULT_RETRY_INTERVAL_MULTIPLIER;
-
-      maxRetryInterval = ActiveMQClient.DEFAULT_MAX_RETRY_INTERVAL;
-
-      reconnectAttempts = ActiveMQClient.DEFAULT_RECONNECT_ATTEMPTS;
-
-      initialConnectAttempts = ActiveMQClient.INITIAL_CONNECT_ATTEMPTS;
-
-      cacheLargeMessagesClient = ActiveMQClient.DEFAULT_CACHE_LARGE_MESSAGE_CLIENT;
-
-      initialMessagePacketSize = ActiveMQClient.DEFAULT_INITIAL_MESSAGE_PACKET_SIZE;
-
-      cacheLargeMessagesClient = ActiveMQClient.DEFAULT_CACHE_LARGE_MESSAGE_CLIENT;
-
-      compressLargeMessage = ActiveMQClient.DEFAULT_COMPRESS_LARGE_MESSAGES;
-
       clusterConnection = false;
-
-      useTopologyForLoadBalancing = ActiveMQClient.DEFAULT_USE_TOPOLOGY_FOR_LOADBALANCING;
    }
 
    public static ServerLocator newLocator(String uri) {
@@ -492,43 +412,15 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
       topology = locator.topology;
       topologyArray = locator.topologyArray;
       receivedTopology = locator.receivedTopology;
-      compressLargeMessage = locator.compressLargeMessage;
-      cacheLargeMessagesClient = locator.cacheLargeMessagesClient;
-      clientFailureCheckPeriod = locator.clientFailureCheckPeriod;
-      connectionTTL = locator.connectionTTL;
-      callTimeout = locator.callTimeout;
-      callFailoverTimeout = locator.callFailoverTimeout;
-      minLargeMessageSize = locator.minLargeMessageSize;
-      consumerWindowSize = locator.consumerWindowSize;
-      consumerMaxRate = locator.consumerMaxRate;
-      confirmationWindowSize = locator.confirmationWindowSize;
-      producerWindowSize = locator.producerWindowSize;
-      producerMaxRate = locator.producerMaxRate;
-      blockOnAcknowledge = locator.blockOnAcknowledge;
-      blockOnDurableSend = locator.blockOnDurableSend;
-      blockOnNonDurableSend = locator.blockOnNonDurableSend;
-      autoGroup = locator.autoGroup;
-      preAcknowledge = locator.preAcknowledge;
-      connectionLoadBalancingPolicyClassName = locator.connectionLoadBalancingPolicyClassName;
-      ackBatchSize = locator.ackBatchSize;
-      useGlobalPools = locator.useGlobalPools;
-      scheduledThreadPoolMaxSize = locator.scheduledThreadPoolMaxSize;
-      threadPoolMaxSize = locator.threadPoolMaxSize;
-      retryInterval = locator.retryInterval;
-      retryIntervalMultiplier = locator.retryIntervalMultiplier;
-      maxRetryInterval = locator.maxRetryInterval;
-      reconnectAttempts = locator.reconnectAttempts;
-      initialConnectAttempts = locator.initialConnectAttempts;
-      initialMessagePacketSize = locator.initialMessagePacketSize;
+      config = new ServerLocatorConfig(locator.config);
       startExecutor = locator.startExecutor;
       afterConnectListener = locator.afterConnectListener;
       groupID = locator.groupID;
       nodeID = locator.nodeID;
       clusterTransportConfiguration = locator.clusterTransportConfiguration;
-      useTopologyForLoadBalancing = locator.useTopologyForLoadBalancing;
    }
 
-   private TransportConfiguration selectConnector() {
+   private synchronized Pair<TransportConfiguration, TransportConfiguration> selectConnector(boolean useInitConnector) {
       Pair<TransportConfiguration, TransportConfiguration>[] usedTopology;
 
       flushTopology();
@@ -538,14 +430,14 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
       }
 
       synchronized (this) {
-         if (usedTopology != null && useTopologyForLoadBalancing) {
+         if (usedTopology != null && config.useTopologyForLoadBalancing && !useInitConnector) {
             if (logger.isTraceEnabled()) {
                logger.trace("Selecting connector from topology.");
             }
             int pos = loadBalancingPolicy.select(usedTopology.length);
             Pair<TransportConfiguration, TransportConfiguration> pair = usedTopology[pos];
 
-            return pair.getA();
+            return pair;
          } else {
             if (logger.isTraceEnabled()) {
                logger.trace("Selecting connector from initial connectors.");
@@ -553,7 +445,11 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
 
             int pos = loadBalancingPolicy.select(initialConnectors.length);
 
-            return initialConnectors[pos];
+            if (initialConnectors.length == 0) {
+               return null;
+            }
+
+            return new Pair(initialConnectors[pos], null);
          }
       }
    }
@@ -568,7 +464,7 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
       }
 
       synchronized (this) {
-         if (usedTopology != null && useTopologyForLoadBalancing) {
+         if (usedTopology != null && config.useTopologyForLoadBalancing) {
             return usedTopology.length;
          } else {
             return initialConnectors.length;
@@ -633,6 +529,9 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
    }
 
    private ClientSessionFactoryInternal connect(final boolean skipWarnings) throws ActiveMQException {
+      // if we used connect, we should control UDP reconnections at a different path.
+      // and this belongs to a cluster connection, not client
+      disableDiscoveryRetries = true;
       ClientSessionFactoryInternal returnFactory = null;
 
       synchronized (this) {
@@ -695,7 +594,7 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
 
    @Override
    public ClientSessionFactory createSessionFactory(final TransportConfiguration transportConfiguration) throws Exception {
-      return createSessionFactory(transportConfiguration, reconnectAttempts);
+      return createSessionFactory(transportConfiguration, config.reconnectAttempts);
    }
 
    @Override
@@ -705,7 +604,7 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
 
       initialize();
 
-      ClientSessionFactoryInternal factory = new ClientSessionFactoryImpl(this, transportConfiguration, callTimeout, callFailoverTimeout, clientFailureCheckPeriod, connectionTTL, retryInterval, retryIntervalMultiplier, maxRetryInterval, reconnectAttempts, threadPool, scheduledThreadPool, incomingInterceptors, outgoingInterceptors);
+      ClientSessionFactoryInternal factory = new ClientSessionFactoryImpl(this, transportConfiguration, config, reconnectAttempts, threadPool, scheduledThreadPool, incomingInterceptors, outgoingInterceptors);
 
       addToConnecting(factory);
       try {
@@ -752,14 +651,8 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
 
       flushTopology();
 
-      if (this.getNumInitialConnectors() == 0 && discoveryGroup != null) {
-         // Wait for an initial broadcast to give us at least one node in the cluster
-         long timeout = clusterConnection ? 0 : discoveryGroupConfiguration.getDiscoveryInitialWaitTimeout();
-         boolean ok = discoveryGroup.waitForBroadcast(timeout);
-
-         if (!ok) {
-            throw ActiveMQClientMessageBundle.BUNDLE.connectionTimedOutInInitialBroadcast();
-         }
+      if (discoveryGroupConfiguration != null) {
+         executeDiscovery();
       }
 
       ClientSessionFactoryInternal factory = null;
@@ -767,10 +660,19 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
       synchronized (this) {
          boolean retry = true;
          int attempts = 0;
+         boolean topologyArrayTried = !config.useTopologyForLoadBalancing || topologyArray == null || topologyArray.length == 0;
+         boolean staticTried = false;
+         boolean shouldTryStatic = !config.useTopologyForLoadBalancing || !receivedTopology || topologyArray == null || topologyArray.length == 0;
+
          while (retry && !isClosed()) {
             retry = false;
 
-            TransportConfiguration tc = selectConnector();
+            /*
+             * The logic is: If receivedTopology is false, try static first.
+             * if receivedTopology is true, try topologyArray first
+             */
+            Pair<TransportConfiguration, TransportConfiguration> tc = selectConnector(shouldTryStatic);
+
             if (tc == null) {
                throw ActiveMQClientMessageBundle.BUNDLE.noTCForSessionFactory();
             }
@@ -778,7 +680,7 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
             // try each factory in the list until we find one which works
 
             try {
-               factory = new ClientSessionFactoryImpl(this, tc, callTimeout, callFailoverTimeout, clientFailureCheckPeriod, connectionTTL, retryInterval, retryIntervalMultiplier, maxRetryInterval, reconnectAttempts, threadPool, scheduledThreadPool, incomingInterceptors, outgoingInterceptors);
+               factory = new ClientSessionFactoryImpl(this, tc, config, config.reconnectAttempts, threadPool, scheduledThreadPool, incomingInterceptors, outgoingInterceptors);
                try {
                   addToConnecting(factory);
                   // We always try to connect here with only one attempt,
@@ -791,14 +693,34 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
                try {
                   if (e.getType() == ActiveMQExceptionType.NOT_CONNECTED) {
                      attempts++;
+                     int maxAttempts = config.initialConnectAttempts == 0 ? 1 : config.initialConnectAttempts;
 
-                     int connectorsSize = getConnectorsSize();
-                     int maxAttempts = initialConnectAttempts == 0 ? 1 : initialConnectAttempts;
-
-                     if (initialConnectAttempts >= 0 && attempts >= maxAttempts * connectorsSize) {
-                        throw ActiveMQClientMessageBundle.BUNDLE.cannotConnectToServers();
+                     if (shouldTryStatic) {
+                        //we know static is used
+                        if (config.initialConnectAttempts >= 0 && attempts >= maxAttempts * this.getNumInitialConnectors()) {
+                           if (topologyArrayTried) {
+                              //stop retry and throw exception
+                              throw ActiveMQClientMessageBundle.BUNDLE.cannotConnectToServers();
+                           } else {
+                              //lets try topologyArray
+                              staticTried = true;
+                              shouldTryStatic = false;
+                              attempts = 0;
+                           }
+                        }
+                     } else {
+                        //we know topologyArray is used
+                        if (config.initialConnectAttempts >= 0 && attempts >= maxAttempts * getConnectorsSize()) {
+                           if (staticTried) {
+                              throw ActiveMQClientMessageBundle.BUNDLE.cannotConnectToServers();
+                           } else {
+                              topologyArrayTried = true;
+                              shouldTryStatic = true;
+                              attempts = 0;
+                           }
+                        }
                      }
-                     if (factory.waitForRetry(retryInterval)) {
+                     if (factory.waitForRetry(config.retryInterval)) {
                         throw ActiveMQClientMessageBundle.BUNDLE.cannotConnectToServers();
                      }
                      retry = true;
@@ -816,7 +738,7 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
       // ATM topology is never != null. Checking here just to be consistent with
       // how the sendSubscription happens.
       // in case this ever changes.
-      if (topology != null && !factory.waitForTopology(callTimeout, TimeUnit.MILLISECONDS)) {
+      if (topology != null && !factory.waitForTopology(config.callTimeout, TimeUnit.MILLISECONDS)) {
          factory.cleanup();
          throw ActiveMQClientMessageBundle.BUNDLE.connectionTimedOutOnReceiveTopology(discoveryGroup);
       }
@@ -824,6 +746,77 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
       addFactory(factory);
 
       return factory;
+   }
+
+   private void executeDiscovery() throws ActiveMQException {
+      boolean discoveryOK = false;
+      boolean retryDiscovery = false;
+      int tryNumber = 0;
+
+      do {
+
+         discoveryOK = checkOnDiscovery();
+
+         retryDiscovery = (config.initialConnectAttempts > 0 && tryNumber++ < config.initialConnectAttempts) && !disableDiscoveryRetries;
+
+         if (!discoveryOK) {
+
+            if (retryDiscovery) {
+               ActiveMQClientLogger.LOGGER.broadcastTimeout(tryNumber, config.initialConnectAttempts);
+            } else {
+               throw ActiveMQClientMessageBundle.BUNDLE.connectionTimedOutInInitialBroadcast();
+            }
+         }
+      }
+      while (!discoveryOK && retryDiscovery);
+
+      if (!discoveryOK) {
+         // I don't think the code would ever get to this situation, since there's an exception thrown on the previous loop
+         // however I will keep this just in case
+         throw ActiveMQClientMessageBundle.BUNDLE.connectionTimedOutInInitialBroadcast();
+      }
+
+   }
+
+   private boolean checkOnDiscovery() throws ActiveMQException {
+
+      synchronized (discoveryGroupGuardian) {
+
+         // notice: in case you have many threads waiting to get on checkOnDiscovery, only one will perform the actual discovery
+         //         while subsequent calls will have numberOfInitialConnectors > 0
+         if (this.getNumInitialConnectors() == 0 && discoveryGroupConfiguration != null) {
+            try {
+
+               long timeout = clusterConnection ? 0 : discoveryGroupConfiguration.getDiscoveryInitialWaitTimeout();
+               if (!discoveryGroup.waitForBroadcast(timeout)) {
+
+                  if (logger.isDebugEnabled()) {
+                     String threadDump = ThreadDumpUtil.threadDump("Discovery timeout, printing thread dump");
+                     logger.debug(threadDump);
+                  }
+
+                  // if disableDiscoveryRetries = true, it means this is a Bridge or a Cluster Connection Bridge
+                  // which has a different mechanism of retry
+                  // and we should ignore UDP restarts here.
+                  if (!disableDiscoveryRetries) {
+                     if (discoveryGroup != null) {
+                        discoveryGroup.stop();
+                     }
+
+                     logger.debug("Restarting discovery");
+
+                     startDiscovery();
+                  }
+
+                  return false;
+               }
+            } catch (Exception e) {
+               throw new ActiveMQInternalErrorException(e.getMessage(), e);
+            }
+         }
+      }
+
+      return true;
    }
 
    public void flushTopology() {
@@ -869,301 +862,301 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
 
    @Override
    public boolean isCacheLargeMessagesClient() {
-      return cacheLargeMessagesClient;
+      return config.cacheLargeMessagesClient;
    }
 
    @Override
    public ServerLocatorImpl setCacheLargeMessagesClient(final boolean cached) {
-      cacheLargeMessagesClient = cached;
+      config.cacheLargeMessagesClient = cached;
       return this;
    }
 
    @Override
    public long getClientFailureCheckPeriod() {
-      return clientFailureCheckPeriod;
+      return config.clientFailureCheckPeriod;
    }
 
    @Override
    public ServerLocatorImpl setClientFailureCheckPeriod(final long clientFailureCheckPeriod) {
       checkWrite();
-      this.clientFailureCheckPeriod = clientFailureCheckPeriod;
+      this.config.clientFailureCheckPeriod = clientFailureCheckPeriod;
       return this;
    }
 
    @Override
    public long getConnectionTTL() {
-      return connectionTTL;
+      return config.connectionTTL;
    }
 
    @Override
    public ServerLocatorImpl setConnectionTTL(final long connectionTTL) {
       checkWrite();
-      this.connectionTTL = connectionTTL;
+      this.config.connectionTTL = connectionTTL;
       return this;
    }
 
    @Override
    public long getCallTimeout() {
-      return callTimeout;
+      return config.callTimeout;
    }
 
    @Override
    public ServerLocatorImpl setCallTimeout(final long callTimeout) {
       checkWrite();
-      this.callTimeout = callTimeout;
+      this.config.callTimeout = callTimeout;
       return this;
    }
 
    @Override
    public long getCallFailoverTimeout() {
-      return callFailoverTimeout;
+      return config.callFailoverTimeout;
    }
 
    @Override
    public ServerLocatorImpl setCallFailoverTimeout(long callFailoverTimeout) {
       checkWrite();
-      this.callFailoverTimeout = callFailoverTimeout;
+      this.config.callFailoverTimeout = callFailoverTimeout;
       return this;
    }
 
    @Override
    public int getMinLargeMessageSize() {
-      return minLargeMessageSize;
+      return config.minLargeMessageSize;
    }
 
    @Override
    public ServerLocatorImpl setMinLargeMessageSize(final int minLargeMessageSize) {
       checkWrite();
-      this.minLargeMessageSize = minLargeMessageSize;
+      this.config.minLargeMessageSize = minLargeMessageSize;
       return this;
    }
 
    @Override
    public int getConsumerWindowSize() {
-      return consumerWindowSize;
+      return config.consumerWindowSize;
    }
 
    @Override
    public ServerLocatorImpl setConsumerWindowSize(final int consumerWindowSize) {
       checkWrite();
-      this.consumerWindowSize = consumerWindowSize;
+      this.config.consumerWindowSize = consumerWindowSize;
       return this;
    }
 
    @Override
    public int getConsumerMaxRate() {
-      return consumerMaxRate;
+      return config.consumerMaxRate;
    }
 
    @Override
    public ServerLocatorImpl setConsumerMaxRate(final int consumerMaxRate) {
       checkWrite();
-      this.consumerMaxRate = consumerMaxRate;
+      this.config.consumerMaxRate = consumerMaxRate;
       return this;
    }
 
    @Override
    public int getConfirmationWindowSize() {
-      return confirmationWindowSize;
+      return config.confirmationWindowSize;
    }
 
    @Override
    public ServerLocatorImpl setConfirmationWindowSize(final int confirmationWindowSize) {
       checkWrite();
-      this.confirmationWindowSize = confirmationWindowSize;
+      this.config.confirmationWindowSize = confirmationWindowSize;
       return this;
    }
 
    @Override
    public int getProducerWindowSize() {
-      return producerWindowSize;
+      return config.producerWindowSize;
    }
 
    @Override
    public ServerLocatorImpl setProducerWindowSize(final int producerWindowSize) {
       checkWrite();
-      this.producerWindowSize = producerWindowSize;
+      this.config.producerWindowSize = producerWindowSize;
       return this;
    }
 
    @Override
    public int getProducerMaxRate() {
-      return producerMaxRate;
+      return config.producerMaxRate;
    }
 
    @Override
    public ServerLocatorImpl setProducerMaxRate(final int producerMaxRate) {
       checkWrite();
-      this.producerMaxRate = producerMaxRate;
+      this.config.producerMaxRate = producerMaxRate;
       return this;
    }
 
    @Override
    public boolean isBlockOnAcknowledge() {
-      return blockOnAcknowledge;
+      return config.blockOnAcknowledge;
    }
 
    @Override
    public ServerLocatorImpl setBlockOnAcknowledge(final boolean blockOnAcknowledge) {
       checkWrite();
-      this.blockOnAcknowledge = blockOnAcknowledge;
+      this.config.blockOnAcknowledge = blockOnAcknowledge;
       return this;
    }
 
    @Override
    public boolean isBlockOnDurableSend() {
-      return blockOnDurableSend;
+      return config.blockOnDurableSend;
    }
 
    @Override
    public ServerLocatorImpl setBlockOnDurableSend(final boolean blockOnDurableSend) {
       checkWrite();
-      this.blockOnDurableSend = blockOnDurableSend;
+      this.config.blockOnDurableSend = blockOnDurableSend;
       return this;
    }
 
    @Override
    public boolean isBlockOnNonDurableSend() {
-      return blockOnNonDurableSend;
+      return config.blockOnNonDurableSend;
    }
 
    @Override
    public ServerLocatorImpl setBlockOnNonDurableSend(final boolean blockOnNonDurableSend) {
       checkWrite();
-      this.blockOnNonDurableSend = blockOnNonDurableSend;
+      this.config.blockOnNonDurableSend = blockOnNonDurableSend;
       return this;
    }
 
    @Override
    public boolean isAutoGroup() {
-      return autoGroup;
+      return config.autoGroup;
    }
 
    @Override
    public ServerLocatorImpl setAutoGroup(final boolean autoGroup) {
       checkWrite();
-      this.autoGroup = autoGroup;
+      this.config.autoGroup = autoGroup;
       return this;
    }
 
    @Override
    public boolean isPreAcknowledge() {
-      return preAcknowledge;
+      return config.preAcknowledge;
    }
 
    @Override
    public ServerLocatorImpl setPreAcknowledge(final boolean preAcknowledge) {
       checkWrite();
-      this.preAcknowledge = preAcknowledge;
+      this.config.preAcknowledge = preAcknowledge;
       return this;
    }
 
    @Override
    public int getAckBatchSize() {
-      return ackBatchSize;
+      return config.ackBatchSize;
    }
 
    @Override
    public ServerLocatorImpl setAckBatchSize(final int ackBatchSize) {
       checkWrite();
-      this.ackBatchSize = ackBatchSize;
+      this.config.ackBatchSize = ackBatchSize;
       return this;
    }
 
    @Override
    public boolean isUseGlobalPools() {
-      return useGlobalPools;
+      return config.useGlobalPools;
    }
 
    @Override
    public ServerLocatorImpl setUseGlobalPools(final boolean useGlobalPools) {
       checkWrite();
-      this.useGlobalPools = useGlobalPools;
+      this.config.useGlobalPools = useGlobalPools;
       return this;
    }
 
    @Override
    public int getScheduledThreadPoolMaxSize() {
-      return scheduledThreadPoolMaxSize;
+      return config.scheduledThreadPoolMaxSize;
    }
 
    @Override
    public ServerLocatorImpl setScheduledThreadPoolMaxSize(final int scheduledThreadPoolMaxSize) {
       checkWrite();
-      this.scheduledThreadPoolMaxSize = scheduledThreadPoolMaxSize;
+      this.config.scheduledThreadPoolMaxSize = scheduledThreadPoolMaxSize;
       return this;
    }
 
    @Override
    public int getThreadPoolMaxSize() {
-      return threadPoolMaxSize;
+      return config.threadPoolMaxSize;
    }
 
    @Override
    public ServerLocatorImpl setThreadPoolMaxSize(final int threadPoolMaxSize) {
       checkWrite();
-      this.threadPoolMaxSize = threadPoolMaxSize;
+      this.config.threadPoolMaxSize = threadPoolMaxSize;
       return this;
    }
 
    @Override
    public long getRetryInterval() {
-      return retryInterval;
+      return config.retryInterval;
    }
 
    @Override
    public ServerLocatorImpl setRetryInterval(final long retryInterval) {
       checkWrite();
-      this.retryInterval = retryInterval;
+      this.config.retryInterval = retryInterval;
       return this;
    }
 
    @Override
    public long getMaxRetryInterval() {
-      return maxRetryInterval;
+      return config.maxRetryInterval;
    }
 
    @Override
    public ServerLocatorImpl setMaxRetryInterval(final long retryInterval) {
       checkWrite();
-      maxRetryInterval = retryInterval;
+      this.config.maxRetryInterval = retryInterval;
       return this;
    }
 
    @Override
    public double getRetryIntervalMultiplier() {
-      return retryIntervalMultiplier;
+      return config.retryIntervalMultiplier;
    }
 
    @Override
    public ServerLocatorImpl setRetryIntervalMultiplier(final double retryIntervalMultiplier) {
       checkWrite();
-      this.retryIntervalMultiplier = retryIntervalMultiplier;
+      this.config.retryIntervalMultiplier = retryIntervalMultiplier;
       return this;
    }
 
    @Override
    public int getReconnectAttempts() {
-      return reconnectAttempts;
+      return config.reconnectAttempts;
    }
 
    @Override
    public ServerLocatorImpl setReconnectAttempts(final int reconnectAttempts) {
       checkWrite();
-      this.reconnectAttempts = reconnectAttempts;
+      this.config.reconnectAttempts = reconnectAttempts;
       return this;
    }
 
    @Override
    public ServerLocatorImpl setInitialConnectAttempts(int initialConnectAttempts) {
       checkWrite();
-      this.initialConnectAttempts = initialConnectAttempts;
+      this.config.initialConnectAttempts = initialConnectAttempts;
       return this;
    }
 
    @Override
    public int getInitialConnectAttempts() {
-      return initialConnectAttempts;
+      return config.initialConnectAttempts;
    }
 
    @Deprecated
@@ -1180,13 +1173,13 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
 
    @Override
    public String getConnectionLoadBalancingPolicyClassName() {
-      return connectionLoadBalancingPolicyClassName;
+      return config.connectionLoadBalancingPolicyClassName;
    }
 
    @Override
    public ServerLocatorImpl setConnectionLoadBalancingPolicyClassName(final String loadBalancingPolicyClassName) {
       checkWrite();
-      connectionLoadBalancingPolicyClassName = loadBalancingPolicyClassName;
+      config.connectionLoadBalancingPolicyClassName = loadBalancingPolicyClassName;
       return this;
    }
 
@@ -1226,13 +1219,13 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
 
    @Override
    public int getInitialMessagePacketSize() {
-      return initialMessagePacketSize;
+      return config.initialMessagePacketSize;
    }
 
    @Override
    public ServerLocatorImpl setInitialMessagePacketSize(final int size) {
       checkWrite();
-      initialMessagePacketSize = size;
+      config.initialMessagePacketSize = size;
       return this;
    }
 
@@ -1250,12 +1243,12 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
 
    @Override
    public boolean isCompressLargeMessage() {
-      return compressLargeMessage;
+      return config.compressLargeMessage;
    }
 
    @Override
    public ServerLocatorImpl setCompressLargeMessage(boolean avoid) {
-      this.compressLargeMessage = avoid;
+      this.config.compressLargeMessage = avoid;
       return this;
    }
 
@@ -1452,7 +1445,6 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
          if (topology.isEmpty()) {
             // Resetting the topology to its original condition as it was brand new
             receivedTopology = false;
-            topologyArray = null;
          } else {
             updateArraysAndPairs(eventTime);
 
@@ -1530,6 +1522,12 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
       synchronized (topologyArrayGuard) {
          Collection<TopologyMemberImpl> membersCopy = topology.getMembers();
 
+         if (membersCopy.size() == 0) {
+            //it could happen when live is down, in that case we keeps the old copy
+            //and don't update
+            return;
+         }
+
          Pair<TransportConfiguration, TransportConfiguration>[] topologyArrayLocal = (Pair<TransportConfiguration, TransportConfiguration>[]) Array.newInstance(Pair.class, membersCopy.size());
 
          int count = 0;
@@ -1595,19 +1593,18 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
 
       if (!clusterConnection && isEmpty) {
          receivedTopology = false;
-         topologyArray = null;
       }
    }
 
    @Override
    public ServerLocator setUseTopologyForLoadBalancing(boolean useTopologyForLoadBalancing) {
-      this.useTopologyForLoadBalancing = useTopologyForLoadBalancing;
+      this.config.useTopologyForLoadBalancing = useTopologyForLoadBalancing;
       return this;
    }
 
    @Override
    public boolean getUseTopologyForLoadBalancing() {
-      return useTopologyForLoadBalancing;
+      return config.useTopologyForLoadBalancing;
    }
 
    @Override
@@ -1682,8 +1679,8 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
             while (!isClosed()) {
                retryNumber++;
                for (Connector conn : connectors) {
-                  if (logger.isDebugEnabled()) {
-                     logger.debug(this + "::Submitting connect towards " + conn);
+                  if (logger.isTraceEnabled()) {
+                     logger.trace(this + "::Submitting connect towards " + conn);
                   }
 
                   ClientSessionFactory csf = conn.tryConnect();
@@ -1717,8 +1714,8 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
                         }
                      });
 
-                     if (logger.isDebugEnabled()) {
-                        logger.debug("Returning " + csf +
+                     if (logger.isTraceEnabled()) {
+                        logger.trace("Returning " + csf +
                                         " after " +
                                         retryNumber +
                                         " retries on StaticConnector " +
@@ -1729,18 +1726,18 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
                   }
                }
 
-               if (initialConnectAttempts >= 0 && retryNumber > initialConnectAttempts) {
+               if (config.initialConnectAttempts >= 0 && retryNumber > config.initialConnectAttempts) {
                   break;
                }
 
-               if (latch.await(retryInterval, TimeUnit.MILLISECONDS))
+               if (latch.await(config.retryInterval, TimeUnit.MILLISECONDS))
                   return null;
             }
 
          } catch (RejectedExecutionException e) {
             if (isClosed() || skipWarnings)
                return null;
-            logger.debug("Rejected execution", e);
+            logger.trace("Rejected execution", e);
             throw e;
          } catch (Exception e) {
             if (isClosed() || skipWarnings)
@@ -1768,7 +1765,7 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
          connectors = new ArrayList<>();
          if (initialConnectors != null) {
             for (TransportConfiguration initialConnector : initialConnectors) {
-               ClientSessionFactoryInternal factory = new ClientSessionFactoryImpl(ServerLocatorImpl.this, initialConnector, callTimeout, callFailoverTimeout, clientFailureCheckPeriod, connectionTTL, retryInterval, retryIntervalMultiplier, maxRetryInterval, reconnectAttempts, threadPool, scheduledThreadPool, incomingInterceptors, outgoingInterceptors);
+               ClientSessionFactoryInternal factory = new ClientSessionFactoryImpl(ServerLocatorImpl.this, initialConnector, config, config.reconnectAttempts, threadPool, scheduledThreadPool, incomingInterceptors, outgoingInterceptors);
 
                factory.disableFinalizeCheck();
 
@@ -1809,7 +1806,7 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
 
          public ClientSessionFactory tryConnect() throws ActiveMQException {
             if (logger.isDebugEnabled()) {
-               logger.debug(this + "::Trying to connect to " + factory);
+               logger.trace(this + "::Trying to connect to " + factory);
             }
             try {
                ClientSessionFactoryInternal factoryToUse = factory;
@@ -1824,7 +1821,7 @@ public final class ServerLocatorImpl implements ServerLocatorInternal, Discovery
                }
                return factoryToUse;
             } catch (ActiveMQException e) {
-               logger.debug(this + "::Exception on establish connector initial connection", e);
+               logger.trace(this + "::Exception on establish connector initial connection", e);
                return null;
             }
          }

@@ -328,7 +328,7 @@ public class AcknowledgementTest extends JMSTestCase {
 
       consumerSess.recover();
 
-      Message m = consumer.receive(200);
+      Message m = consumer.receiveNoWait();
       ProxyAssertSupport.assertNull(m);
    }
 
@@ -384,7 +384,7 @@ public class AcknowledgementTest extends JMSTestCase {
 
       log.trace("Session recover called");
 
-      m = consumer.receive(200);
+      m = consumer.receiveNoWait();
 
       log.trace("Message is:" + m);
 
@@ -519,13 +519,11 @@ public class AcknowledgementTest extends JMSTestCase {
 
       log.trace("Session recover called");
 
-      m = consumer.receive(200);
+      m = consumer.receiveNoWait();
 
       log.trace("Message is:" + m);
 
       ProxyAssertSupport.assertNull(m);
-
-      // Thread.sleep(3000000);
    }
 
    @Test
@@ -575,7 +573,7 @@ public class AcknowledgementTest extends JMSTestCase {
 
       log.trace("Session recover called");
 
-      m = consumer.receive(200);
+      m = consumer.receiveNoWait();
 
       log.trace("Message is:" + m);
 
@@ -681,7 +679,7 @@ public class AcknowledgementTest extends JMSTestCase {
 
       log.trace("Session recover called");
 
-      m = consumer.receive(200);
+      m = consumer.receiveNoWait();
 
       log.trace("Message is:" + m);
 
@@ -784,7 +782,7 @@ public class AcknowledgementTest extends JMSTestCase {
       messageReceived = (TextMessage) consumer.receiveNoWait();
 
       if (messageReceived != null) {
-         System.out.println("Message received " + messageReceived.getText());
+         log.debug("Message received " + messageReceived.getText());
       }
       Assert.assertNull(messageReceived);
 
@@ -1318,8 +1316,8 @@ public class AcknowledgementTest extends JMSTestCase {
       long time1 = consume(cf1, queue1, messageCount);
       long time2 = consume(cf2, queue2, messageCount);
 
-      log.info("BlockOnAcknowledge=false MessageCount=" + messageCount + " TimeToConsume=" + time1);
-      log.info("BlockOnAcknowledge=true MessageCount=" + messageCount + " TimeToConsume=" + time2);
+      log.debug("BlockOnAcknowledge=false MessageCount=" + messageCount + " TimeToConsume=" + time1);
+      log.debug("BlockOnAcknowledge=true MessageCount=" + messageCount + " TimeToConsume=" + time2);
 
       Assert.assertTrue(time1 < (time2 / 2));
 

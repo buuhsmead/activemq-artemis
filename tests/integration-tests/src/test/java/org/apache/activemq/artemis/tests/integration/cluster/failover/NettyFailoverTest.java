@@ -26,6 +26,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
@@ -39,7 +40,6 @@ import org.apache.activemq.artemis.core.config.ha.SharedStoreSlavePolicyConfigur
 import org.apache.activemq.artemis.core.config.storage.DatabaseStorageConfiguration;
 import org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants;
 import org.apache.activemq.artemis.core.server.NodeManager;
-import org.apache.activemq.artemis.core.server.impl.FileLockNodeManager;
 import org.apache.activemq.artemis.core.server.impl.InVMNodeManager;
 import org.apache.activemq.artemis.core.server.impl.jdbc.JdbcNodeManager;
 import org.apache.activemq.artemis.tests.integration.cluster.util.SameProcessActiveMQServer;
@@ -59,22 +59,18 @@ import org.junit.runners.Parameterized;
 public class NettyFailoverTest extends FailoverTest {
 
    public enum NodeManagerType {
-      InVM, Jdbc, File
+      InVM, Jdbc
    }
 
-   @Parameterized.Parameters(name = "{0} Node Manager, Use Separate Lock Folder = {1}")
+   @Parameterized.Parameters(name = "{0} Node Manager")
    public static Iterable<? extends Object> nodeManagerTypes() {
       return Arrays.asList(new Object[][]{
-         {NodeManagerType.Jdbc, false},
-         {NodeManagerType.InVM, false},
-         {NodeManagerType.File, false},
-         {NodeManagerType.File, true}});
+         {NodeManagerType.Jdbc},
+         {NodeManagerType.InVM}});
    }
 
    @Parameterized.Parameter(0)
    public NodeManagerType nodeManagerType;
-   @Parameterized.Parameter(1)
-   public boolean useSeparateLockFolder;
 
    @Override
    protected TransportConfiguration getAcceptorTransportConfiguration(final boolean live) {
@@ -98,9 +94,6 @@ public class NettyFailoverTest extends FailoverTest {
    @Override
    protected Configuration createDefaultInVMConfig() throws Exception {
       final Configuration config = super.createDefaultInVMConfig();
-      if (useSeparateLockFolder) {
-         config.setNodeManagerLockDirectory(getTestDir() + "/nm_lock");
-      }
       return config;
    }
 
@@ -127,13 +120,6 @@ public class NettyFailoverTest extends FailoverTest {
                code.printStackTrace();
                Assert.fail(message);
             });
-         case File:
-            final Configuration config = createDefaultInVMConfig();
-            if (useSeparateLockFolder) {
-               config.getNodeManagerLockLocation().mkdirs();
-            }
-            return new FileLockNodeManager(config.getNodeManagerLockLocation(), false);
-
          default:
             throw new AssertionError("enum type not supported!");
       }
@@ -145,7 +131,7 @@ public class NettyFailoverTest extends FailoverTest {
       final boolean isBackup = config.getHAPolicyConfiguration() instanceof ReplicaPolicyConfiguration || config.getHAPolicyConfiguration() instanceof SharedStoreSlavePolicyConfiguration;
       NodeManager nodeManager = this.nodeManager;
       //create a separate NodeManager for the backup
-      if (isBackup && (nodeManagerType == NodeManagerType.Jdbc || nodeManagerType == NodeManagerType.File)) {
+      if (isBackup && (nodeManagerType == NodeManagerType.Jdbc)) {
          nodeManager = createNodeManager();
       }
       return new SameProcessActiveMQServer(createInVMFailoverServer(true, config, nodeManager, isBackup ? 2 : 1));
@@ -175,7 +161,7 @@ public class NettyFailoverTest extends FailoverTest {
 
       ClientSession session = createSession(sf, true, true, 0);
 
-      session.createQueue(ADDRESS, ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(ADDRESS));
 
       ClientProducer producer = session.createProducer(ADDRESS);
 

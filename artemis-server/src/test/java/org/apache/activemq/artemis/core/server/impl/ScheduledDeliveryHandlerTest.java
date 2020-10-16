@@ -36,12 +36,12 @@ import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ActiveMQPropertyConversionException;
 import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.Pair;
-import org.apache.activemq.artemis.api.core.RefCountMessage;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.filter.Filter;
 import org.apache.activemq.artemis.core.message.impl.CoreMessage;
-import org.apache.activemq.artemis.core.message.impl.CoreMessageObjectPools;
+import org.apache.activemq.artemis.core.persistence.CoreMessageObjectPools;
+import org.apache.activemq.artemis.core.paging.PagingStore;
 import org.apache.activemq.artemis.core.paging.cursor.PageSubscription;
 import org.apache.activemq.artemis.core.persistence.OperationContext;
 import org.apache.activemq.artemis.core.persistence.Persister;
@@ -59,10 +59,13 @@ import org.apache.activemq.artemis.utils.UUID;
 import org.apache.activemq.artemis.utils.collections.LinkedListIterator;
 import org.apache.activemq.artemis.utils.critical.CriticalComponentImpl;
 import org.apache.activemq.artemis.utils.critical.EmptyCriticalAnalyzer;
+import org.jboss.logging.Logger;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class ScheduledDeliveryHandlerTest extends Assert {
+
+   private static final Logger log = Logger.getLogger(ScheduledDeliveryHandlerTest.class);
 
    @Test
    public void testScheduleRandom() throws Exception {
@@ -247,7 +250,7 @@ public class ScheduledDeliveryHandlerTest extends Assert {
                            long nextMessageID,
                            long nextScheduledTime,
                            boolean tail) {
-      MessageReferenceImpl refImpl = new MessageReferenceImpl(new FakeMessage(nextMessageID), null);
+      MessageReferenceImpl refImpl = new MessageReferenceImpl(new FakeMessage(nextMessageID), null, null);
       refImpl.setScheduledDeliveryTime(nextScheduledTime);
       handler.addInPlace(nextScheduledTime, refImpl, tail);
    }
@@ -257,7 +260,7 @@ public class ScheduledDeliveryHandlerTest extends Assert {
                                  long nextScheduledTime,
                                  boolean tail,
                                  Queue queue) {
-      MessageReferenceImpl refImpl = new MessageReferenceImpl(new FakeMessage(nextMessageID), queue);
+      MessageReferenceImpl refImpl = new MessageReferenceImpl(new FakeMessage(nextMessageID), queue, null);
       refImpl.setScheduledDeliveryTime(nextScheduledTime);
       handler.checkAndSchedule(refImpl, tail);
    }
@@ -279,7 +282,7 @@ public class ScheduledDeliveryHandlerTest extends Assert {
             assertTrue(ref.getScheduledDeliveryTime() >= lastTime);
          } else {
             if (ref.getScheduledDeliveryTime() < lastTime) {
-               System.out.println("^^^fail at " + ref.getScheduledDeliveryTime());
+               log.debug("^^^fail at " + ref.getScheduledDeliveryTime());
             }
          }
          lastTime = ref.getScheduledDeliveryTime();
@@ -290,7 +293,7 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
    }
 
-   class FakeMessage extends RefCountMessage {
+   class FakeMessage implements Message {
 
       @Override
       public SimpleString getReplyTo() {
@@ -318,12 +321,17 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
+      public int getDurableCount() {
+         return 0;
+      }
+
+      @Override
       public Long getScheduledDeliveryTime() {
          return null;
       }
 
       @Override
-      public void reloadPersistence(ActiveMQBuffer record) {
+      public void reloadPersistence(ActiveMQBuffer record, CoreMessageObjectPools pools) {
 
       }
 
@@ -363,22 +371,12 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
-      public int incrementRefCount() throws Exception {
+      public int durableUp() {
          return 0;
       }
 
       @Override
-      public int decrementRefCount() throws Exception {
-         return 0;
-      }
-
-      @Override
-      public int incrementDurableRefCount() {
-         return 0;
-      }
-
-      @Override
-      public int decrementDurableRefCount() {
+      public int durableDown() {
          return 0;
       }
 
@@ -777,6 +775,31 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
+      public int getUsage() {
+         return 0;
+      }
+
+      @Override
+      public int usageUp() {
+         return 0;
+      }
+
+      @Override
+      public int usageDown() {
+         return 0;
+      }
+
+      @Override
+      public int refUp() {
+         return 0;
+      }
+
+      @Override
+      public int refDown() {
+         return 0;
+      }
+
+      @Override
       public void sendBuffer(ByteBuf buffer, int count) {
 
       }
@@ -785,12 +808,48 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       public long getPersistentSize() throws ActiveMQException {
          return 0;
       }
+
    }
 
    public class FakeQueueForScheduleUnitTest extends CriticalComponentImpl implements Queue {
 
       @Override
       public void setPurgeOnNoConsumers(boolean value) {
+
+      }
+
+      @Override
+      public boolean isEnabled() {
+         return false;
+      }
+
+      @Override
+      public void setEnabled(boolean value) {
+
+      }
+
+      @Override
+      public PagingStore getPagingStore() {
+         return null;
+      }
+
+      @Override
+      public int durableUp(Message message) {
+         return 1;
+      }
+
+      @Override
+      public int durableDown(Message message) {
+         return 1;
+      }
+
+      @Override
+      public void refUp(MessageReference messageReference) {
+
+      }
+
+      @Override
+      public void refDown(MessageReference messageReference) {
 
       }
 
@@ -865,6 +924,16 @@ public class ScheduledDeliveryHandlerTest extends Assert {
 
       @Override
       public void setGroupRebalance(boolean groupRebalance) {
+
+      }
+
+      @Override
+      public boolean isGroupRebalancePauseDispatch() {
+         return false;
+      }
+
+      @Override
+      public void setGroupRebalancePauseDispatch(boolean groupRebalancePauseDisptach) {
 
       }
 

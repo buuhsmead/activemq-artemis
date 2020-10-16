@@ -32,6 +32,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
+import org.apache.activemq.artemis.api.config.ServerLocatorConfig;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ActiveMQInterruptedException;
@@ -156,18 +157,25 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
 
    public ClientSessionFactoryImpl(final ServerLocatorInternal serverLocator,
                                    final TransportConfiguration connectorConfig,
-                                   final long callTimeout,
-                                   final long callFailoverTimeout,
-                                   final long clientFailureCheckPeriod,
-                                   final long connectionTTL,
-                                   final long retryInterval,
-                                   final double retryIntervalMultiplier,
-                                   final long maxRetryInterval,
+                                   final ServerLocatorConfig locatorConfig,
                                    final int reconnectAttempts,
                                    final Executor threadPool,
                                    final ScheduledExecutorService scheduledThreadPool,
                                    final List<Interceptor> incomingInterceptors,
                                    final List<Interceptor> outgoingInterceptors) {
+      this(serverLocator, new Pair<>(connectorConfig, null),
+               locatorConfig, reconnectAttempts, threadPool,
+               scheduledThreadPool, incomingInterceptors, outgoingInterceptors);
+   }
+
+   ClientSessionFactoryImpl(final ServerLocatorInternal serverLocator,
+                          final Pair<TransportConfiguration, TransportConfiguration> connectorConfig,
+                          final ServerLocatorConfig locatorConfig,
+                          final int reconnectAttempts,
+                          final Executor threadPool,
+                          final ScheduledExecutorService scheduledThreadPool,
+                          final List<Interceptor> incomingInterceptors,
+                          final List<Interceptor> outgoingInterceptors) {
       createTrace = new Exception();
 
       this.serverLocator = serverLocator;
@@ -176,33 +184,33 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
 
       this.clientProtocolManager.setSessionFactory(this);
 
-      this.currentConnectorConfig = connectorConfig;
+      this.currentConnectorConfig = connectorConfig.getA();
 
-      connectorFactory = instantiateConnectorFactory(connectorConfig.getFactoryClassName());
+      connectorFactory = instantiateConnectorFactory(connectorConfig.getA().getFactoryClassName());
 
-      checkTransportKeys(connectorFactory, connectorConfig);
+      checkTransportKeys(connectorFactory, connectorConfig.getA());
 
-      this.callTimeout = callTimeout;
+      this.callTimeout = locatorConfig.callTimeout;
 
-      this.callFailoverTimeout = callFailoverTimeout;
+      this.callFailoverTimeout = locatorConfig.callFailoverTimeout;
 
       // HORNETQ-1314 - if this in an in-vm connection then disable connection monitoring
       if (connectorFactory.isReliable() &&
-         clientFailureCheckPeriod == ActiveMQClient.DEFAULT_CLIENT_FAILURE_CHECK_PERIOD &&
-         connectionTTL == ActiveMQClient.DEFAULT_CONNECTION_TTL) {
+         locatorConfig.clientFailureCheckPeriod == ActiveMQClient.DEFAULT_CLIENT_FAILURE_CHECK_PERIOD &&
+         locatorConfig.connectionTTL == ActiveMQClient.DEFAULT_CONNECTION_TTL) {
          this.clientFailureCheckPeriod = ActiveMQClient.DEFAULT_CLIENT_FAILURE_CHECK_PERIOD_INVM;
          this.connectionTTL = ActiveMQClient.DEFAULT_CONNECTION_TTL_INVM;
       } else {
-         this.clientFailureCheckPeriod = clientFailureCheckPeriod;
+         this.clientFailureCheckPeriod = locatorConfig.clientFailureCheckPeriod;
 
-         this.connectionTTL = connectionTTL;
+         this.connectionTTL = locatorConfig.connectionTTL;
       }
 
-      this.retryInterval = retryInterval;
+      this.retryInterval = locatorConfig.retryInterval;
 
-      this.retryIntervalMultiplier = retryIntervalMultiplier;
+      this.retryIntervalMultiplier = locatorConfig.retryIntervalMultiplier;
 
-      this.maxRetryInterval = maxRetryInterval;
+      this.maxRetryInterval = locatorConfig.maxRetryInterval;
 
       this.reconnectAttempts = reconnectAttempts;
 
@@ -221,6 +229,10 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
       confirmationWindowWarning = new ConfirmationWindowWarning(serverLocator.getConfirmationWindowSize() < 0);
 
       connectionReadyForWrites = true;
+
+      if (connectorConfig.getB() != null) {
+         this.backupConfig = connectorConfig.getB();
+      }
    }
 
    @Override
@@ -620,7 +632,21 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
 
                connector = null;
 
-               reconnectSessions(oldConnection, reconnectAttempts, me);
+               boolean allSessionReconnected;
+               int failedReconnectSessionsCounter = 0;
+               do {
+                  allSessionReconnected = reconnectSessions(oldConnection, reconnectAttempts, me);
+                  if (oldConnection != null) {
+                     oldConnection.destroy();
+                  }
+
+                  if (!allSessionReconnected) {
+                     failedReconnectSessionsCounter++;
+                     oldConnection = connection;
+                     connection = null;
+                  }
+               }
+               while ((reconnectAttempts == -1 || failedReconnectSessionsCounter < reconnectAttempts) && !allSessionReconnected);
 
                if (oldConnection != null) {
                   oldConnection.destroy();
@@ -738,7 +764,7 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
    /*
     * Re-attach sessions all pre-existing sessions to the new remoting connection
     */
-   private void reconnectSessions(final RemotingConnection oldConnection,
+   private boolean reconnectSessions(final RemotingConnection oldConnection,
                                   final int reconnectAttempts,
                                   final ActiveMQException cause) {
       HashSet<ClientSessionInternal> sessionsToFailover;
@@ -756,7 +782,7 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
          if (!clientProtocolManager.isAlive())
             ActiveMQClientLogger.LOGGER.failedToConnectToServer();
 
-         return;
+         return true;
       }
 
       List<FailureListener> oldListeners = oldConnection.getFailureListeners();
@@ -778,11 +804,11 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
 
       for (ClientSessionInternal session : sessionsToFailover) {
          if (!session.handleFailover(connection, cause)) {
-            connection.destroy();
-            this.connection = null;
-            return;
+            return false;
          }
       }
+
+      return true;
    }
 
    private void getConnectionWithRetry(final int reconnectAttempts, RemotingConnection oldConnection) {
@@ -1202,6 +1228,27 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
          if (theConn != null && connectionID.equals(theConn.getID())) {
             try {
                theConn.bufferReceived(connectionID, buffer);
+            } catch (final RuntimeException e) {
+               ActiveMQClientLogger.LOGGER.disconnectOnErrorDecoding(e);
+               threadPool.execute(new Runnable() {
+                  @Override
+                  public void run() {
+                     theConn.fail(new ActiveMQException(e.getMessage()));
+                  }
+               });
+            }
+         } else {
+            logger.debug("TheConn == null on ClientSessionFactoryImpl::DelegatingBufferHandler, ignoring packet");
+         }
+      }
+
+      @Override
+      public void endOfBatch(final Object connectionID) {
+         RemotingConnection theConn = connection;
+
+         if (theConn != null && connectionID.equals(theConn.getID())) {
+            try {
+               theConn.endOfBatch(connectionID);
             } catch (final RuntimeException e) {
                ActiveMQClientLogger.LOGGER.disconnectOnErrorDecoding(e);
                threadPool.execute(new Runnable() {

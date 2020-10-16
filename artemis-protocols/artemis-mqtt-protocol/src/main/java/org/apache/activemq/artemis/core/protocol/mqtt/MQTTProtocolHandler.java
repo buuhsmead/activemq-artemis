@@ -39,6 +39,7 @@ import io.netty.handler.codec.mqtt.MqttUnsubAckMessage;
 import io.netty.handler.codec.mqtt.MqttUnsubscribeMessage;
 import io.netty.util.ReferenceCountUtil;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
+import org.apache.activemq.artemis.logs.AuditLogger;
 import org.apache.activemq.artemis.spi.core.protocol.ConnectionEntry;
 
 /**
@@ -98,9 +99,17 @@ public class MQTTProtocolHandler extends ChannelInboundHandlerAdapter {
 
          connection.dataReceived();
 
+         if (AuditLogger.isAnyLoggingEnabled()) {
+            AuditLogger.setRemoteAddress(connection.getRemoteAddress());
+         }
+
          MQTTUtil.logMessage(session.getState(), message, true);
 
-         this.protocolManager.invokeIncoming(message, this.connection);
+         if (this.protocolManager.invokeIncoming(message, this.connection) != null) {
+            log.debugf("Interceptor rejected MQTT message: %s", message);
+            disconnect(true);
+            return;
+         }
 
          switch (message.fixedHeader().messageType()) {
             case CONNECT:
@@ -246,10 +255,11 @@ public class MQTTProtocolHandler extends ChannelInboundHandlerAdapter {
    }
 
    private void sendToClient(MqttMessage message) {
+      if (this.protocolManager.invokeOutgoing(message, connection) != null) {
+         return;
+      }
       MQTTUtil.logMessage(session.getSessionState(), message, false);
-      this.protocolManager.invokeOutgoing(message, connection);
-      ctx.write(message);
-      ctx.flush();
+      ctx.writeAndFlush(message, ctx.voidPromise());
    }
 
    private int getMessageId(MqttMessage message) {

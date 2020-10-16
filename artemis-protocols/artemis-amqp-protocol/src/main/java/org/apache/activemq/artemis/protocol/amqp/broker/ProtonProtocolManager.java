@@ -65,6 +65,11 @@ public class ProtonProtocolManager extends AbstractProtocolManager<AMQPMessage, 
 
    private final Map<SimpleString, RoutingType> prefixes = new HashMap<>();
 
+   /** minLargeMessageSize determines when a message should be considered as large.
+    *  minLargeMessageSize = -1 basically disables large message control over AMQP.
+    */
+   private int amqpMinLargeMessageSize = 100 * 1024;
+
    private int amqpCredits = AmqpSupport.AMQP_CREDITS_DEFAULT;
 
    private int amqpLowCredits = AmqpSupport.AMQP_LOW_CREDITS_DEFAULT;
@@ -110,6 +115,15 @@ public class ProtonProtocolManager extends AbstractProtocolManager<AMQPMessage, 
    @Override
    public void onNotification(Notification notification) {
 
+   }
+
+   public int getAmqpMinLargeMessageSize() {
+      return amqpMinLargeMessageSize;
+   }
+
+   public ProtonProtocolManager setAmqpMinLargeMessageSize(int amqpMinLargeMessageSize) {
+      this.amqpMinLargeMessageSize = amqpMinLargeMessageSize;
+      return this;
    }
 
    public boolean isAmqpDuplicateDetection() {
@@ -294,12 +308,12 @@ public class ProtonProtocolManager extends AbstractProtocolManager<AMQPMessage, 
       return prefixes;
    }
 
-   public void invokeIncoming(AMQPMessage message, ActiveMQProtonRemotingConnection connection) {
-      super.invokeInterceptors(this.incomingInterceptors, message, connection);
+   public String invokeIncoming(AMQPMessage message, ActiveMQProtonRemotingConnection connection) {
+      return super.invokeInterceptors(this.incomingInterceptors, message, connection);
    }
 
-   public void invokeOutgoing(AMQPMessage message, ActiveMQProtonRemotingConnection connection) {
-      super.invokeInterceptors(this.outgoingInterceptors, message, connection);
+   public String invokeOutgoing(AMQPMessage message, ActiveMQProtonRemotingConnection connection) {
+      return super.invokeInterceptors(this.outgoingInterceptors, message, connection);
    }
 
    public int getInitialRemoteMaxFrameSize() {

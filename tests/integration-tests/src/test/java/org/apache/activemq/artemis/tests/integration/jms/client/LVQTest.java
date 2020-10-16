@@ -29,6 +29,7 @@ import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
 import org.apache.activemq.artemis.jms.client.ActiveMQDestination;
 import org.apache.activemq.artemis.tests.util.JMSTestBase;
+import org.apache.activemq.artemis.tests.util.Wait;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -49,6 +50,59 @@ public class LVQTest extends JMSTestBase {
    }
 
    @Test
+   public void testLVQandNonDestructive() throws Exception {
+      ActiveMQConnectionFactory fact = (ActiveMQConnectionFactory) getCF();
+      fact.setConsumerWindowSize(0);
+
+      try (Connection connection = fact.createConnection();
+           Session session = connection.createSession(false, Session.CLIENT_ACKNOWLEDGE)) {
+
+         // swapping these two lines makes the test either succeed for fail
+         // Queue queue = session.createQueue("random?last-value=true");
+         Queue queue = session.createQueue("random?last-value=true&non-destructive=true");
+
+         MessageProducer producer = session.createProducer(queue);
+         MessageConsumer consumer = session.createConsumer(queue);
+
+         connection.start();
+
+         TextMessage message = session.createTextMessage();
+         message.setText("Message 1");
+         message.setStringProperty(Message.HDR_LAST_VALUE_NAME.toString(), "A");
+         producer.send(message);
+
+         TextMessage tm = (TextMessage) consumer.receive(2000);
+         assertNotNull(tm);
+         tm.acknowledge();
+
+         Thread.sleep(1000);
+         assertEquals("Message 1", tm.getText());
+
+         message = session.createTextMessage();
+         message.setText("Message 2");
+         message.setStringProperty(Message.HDR_LAST_VALUE_NAME.toString(), "A");
+         producer.send(message);
+
+         tm = (TextMessage) consumer.receive(2000);
+         assertNotNull(tm);
+         assertEquals("Message 2", tm.getText());
+
+         // It is important to query here
+         // as we shouldn't rely on addHead after the consumer is closed
+         org.apache.activemq.artemis.core.server.Queue serverQueue = server.locateQueue("random");
+         Wait.assertEquals(1, serverQueue::getMessageCount);
+      }
+
+      org.apache.activemq.artemis.core.server.Queue serverQueue = server.locateQueue("random");
+      Wait.assertEquals(1, serverQueue::getMessageCount);
+
+      serverQueue.deleteMatchingReferences(null);
+      // This should be removed all
+      assertEquals(0, serverQueue.getMessageCount());
+
+   }
+
+   @Test
    public void testLastValueQueueUsingAddressQueueParameters() throws Exception {
       ActiveMQConnectionFactory fact = (ActiveMQConnectionFactory) getCF();
 
@@ -65,6 +119,7 @@ public class LVQTest extends JMSTestBase {
 
          ActiveMQDestination a = (ActiveMQDestination) queue;
          assertTrue(a.getQueueAttributes().getLastValue());
+         assertTrue(a.getQueueConfiguration().isLastValue());
 
          MessageProducer producer = session.createProducer(queue);
          MessageConsumer consumer1 = session.createConsumer(queue);
@@ -107,6 +162,7 @@ public class LVQTest extends JMSTestBase {
 
          ActiveMQDestination a = (ActiveMQDestination) topic;
          assertTrue(a.getQueueAttributes().getLastValue());
+         assertTrue(a.getQueueConfiguration().isLastValue());
 
          MessageProducer producer = session.createProducer(topic);
          MessageConsumer consumer1 = session.createConsumer(topic);
@@ -159,6 +215,7 @@ public class LVQTest extends JMSTestBase {
 
          ActiveMQDestination a = (ActiveMQDestination) queue;
          assertEquals("reuters_code", a.getQueueAttributes().getLastValueKey().toString());
+         assertEquals("reuters_code", a.getQueueConfiguration().getLastValueKey().toString());
 
          MessageProducer producer = session.createProducer(queue);
          MessageConsumer consumer1 = session.createConsumer(queue);
@@ -201,6 +258,7 @@ public class LVQTest extends JMSTestBase {
 
          ActiveMQDestination a = (ActiveMQDestination) topic;
          assertEquals("reuters_code", a.getQueueAttributes().getLastValueKey().toString());
+         assertEquals("reuters_code", a.getQueueConfiguration().getLastValueKey().toString());
 
          MessageProducer producer = session.createProducer(topic);
          MessageConsumer consumer1 = session.createConsumer(topic);

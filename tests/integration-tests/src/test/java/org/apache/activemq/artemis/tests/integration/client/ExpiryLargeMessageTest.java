@@ -19,6 +19,8 @@ package org.apache.activemq.artemis.tests.integration.client;
 import java.io.File;
 
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -28,19 +30,16 @@ import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.Queue;
-import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.core.settings.impl.AddressFullMessagePolicy;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.apache.activemq.artemis.tests.util.Wait;
 import org.junit.Test;
 
 /**
  * This test will send large messages in page-mode, DLQ then, expiry then, and they should be received fine
  */
 public class ExpiryLargeMessageTest extends ActiveMQTestBase {
-
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
 
    // Constants -----------------------------------------------------
    final SimpleString EXPIRY = new SimpleString("my-expiry");
@@ -74,11 +73,11 @@ public class ExpiryLargeMessageTest extends ActiveMQTestBase {
 
       server.start();
 
-      server.createQueue(EXPIRY, RoutingType.ANYCAST, EXPIRY, null, true, false);
+      server.createQueue(new QueueConfiguration(EXPIRY).setRoutingType(RoutingType.ANYCAST));
 
-      server.createQueue(DLQ, RoutingType.ANYCAST, DLQ, null, true, false);
+      server.createQueue(new QueueConfiguration(DLQ).setRoutingType(RoutingType.ANYCAST));
 
-      server.createQueue(MY_QUEUE, RoutingType.ANYCAST, MY_QUEUE, null, true, false);
+      server.createQueue(new QueueConfiguration(MY_QUEUE).setRoutingType(RoutingType.ANYCAST));
 
       ServerLocator locator = createInVMNonHALocator();
 
@@ -126,14 +125,10 @@ public class ExpiryLargeMessageTest extends ActiveMQTestBase {
 
       Thread.sleep(1500);
 
-      long timeout = System.currentTimeMillis() + 5000;
-      while (timeout > System.currentTimeMillis() && getMessageCount(queueExpiry) != numberOfMessages) {
-         // What the Expiry Scan would be doing
+      Wait.assertEquals(numberOfMessages, () -> {
          myQueue.expireReferences();
-         Thread.sleep(50);
-      }
-
-      assertEquals(50, getMessageCount(queueExpiry));
+         return getMessageCount(queueExpiry);
+      });
 
       session = sf.createSession(false, false);
 
@@ -155,13 +150,12 @@ public class ExpiryLargeMessageTest extends ActiveMQTestBase {
          cons = session.createConsumer(EXPIRY);
          session.start();
 
-         log.info("Trying " + rep);
          for (int i = 0; i < numberOfMessages / 2; i++) {
             ClientMessage message = cons.receive(5000);
             assertNotNull(message);
 
             if (i % 10 == 0) {
-               System.out.println("Received " + i);
+               instanceLog.debug("Received " + i);
             }
 
             for (int location = 0; location < messageSize; location++) {
@@ -211,7 +205,7 @@ public class ExpiryLargeMessageTest extends ActiveMQTestBase {
             assertNotNull(message);
 
             if (i % 10 == 0) {
-               System.out.println("Received " + i);
+               instanceLog.debug("Received " + i);
             }
 
             for (int location = 0; location < messageSize; location++) {
@@ -256,11 +250,11 @@ public class ExpiryLargeMessageTest extends ActiveMQTestBase {
 
       server.start();
 
-      server.createQueue(EXPIRY, RoutingType.ANYCAST, EXPIRY, null, true, false);
+      server.createQueue(new QueueConfiguration(EXPIRY).setRoutingType(RoutingType.ANYCAST));
 
-      server.createQueue(DLQ, RoutingType.ANYCAST, DLQ, null, true, false);
+      server.createQueue(new QueueConfiguration(DLQ).setRoutingType(RoutingType.ANYCAST));
 
-      server.createQueue(MY_QUEUE, RoutingType.ANYCAST, MY_QUEUE, null, true, false);
+      server.createQueue(new QueueConfiguration(MY_QUEUE).setRoutingType(RoutingType.ANYCAST));
 
       ServerLocator locator = createInVMNonHALocator();
 
@@ -341,7 +335,7 @@ public class ExpiryLargeMessageTest extends ActiveMQTestBase {
          assertNotNull(message);
 
          if (i % 10 == 0) {
-            System.out.println("Received " + i);
+            instanceLog.debug("Received " + i);
          }
 
          for (int location = 0; location < messageSize; location++) {

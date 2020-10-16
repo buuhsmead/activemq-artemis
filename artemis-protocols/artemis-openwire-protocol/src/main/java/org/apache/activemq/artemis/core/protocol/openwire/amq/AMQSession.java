@@ -29,10 +29,11 @@ import javax.jms.ResourceAllocationException;
 
 import org.apache.activemq.advisory.AdvisorySupport;
 import org.apache.activemq.artemis.api.core.ActiveMQQueueExistsException;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.io.IOCallback;
-import org.apache.activemq.artemis.core.message.impl.CoreMessageObjectPools;
+import org.apache.activemq.artemis.core.persistence.CoreMessageObjectPools;
 import org.apache.activemq.artemis.core.paging.PagingStore;
 import org.apache.activemq.artemis.core.protocol.openwire.OpenWireConnection;
 import org.apache.activemq.artemis.core.protocol.openwire.OpenWireMessageConverter;
@@ -130,7 +131,7 @@ public class AMQSession implements SessionCallback {
       // now
 
       try {
-         coreSession = server.createSession(name, username, password, minLargeMessageSize, connection, true, false, false, false, null, this, true, connection.getOperationContext(), protocolManager.getPrefixes());
+         coreSession = server.createSession(name, username, password, minLargeMessageSize, connection, true, false, false, false, null, this, true, connection.getOperationContext(), protocolManager.getPrefixes(), protocolManager.getSecurityDomain());
 
          long sessionId = sessInfo.getSessionId().getValue();
          if (sessionId == -1) {
@@ -182,7 +183,7 @@ public class AMQSession implements SessionCallback {
          }
          if (openWireDest.isQueue()) {
             openWireDest = protocolManager.virtualTopicConsumerToFQQN(openWireDest);
-            SimpleString queueName = new SimpleString(convertWildcard(openWireDest.getPhysicalName()));
+            SimpleString queueName = new SimpleString(convertWildcard(openWireDest));
 
             if (!checkAutoCreateQueue(queueName, openWireDest.isTemporary())) {
                throw new InvalidDestinationException("Destination doesn't exist: " + queueName);
@@ -248,7 +249,7 @@ public class AMQSession implements SessionCallback {
                         routingTypeToUse = as.getDefaultAddressRoutingType();
                      }
                   }
-                  coreSession.createQueue(addressToUse, queueNameToUse, routingTypeToUse, null, isTemporary, true, true);
+                  coreSession.createQueue(new QueueConfiguration(queueNameToUse).setAddress(addressToUse).setRoutingType(routingTypeToUse).setTemporary(isTemporary).setAutoCreated(true));
                   connection.addKnownDestination(queueName);
                } else {
                   hasQueue = false;
@@ -516,8 +517,12 @@ public class AMQSession implements SessionCallback {
       connection.enableTtl();
    }
 
-   public String convertWildcard(String physicalName) {
-      return OPENWIRE_WILDCARD.convert(physicalName, server.getConfiguration().getWildcardConfiguration());
+   public String convertWildcard(ActiveMQDestination openWireDest) {
+      if (openWireDest.isTemporary() || AdvisorySupport.isAdvisoryTopic(openWireDest)) {
+         return openWireDest.getPhysicalName();
+      } else {
+         return OPENWIRE_WILDCARD.convert(openWireDest.getPhysicalName(), server.getConfiguration().getWildcardConfiguration());
+      }
    }
 
    public ServerSession getCoreSession() {

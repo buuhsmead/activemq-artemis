@@ -19,6 +19,7 @@ package org.apache.activemq.artemis.tests.integration.paging;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -31,12 +32,18 @@ import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.logs.AssertionLoggerHandler;
 import org.apache.activemq.artemis.tests.util.SpawnedTestBase;
 import org.apache.activemq.artemis.utils.RandomUtil;
+import org.apache.activemq.artemis.utils.RetryRule;
+import org.apache.activemq.artemis.utils.Wait;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 
 public class PageCountSyncOnNonTXTest extends SpawnedTestBase {
+
+   @Rule
+   public RetryRule retryRule = new RetryRule(1);
 
    public static final String WORD_START = "&*STARTED&*";
 
@@ -67,7 +74,7 @@ public class PageCountSyncOnNonTXTest extends SpawnedTestBase {
    public void setUp() throws Exception {
       super.setUp();
 
-      timeToRun = 30000L + RandomUtil.randomPositiveInt() % 1000;
+      timeToRun = 5000L + RandomUtil.randomPositiveInt() % 1000;
    }
 
    @Test
@@ -92,7 +99,7 @@ public class PageCountSyncOnNonTXTest extends SpawnedTestBase {
 
          ClientSessionFactory factory = locator.createSessionFactory();
          ClientSession session = factory.createSession(true, true);
-         session.createQueue(QUEUE_NAME, QUEUE_NAME, true);
+         session.createQueue(new QueueConfiguration(QUEUE_NAME));
          ClientProducer producer = session.createProducer(QUEUE_NAME);
          ClientConsumer consumer = session.createConsumer(QUEUE_NAME);
          session.start();
@@ -157,7 +164,7 @@ public class PageCountSyncOnNonTXTest extends SpawnedTestBase {
       try {
          server.start();
 
-         Thread.sleep(500);
+         Wait.assertTrue(server::isActive);
 
          locator = createNettyNonHALocator();
 

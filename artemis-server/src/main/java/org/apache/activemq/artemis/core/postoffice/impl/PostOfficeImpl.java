@@ -16,27 +16,14 @@
  */
 package org.apache.activemq.artemis.core.postoffice.impl;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.EnumSet;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.Executor;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-
+import org.apache.activemq.artemis.api.core.ActiveMQAddressDoesNotExistException;
 import org.apache.activemq.artemis.api.core.ActiveMQAddressFullException;
 import org.apache.activemq.artemis.api.core.ActiveMQDuplicateIdException;
 import org.apache.activemq.artemis.api.core.ActiveMQNonExistentQueueException;
+import org.apache.activemq.artemis.api.core.ActiveMQShutdownException;
 import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.Pair;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.management.CoreNotificationType;
@@ -46,6 +33,7 @@ import org.apache.activemq.artemis.api.core.management.ResourceNames;
 import org.apache.activemq.artemis.core.config.DivertConfiguration;
 import org.apache.activemq.artemis.core.config.WildcardConfiguration;
 import org.apache.activemq.artemis.core.filter.Filter;
+import org.apache.activemq.artemis.core.filter.impl.FilterImpl;
 import org.apache.activemq.artemis.core.io.IOCallback;
 import org.apache.activemq.artemis.core.message.impl.CoreMessage;
 import org.apache.activemq.artemis.core.paging.PagingManager;
@@ -92,6 +80,27 @@ import org.apache.activemq.artemis.utils.CompositeAddress;
 import org.apache.activemq.artemis.utils.UUIDGenerator;
 import org.apache.activemq.artemis.utils.collections.TypedProperties;
 import org.jboss.logging.Logger;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Stream;
+
+import static org.apache.activemq.artemis.utils.collections.IterableStream.iterableOf;
 
 /**
  * This is the class that will make the routing to Queues and decide which consumer will get the messages
@@ -464,7 +473,7 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
                   server.callBrokerAddressPlugins(plugin -> plugin.afterAddAddress(addressInfo, reload));
                }
                long retroactiveMessageCount = addressSettingsRepository.getMatch(addressInfo.getName().toString()).getRetroactiveMessageCount();
-               if (retroactiveMessageCount > 0) {
+               if (retroactiveMessageCount > 0 && !addressInfo.isInternal() && !ResourceNames.isRetroactiveResource(server.getInternalNamingPrefix(), addressInfo.getName())) {
                   createRetroactiveResources(addressInfo.getName(), retroactiveMessageCount, reload);
                }
                if (ResourceNames.isRetroactiveResource(server.getInternalNamingPrefix(), addressInfo.getName())) {
@@ -511,60 +520,19 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
             .addRoutingType(RoutingType.ANYCAST)
             .setInternal(false);
          addAddressInfo(addressInfo);
-         AddressSettings addressSettings = addressSettingsRepository.getMatch(internalAddressName.toString());
-         server.createQueue(internalAddressName,
-                            RoutingType.MULTICAST,
-                            internalMulticastQueueName,
-                            null,
-                            null,
-                            true,
-                            false,
-                            false,
-                            false,
-                            false,
-                            0,
-                            false,
-                            false,
-                            false,
-                            addressSettings.getDefaultGroupBuckets(),
-                            null,
-                            addressSettings.isDefaultLastValueQueue(),
-                            addressSettings.getDefaultLastValueKey(),
-                            false,
-                            0,
-                            0L,
-                            false,
-                            0L,
-                            0L,
-                            false,
-                            retroactiveMessageCount);
 
-         server.createQueue(internalAddressName,
-                            RoutingType.ANYCAST,
-                            internalAnycastQueueName,
-                            null,
-                            null,
-                            true,
-                            false,
-                            false,
-                            false,
-                            false,
-                            0,
-                            false,
-                            false,
-                            false,
-                            addressSettings.getDefaultGroupBuckets(),
-                            null,
-                            addressSettings.isDefaultLastValueQueue(),
-                            addressSettings.getDefaultLastValueKey(),
-                            false,
-                            0,
-                            0L,
-                            false,
-                            0L,
-                            0L,
-                            false,
-                            retroactiveMessageCount);
+         server.createQueue(new QueueConfiguration(internalMulticastQueueName)
+                               .setAddress(internalAddressName)
+                               .setRoutingType(RoutingType.MULTICAST)
+                               .setMaxConsumers(0)
+                               .setRingSize(retroactiveMessageCount));
+
+         server.createQueue(new QueueConfiguration(internalAnycastQueueName)
+                               .setAddress(internalAddressName)
+                               .setRoutingType(RoutingType.ANYCAST)
+                               .setMaxConsumers(0)
+                               .setRingSize(retroactiveMessageCount));
+
       }
       server.deployDivert(new DivertConfiguration()
                              .setName(internalDivertName.toString())
@@ -600,6 +568,7 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
    }
 
    @Override
+   @Deprecated
    public QueueBinding updateQueue(SimpleString name,
                                    RoutingType routingType,
                                    Filter filter,
@@ -618,6 +587,7 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
    }
 
    @Override
+   @Deprecated
    public QueueBinding updateQueue(SimpleString name,
                                    RoutingType routingType,
                                    Filter filter,
@@ -633,8 +603,32 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
                                    SimpleString user,
                                    Boolean configurationManaged,
                                    Long ringSize) throws Exception {
+      return updateQueue(new QueueConfiguration(name)
+                            .setRoutingType(routingType)
+                            .setFilterString(filter.getFilterString())
+                            .setMaxConsumers(maxConsumers)
+                            .setPurgeOnNoConsumers(purgeOnNoConsumers)
+                            .setExclusive(exclusive)
+                            .setGroupRebalance(groupRebalance)
+                            .setGroupBuckets(groupBuckets)
+                            .setGroupFirstKey(groupFirstKey)
+                            .setNonDestructive(nonDestructive)
+                            .setConsumersBeforeDispatch(consumersBeforeDispatch)
+                            .setDelayBeforeDispatch(delayBeforeDispatch)
+                            .setUser(user)
+                            .setConfigurationManaged(configurationManaged)
+                            .setRingSize(ringSize));
+   }
+
+   @Override
+   public QueueBinding updateQueue(QueueConfiguration queueConfiguration) throws Exception {
+      return updateQueue(queueConfiguration, false);
+   }
+
+   @Override
+   public QueueBinding updateQueue(QueueConfiguration queueConfiguration, boolean forceUpdate) throws Exception {
       synchronized (this) {
-         final QueueBinding queueBinding = (QueueBinding) addressManager.getBinding(name);
+         final QueueBinding queueBinding = (QueueBinding) addressManager.getBinding(queueConfiguration.getName());
          if (queueBinding == null) {
             return null;
          }
@@ -648,82 +642,88 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
             boolean changed = false;
 
             //validate update
-            if (maxConsumers != null && maxConsumers.intValue() != Queue.MAX_CONSUMERS_UNLIMITED) {
+            if (queueConfiguration.getMaxConsumers() != null && queueConfiguration.getMaxConsumers() != Queue.MAX_CONSUMERS_UNLIMITED) {
                final int consumerCount = queue.getConsumerCount();
-               if (consumerCount > maxConsumers) {
-                  throw ActiveMQMessageBundle.BUNDLE.invalidMaxConsumersUpdate(name.toString(), maxConsumers, consumerCount);
+               if (consumerCount > queueConfiguration.getMaxConsumers()) {
+                  throw ActiveMQMessageBundle.BUNDLE.invalidMaxConsumersUpdate(queueConfiguration.getName().toString(), queueConfiguration.getMaxConsumers(), consumerCount);
                }
             }
-            if (routingType != null) {
+            if (queueConfiguration.getRoutingType() != null) {
                final SimpleString address = queue.getAddress();
                final AddressInfo addressInfo = addressManager.getAddressInfo(address);
                final EnumSet<RoutingType> addressRoutingTypes = addressInfo.getRoutingTypes();
-               if (!addressRoutingTypes.contains(routingType)) {
-                  throw ActiveMQMessageBundle.BUNDLE.invalidRoutingTypeUpdate(name.toString(), routingType, address.toString(), addressRoutingTypes);
+               if (!addressRoutingTypes.contains(queueConfiguration.getRoutingType())) {
+                  throw ActiveMQMessageBundle.BUNDLE.invalidRoutingTypeUpdate(queueConfiguration.getName().toString(), queueConfiguration.getRoutingType(), address.toString(), addressRoutingTypes);
                }
             }
 
             //atomic update
-            if (maxConsumers != null && queue.getMaxConsumers() != maxConsumers.intValue()) {
+            if ((forceUpdate || queueConfiguration.getMaxConsumers() != null) && !Objects.equals(queue.getMaxConsumers(), queueConfiguration.getMaxConsumers())) {
                changed = true;
-               queue.setMaxConsumer(maxConsumers);
+               queue.setMaxConsumer(queueConfiguration.getMaxConsumers());
             }
-            if (routingType != null && queue.getRoutingType() != routingType) {
+            if ((forceUpdate || queueConfiguration.getRoutingType() != null) && !Objects.equals(queue.getRoutingType(), queueConfiguration.getRoutingType())) {
                changed = true;
-               queue.setRoutingType(routingType);
+               queue.setRoutingType(queueConfiguration.getRoutingType());
             }
-            if (purgeOnNoConsumers != null && queue.isPurgeOnNoConsumers() != purgeOnNoConsumers.booleanValue()) {
+            if ((forceUpdate || queueConfiguration.isPurgeOnNoConsumers() != null) && !Objects.equals(queue.isPurgeOnNoConsumers(), queueConfiguration.isPurgeOnNoConsumers())) {
                changed = true;
-               queue.setPurgeOnNoConsumers(purgeOnNoConsumers);
+               queue.setPurgeOnNoConsumers(queueConfiguration.isPurgeOnNoConsumers());
             }
-            if (exclusive != null && queue.isExclusive() != exclusive.booleanValue()) {
+            if ((forceUpdate || queueConfiguration.isEnabled() != null) && !Objects.equals(queue.isEnabled(), queueConfiguration.isEnabled())) {
                changed = true;
-               queue.setExclusive(exclusive);
+               queue.setEnabled(queueConfiguration.isEnabled());
             }
-            if (groupRebalance != null && queue.isGroupRebalance() != groupRebalance.booleanValue()) {
+            if ((forceUpdate || queueConfiguration.isExclusive() != null) && !Objects.equals(queue.isExclusive(), queueConfiguration.isExclusive())) {
                changed = true;
-               queue.setGroupRebalance(groupRebalance);
+               queue.setExclusive(queueConfiguration.isExclusive());
             }
-            if (groupBuckets != null && queue.getGroupBuckets() != groupBuckets.intValue()) {
+            if ((forceUpdate || queueConfiguration.isGroupRebalance() != null) && !Objects.equals(queue.isGroupRebalance(), queueConfiguration.isGroupRebalance())) {
                changed = true;
-               queue.setGroupBuckets(groupBuckets);
+               queue.setGroupRebalance(queueConfiguration.isGroupRebalance());
             }
-            if (groupFirstKey != null && !groupFirstKey.equals(queue.getGroupFirstKey())) {
+            if ((forceUpdate || queueConfiguration.isGroupRebalancePauseDispatch() != null) && !Objects.equals(queue.isGroupRebalancePauseDispatch(), queueConfiguration.isGroupRebalancePauseDispatch())) {
                changed = true;
-               queue.setGroupFirstKey(groupFirstKey);
+               queue.setGroupRebalancePauseDispatch(queueConfiguration.isGroupRebalancePauseDispatch());
             }
-            if (nonDestructive != null && queue.isNonDestructive() != nonDestructive.booleanValue()) {
+            if ((forceUpdate || queueConfiguration.getGroupBuckets() != null) && !Objects.equals(queue.getGroupBuckets(), queueConfiguration.getGroupBuckets())) {
                changed = true;
-               queue.setNonDestructive(nonDestructive);
+               queue.setGroupBuckets(queueConfiguration.getGroupBuckets());
             }
-            if (consumersBeforeDispatch != null && !consumersBeforeDispatch.equals(queue.getConsumersBeforeDispatch())) {
+            if ((forceUpdate || queueConfiguration.getGroupFirstKey() != null) && !Objects.equals(queueConfiguration.getGroupFirstKey(), queue.getGroupFirstKey())) {
                changed = true;
-               queue.setConsumersBeforeDispatch(consumersBeforeDispatch.intValue());
+               queue.setGroupFirstKey(queueConfiguration.getGroupFirstKey());
             }
-            if (delayBeforeDispatch != null && !delayBeforeDispatch.equals(queue.getDelayBeforeDispatch())) {
+            if ((forceUpdate || queueConfiguration.isNonDestructive() != null) && !Objects.equals(queue.isNonDestructive(), queueConfiguration.isNonDestructive())) {
                changed = true;
-               queue.setDelayBeforeDispatch(delayBeforeDispatch.longValue());
+               queue.setNonDestructive(queueConfiguration.isNonDestructive());
             }
-            if (filter != null && !filter.equals(queue.getFilter())) {
+            if ((forceUpdate || queueConfiguration.getConsumersBeforeDispatch() != null) && !Objects.equals(queueConfiguration.getConsumersBeforeDispatch(), queue.getConsumersBeforeDispatch())) {
                changed = true;
-               queue.setFilter(filter);
+               queue.setConsumersBeforeDispatch(queueConfiguration.getConsumersBeforeDispatch());
             }
-            if (configurationManaged != null && !configurationManaged.equals(queue.isConfigurationManaged())) {
+            if ((forceUpdate || queueConfiguration.getDelayBeforeDispatch() != null) && !Objects.equals(queueConfiguration.getDelayBeforeDispatch(), queue.getDelayBeforeDispatch())) {
                changed = true;
-               queue.setConfigurationManaged(configurationManaged);
+               queue.setDelayBeforeDispatch(queueConfiguration.getDelayBeforeDispatch());
             }
-            if (logger.isDebugEnabled()) {
-               if (user == null && queue.getUser() != null) {
-                  logger.debug("Ignoring updating Queue to a NULL user");
-               }
-            }
-            if (user != null && !user.equals(queue.getUser())) {
+            final SimpleString empty = new SimpleString("");
+            Filter oldFilter = FilterImpl.createFilter(queue.getFilter() == null ? empty : queue.getFilter().getFilterString());
+            Filter newFilter = FilterImpl.createFilter(queueConfiguration.getFilterString() == null ? empty : queueConfiguration.getFilterString());
+            if ((forceUpdate || newFilter != oldFilter) && !Objects.equals(oldFilter, newFilter)) {
                changed = true;
-               queue.setUser(user);
+               queue.setFilter(newFilter);
             }
-            if (ringSize != null && !ringSize.equals(queue.getRingSize())) {
+            if ((forceUpdate || queueConfiguration.isConfigurationManaged() != null) && !Objects.equals(queueConfiguration.isConfigurationManaged(), queue.isConfigurationManaged())) {
                changed = true;
-               queue.setRingSize(ringSize);
+               queue.setConfigurationManaged(queueConfiguration.isConfigurationManaged());
+            }
+            if ((forceUpdate || queueConfiguration.getUser() != null) && !Objects.equals(queueConfiguration.getUser(), queue.getUser())) {
+               changed = true;
+               queue.setUser(queueConfiguration.getUser());
+            }
+            if ((forceUpdate || queueConfiguration.getRingSize() != null) && !Objects.equals(queueConfiguration.getRingSize(), queue.getRingSize())) {
+               changed = true;
+               queue.setRingSize(queueConfiguration.getRingSize());
             }
 
             if (changed) {
@@ -777,18 +777,16 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
             server.callBrokerAddressPlugins(plugin -> plugin.beforeRemoveAddress(address));
          }
 
-         final Bindings bindingsForAddress = getDirectBindings(address);
+         final Collection<Binding> bindingsForAddress = getDirectBindings(address);
          if (force) {
-            for (Binding binding : bindingsForAddress.getBindings()) {
+            for (Binding binding : bindingsForAddress) {
                if (binding instanceof QueueBinding) {
                   ((QueueBinding)binding).getQueue().deleteQueue(true);
                }
             }
 
-         } else {
-            if (bindingsForAddress.getBindings().size() > 0) {
-               throw ActiveMQMessageBundle.BUNDLE.addressHasBindings(address);
-            }
+         } else if (!bindingsForAddress.isEmpty()) {
+            throw ActiveMQMessageBundle.BUNDLE.addressHasBindings(address);
          }
          managementService.unregisterAddress(address);
          final AddressInfo addressInfo = addressManager.removeAddressInfo(address);
@@ -886,8 +884,6 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
          }
 
          if (deleteData && addressManager.getBindingsForRoutingAddress(binding.getAddress()) == null) {
-            pagingManager.deletePageStore(binding.getAddress());
-
             deleteDuplicateCache(binding.getAddress());
          }
 
@@ -979,17 +975,17 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
    }
 
    @Override
-   public Bindings getMatchingBindings(final SimpleString address) throws Exception {
+   public Collection<Binding> getMatchingBindings(final SimpleString address) throws Exception {
       return addressManager.getMatchingBindings(address);
    }
 
    @Override
-   public Bindings getDirectBindings(final SimpleString address) throws Exception {
+   public Collection<Binding> getDirectBindings(final SimpleString address) throws Exception {
       return addressManager.getDirectBindings(address);
    }
 
    @Override
-   public Map<SimpleString, Binding> getAllBindings() {
+   public Stream<Binding> getAllBindings() {
       return addressManager.getBindings();
    }
 
@@ -1024,7 +1020,7 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
    public RoutingStatus route(final Message message,
                               final RoutingContext context,
                               final boolean direct) throws Exception {
-      return route(message, context, direct, true, null);
+      return route(message, context, direct, true, null, false);
    }
 
    @Override
@@ -1034,6 +1030,21 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
                               boolean rejectDuplicates,
                               final Binding bindingMove) throws Exception {
 
+      return route(message, context, direct, rejectDuplicates, bindingMove, false);
+   }
+
+
+   /**
+    * The route can call itelf sending to DLA.
+    * if a DLA still not found, it should then use previous semantics.
+    * */
+   private RoutingStatus route(final Message message,
+                              final RoutingContext context,
+                              final boolean direct,
+                              boolean rejectDuplicates,
+                              final Binding bindingMove, boolean sendToDLA) throws Exception {
+
+
       RoutingStatus result;
       // Sanity check
       if (message.getRefCount() > 0) {
@@ -1041,8 +1052,6 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
       }
 
       final SimpleString address = context.getAddress(message);
-
-      setPagingStore(address, message);
 
       AtomicBoolean startedTX = new AtomicBoolean(false);
 
@@ -1095,7 +1104,13 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
 
             AddressSettings addressSettings = addressSettingsRepository.getMatch(address.toString());
 
-            boolean sendToDLA = addressSettings.isSendToDLAOnNoRoute();
+
+            if (sendToDLA) {
+               // it's already been through here once, giving up now
+               sendToDLA = false;
+            } else {
+               sendToDLA = addressSettings.isSendToDLAOnNoRoute();
+            }
 
             if (sendToDLA) {
                // Send to the DLA for the address
@@ -1116,7 +1131,7 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
 
                   message.reencode();
 
-                  route(message, context.getTransaction(), false);
+                  route(message, new RoutingContextImpl(context.getTransaction()), false, true, null, sendToDLA);
                   result = RoutingStatus.NO_BINDINGS_DLA;
                }
             } else {
@@ -1167,28 +1182,37 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
 
       // A -1 <expiry-delay> means don't do anything
       if (expirationOverride >= 0) {
-         // only override the exiration on messages where the expiration hasn't been set by the user
+         // only override the expiration on messages where the expiration hasn't been set by the user
          if (message.getExpiration() == 0) {
             message.setExpiration(System.currentTimeMillis() + expirationOverride);
+         }
+      } else {
+         long minExpiration = addressSettingsRepository.getMatch(address.toString()).getMinExpiryDelay();
+         long maxExpiration = addressSettingsRepository.getMatch(address.toString()).getMaxExpiryDelay();
+
+         if (maxExpiration != AddressSettings.DEFAULT_MAX_EXPIRY_DELAY && (message.getExpiration() == 0 || message.getExpiration() > (System.currentTimeMillis() + maxExpiration))) {
+            message.setExpiration(System.currentTimeMillis() + maxExpiration);
+         } else if (minExpiration != AddressSettings.DEFAULT_MIN_EXPIRY_DELAY && message.getExpiration() < (System.currentTimeMillis() + minExpiration)) {
+            message.setExpiration(System.currentTimeMillis() + minExpiration);
          }
       }
    }
 
    @Override
-   public MessageReference reroute(final Message message, final Queue queue, final Transaction tx) throws Exception {
+   public MessageReference reload(final Message message, final Queue queue, final Transaction tx) throws Exception {
 
-      setPagingStore(queue.getAddress(), message);
+      MessageReference reference = MessageReference.Factory.createReference(message, queue, pagingManager.getPageStore(message.getAddressSimpleString()));
 
-      MessageReference reference = MessageReference.Factory.createReference(message, queue);
-
-      Long scheduledDeliveryTime = message.getScheduledDeliveryTime();
-      if (scheduledDeliveryTime != null) {
-         reference.setScheduledDeliveryTime(scheduledDeliveryTime);
+      Long scheduledDeliveryTime;
+      if (message.hasScheduledDeliveryTime()) {
+         scheduledDeliveryTime = message.getScheduledDeliveryTime();
+         if (scheduledDeliveryTime != null) {
+            reference.setScheduledDeliveryTime(scheduledDeliveryTime);
+         }
       }
 
-      message.incrementDurableRefCount();
-
-      message.incrementRefCount();
+      queue.refUp(reference);
+      queue.durableUp(message);
 
       if (tx == null) {
          queue.reload(reference);
@@ -1226,7 +1250,7 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
                   try {
                      //this will cause large message file to be
                      //cleaned up
-                     copyRedistribute.decrementRefCount();
+                     // copyRedistribute.refDown();
                   } catch (Exception e) {
                      logger.warn("Failed to clean up message: " + copyRedistribute);
                   }
@@ -1384,12 +1408,6 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
 
    // Private -----------------------------------------------------------------
 
-   private void setPagingStore(SimpleString address, Message message) throws Exception {
-      PagingStore store = pagingManager.getPageStore(CompositeAddress.extractAddressName(address));
-
-      message.setContext(store);
-   }
-
    private void routeQueueInfo(final Message message, final Queue queue, final boolean applyFilters) throws Exception {
       if (!applyFilters || queue.getFilter() == null || queue.getFilter().match(message)) {
          RoutingContext context = new RoutingContextImpl(null);
@@ -1433,10 +1451,19 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
 
       Transaction tx = context.getTransaction();
 
-      Long deliveryTime = message.getScheduledDeliveryTime();
+      Long deliveryTime = null;
+      if (message.hasScheduledDeliveryTime()) {
+         deliveryTime = message.getScheduledDeliveryTime();
+      }
 
+      PagingStore owningStore = pagingManager.getPageStore(message.getAddressSimpleString());
       for (Map.Entry<SimpleString, RouteContextList> entry : context.getContexListing().entrySet()) {
-         PagingStore store = pagingManager.getPageStore(entry.getKey());
+         PagingStore store;
+         if (entry.getKey() == message.getAddressSimpleString() || entry.getKey().equals(message.getAddressSimpleString())) {
+            store = owningStore;
+         } else {
+            store = pagingManager.getPageStore(entry.getKey());
+         }
 
          if (store != null && storageManager.addToPage(store, message, context.getTransaction(), entry.getValue())) {
             if (message.isLargeMessage()) {
@@ -1449,14 +1476,14 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
          }
 
          for (Queue queue : entry.getValue().getNonDurableQueues()) {
-            MessageReference reference = MessageReference.Factory.createReference(message, queue);
+            MessageReference reference = MessageReference.Factory.createReference(message, queue, owningStore);
 
             if (deliveryTime != null) {
                reference.setScheduledDeliveryTime(deliveryTime);
             }
             refs.add(reference);
 
-            message.incrementRefCount();
+            queue.refUp(reference);
          }
 
          Iterator<Queue> iter = entry.getValue().getDurableQueues().iterator();
@@ -1464,7 +1491,7 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
          while (iter.hasNext()) {
             Queue queue = iter.next();
 
-            MessageReference reference = MessageReference.Factory.createReference(message, queue);
+            MessageReference reference = MessageReference.Factory.createReference(message, queue, owningStore);
 
             if (context.isAlreadyAcked(context.getAddress(message), queue)) {
                reference.setAlreadyAcked();
@@ -1477,9 +1504,10 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
                reference.setScheduledDeliveryTime(deliveryTime);
             }
             refs.add(reference);
+            queue.refUp(reference);
 
             if (message.isDurable()) {
-               int durableRefCount = message.incrementDurableRefCount();
+               int durableRefCount = queue.durableUp(message);
 
                if (durableRefCount == 1) {
                   if (tx != null) {
@@ -1509,8 +1537,6 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
                   }
                }
             }
-
-            message.incrementRefCount();
          }
       }
 
@@ -1617,7 +1643,7 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
          if (!cacheBridge.atomicVerify(bridgeDupBytes, context.getTransaction())) {
             context.getTransaction().rollback();
             startedTX.set(false);
-            message.decrementRefCount();
+            message.usageDown(); // this will cause large message delete
             return false;
          }
       } else {
@@ -1643,7 +1669,7 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
                   context.getTransaction().markAsRollbackOnly(new ActiveMQDuplicateIdException(warnMessage));
                }
 
-               message.decrementRefCount();
+               message.usageDown(); // this will cause large message delete
 
                return false;
             }
@@ -1694,12 +1720,11 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
 
       message.setAddress(queueName);
 
-      String uid = UUIDGenerator.getInstance().generateStringUUID();
-
       message.putStringProperty(ManagementHelper.HDR_NOTIFICATION_TYPE, new SimpleString(type.toString()));
-      message.putLongProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP, System.currentTimeMillis());
 
-      message.putStringProperty(new SimpleString("foobar"), new SimpleString(uid));
+      long timestamp = System.currentTimeMillis();
+      message.putLongProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP, timestamp);
+      message.setTimestamp(timestamp);
 
       return message;
    }
@@ -1718,7 +1743,7 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
       public void run() {
          // The reaper thread should be finished case the PostOffice is gone
          // This is to avoid leaks on PostOffice between stops and starts
-         for (Queue queue : getLocalQueues()) {
+         for (Queue queue : iterableOf(getLocalQueues())) {
             try {
                queue.expireReferences();
             } catch (Exception e) {
@@ -1740,11 +1765,11 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
 
       @Override
       public void run() {
-         for (Queue queue : getLocalQueues()) {
-            if (!queue.isInternalQueue() && QueueManagerImpl.isAutoDelete(queue) && QueueManagerImpl.consumerCountCheck(queue) && QueueManagerImpl.delayCheck(queue) && QueueManagerImpl.messageCountCheck(queue)) {
+         getLocalQueues().forEach(queue -> {
+            if (!queue.isInternalQueue() && QueueManagerImpl.isAutoDelete(queue) && QueueManagerImpl.consumerCountCheck(queue) && QueueManagerImpl.delayCheck(queue) && QueueManagerImpl.messageCountCheck(queue) && queueWasUsed(queue)) {
                QueueManagerImpl.performAutoDeleteQueue(server, queue);
             }
-         }
+         });
 
          Set<SimpleString> addresses = addressManager.getAddresses();
 
@@ -1761,26 +1786,32 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
 
                   server.removeAddressInfo(address, null);
                }
+            } catch (ActiveMQShutdownException e) {
+               // the address and queue reaper is asynchronous so it may happen
+               // that the broker is shutting down while the reaper iterates
+               // through the addresses, next restart this operation will be retried
+               logger.debug(e.getMessage(), e);
             } catch (Exception e) {
-               ActiveMQServerLogger.LOGGER.errorRemovingAutoCreatedQueue(e, address);
+               if (e instanceof ActiveMQAddressDoesNotExistException && getAddressInfo(address) == null) {
+                  // the address and queue reaper is asynchronous so it may happen
+                  // that the address is removed before the reaper removes it
+                  logger.debug(e.getMessage(), e);
+               } else {
+                  ActiveMQServerLogger.LOGGER.errorRemovingAutoCreatedQueue(e, address);
+               }
             }
          }
       }
+
+      private boolean queueWasUsed(Queue queue) {
+         return queue.getMessagesExpired() > 0 || queue.getMessagesAcknowledged() > 0 || queue.getMessagesKilled() > 0 || queue.getConsumerRemovedTimestamp() != -1;
+      }
    }
 
-   private List<Queue> getLocalQueues() {
-      Map<SimpleString, Binding> nameMap = addressManager.getBindings();
-
-      List<Queue> queues = new ArrayList<>();
-
-      for (Binding binding : nameMap.values()) {
-         if (binding.getType() == BindingType.LOCAL_QUEUE) {
-            Queue queue = (Queue) binding.getBindable();
-
-            queues.add(queue);
-         }
-      }
-      return queues;
+   private Stream<Queue> getLocalQueues() {
+      return addressManager.getBindings()
+         .filter(binding -> binding.getType() == BindingType.LOCAL_QUEUE)
+         .map(binding -> (Queue) binding.getBindable());
    }
 
    public static final class AddOperation implements TransactionOperation {
@@ -1827,13 +1858,11 @@ public class PostOfficeImpl implements PostOffice, NotificationListener, Binding
          // Reverse the ref counts, and paging sizes
 
          for (MessageReference ref : refs) {
+            ref.getQueue().refDown(ref);
             Message message = ref.getMessage();
-
             if (message.isDurable() && ref.getQueue().isDurable()) {
-               message.decrementDurableRefCount();
+               ref.getQueue().durableDown(message);
             }
-
-            message.decrementRefCount();
          }
       }
 

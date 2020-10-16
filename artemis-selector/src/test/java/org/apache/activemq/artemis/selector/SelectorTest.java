@@ -26,9 +26,6 @@ import org.apache.activemq.artemis.selector.impl.SelectorParser;
 import org.junit.Assert;
 import org.junit.Test;
 
-/**
- * @version $Revision: 1.7 $
- */
 public class SelectorTest {
 
    class MockMessage implements Filterable {
@@ -193,6 +190,16 @@ public class SelectorTest {
       assertSelector(message, "JMSType='1001'", true);
       assertSelector(message, "JMSType='1001' OR JMSType='1002'", true);
       assertSelector(message, "JMSType = 'crap'", false);
+   }
+
+   @Test
+   public void testDottedProperty() throws Exception {
+      MockMessage message = createMessage();
+      message.setJMSType("selector-test");
+      message.setStringProperty("a.test", "value");
+      message.setJMSMessageID("id:test:1:1:1:1");
+
+      assertSelector(message, "\"a.test\" = 'value'", true);
    }
 
    @Test

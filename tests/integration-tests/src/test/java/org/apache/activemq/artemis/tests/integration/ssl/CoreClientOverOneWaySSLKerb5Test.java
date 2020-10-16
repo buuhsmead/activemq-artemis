@@ -17,6 +17,7 @@
 package org.apache.activemq.artemis.tests.integration.ssl;
 
 import org.apache.activemq.artemis.api.core.ActiveMQSecurityException;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
@@ -37,10 +38,12 @@ import org.apache.activemq.artemis.core.server.ActiveMQServers;
 import org.apache.activemq.artemis.spi.core.security.ActiveMQSecurityManager;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.utils.RandomUtil;
+import org.apache.activemq.artemis.utils.RetryRule;
 import org.apache.hadoop.minikdc.MiniKdc;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 
 import java.io.File;
@@ -52,6 +55,9 @@ import java.util.Map;
 import java.util.Set;
 
 public class CoreClientOverOneWaySSLKerb5Test extends ActiveMQTestBase {
+
+   @Rule
+   public RetryRule retryRule = new RetryRule(2);
 
    public static final SimpleString QUEUE = new SimpleString("QueueOverKrb5SSL");
    public static final String CLIENT_PRINCIPAL = "client";
@@ -95,7 +101,7 @@ public class CoreClientOverOneWaySSLKerb5Test extends ActiveMQTestBase {
       try {
          sf = createSessionFactory(locator);
          ClientSession session = sf.createSession(false, true, true);
-         session.createQueue(CoreClientOverOneWaySSLKerb5Test.QUEUE, RoutingType.ANYCAST, CoreClientOverOneWaySSLKerb5Test.QUEUE);
+         session.createQueue(new QueueConfiguration(CoreClientOverOneWaySSLKerb5Test.QUEUE).setRoutingType(RoutingType.ANYCAST));
          ClientProducer producer = session.createProducer(CoreClientOverOneWaySSLKerb5Test.QUEUE);
 
          final String text = RandomUtil.randomString();
@@ -112,9 +118,6 @@ public class CoreClientOverOneWaySSLKerb5Test extends ActiveMQTestBase {
          Assert.assertNotNull("got validated user", m.getValidatedUserID());
          Assert.assertTrue("krb id in validated user", m.getValidatedUserID().contains(CLIENT_PRINCIPAL));
 
-      } catch (Exception e) {
-         e.printStackTrace();
-         Assert.fail();
       } finally {
          if (sf != null) {
             sf.close();

@@ -26,6 +26,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.ServiceLoader;
 import java.util.Set;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -48,6 +49,7 @@ import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.config.ConfigurationUtils;
 import org.apache.activemq.artemis.core.protocol.core.CoreRemotingConnection;
 import org.apache.activemq.artemis.core.protocol.core.impl.CoreProtocolManagerFactory;
+import org.apache.activemq.artemis.core.remoting.impl.netty.NettyAcceptor;
 import org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants;
 import org.apache.activemq.artemis.core.remoting.server.RemotingService;
 import org.apache.activemq.artemis.core.security.ActiveMQPrincipal;
@@ -69,6 +71,7 @@ import org.apache.activemq.artemis.spi.core.remoting.AcceptorFactory;
 import org.apache.activemq.artemis.spi.core.remoting.BufferHandler;
 import org.apache.activemq.artemis.spi.core.remoting.Connection;
 import org.apache.activemq.artemis.spi.core.remoting.ServerConnectionLifeCycleListener;
+import org.apache.activemq.artemis.spi.core.remoting.ssl.SSLContextFactoryProvider;
 import org.apache.activemq.artemis.utils.ActiveMQThreadFactory;
 import org.apache.activemq.artemis.utils.ConfigurationHelper;
 import org.apache.activemq.artemis.utils.ReusableLatch;
@@ -93,7 +96,7 @@ public class RemotingServiceImpl implements RemotingService, ServerConnectionLif
 
    private final Map<String, Acceptor> acceptors = new HashMap<>();
 
-   private final Map<Object, ConnectionEntry> connections = new ConcurrentHashMap<>();
+   private final ConcurrentMap<Object, ConnectionEntry> connections = new ConcurrentHashMap<>();
 
    private final ReusableLatch connectionCountLatch = new ReusableLatch(0);
 
@@ -151,7 +154,7 @@ public class RemotingServiceImpl implements RemotingService, ServerConnectionLif
 
       CoreProtocolManagerFactory coreProtocolManagerFactory = new CoreProtocolManagerFactory();
 
-      MessagePersister.getInstance().registerProtocol(coreProtocolManagerFactory);
+      MessagePersister.registerProtocol(coreProtocolManagerFactory);
 
       this.flushExecutor = flushExecutor;
 
@@ -307,7 +310,15 @@ public class RemotingServiceImpl implements RemotingService, ServerConnectionLif
    public synchronized void startAcceptors() throws Exception {
       if (isStarted()) {
          for (Acceptor a : acceptors.values()) {
-            a.start();
+            try {
+               if (a instanceof NettyAcceptor && !((NettyAcceptor)a).isAutoStart()) {
+                  continue;
+               }
+               a.start();
+            } catch (Throwable t) {
+               ActiveMQServerLogger.LOGGER.errorStartingAcceptor(a.getName(), a.getConfiguration());
+               throw t;
+            }
          }
       }
    }
@@ -374,6 +385,7 @@ public class RemotingServiceImpl implements RemotingService, ServerConnectionLif
       if (!started) {
          return;
       }
+      SSLContextFactoryProvider.getSSLContextFactory().clearSSLContexts();
 
       failureCheckAndFlushThread.close(criticalError);
 
@@ -498,6 +510,11 @@ public class RemotingServiceImpl implements RemotingService, ServerConnectionLif
       }
 
       return conns;
+   }
+
+   @Override
+   public int getConnectionCount() {
+      return connections.size();
    }
 
    @Override

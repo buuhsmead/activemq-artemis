@@ -25,20 +25,21 @@ import javax.jms.TemporaryQueue;
 import javax.jms.TextMessage;
 import javax.jms.Topic;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.impl.AddressInfo;
 import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.SingleServerTestBase;
+import org.jboss.logging.Logger;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class MixRoutingTest extends SingleServerTestBase {
    // Constants -----------------------------------------------------
 
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
+   private static final Logger log = Logger.getLogger(MixRoutingTest.class);
 
    private static final long CONNECTION_TTL = 2000;
 
@@ -58,7 +59,7 @@ public class MixRoutingTest extends SingleServerTestBase {
    @Test
    public void testMix() throws Exception {
       SimpleString queueName = SimpleString.toSimpleString(getName());
-      server.createQueue(queueName, RoutingType.ANYCAST, queueName, null, true, false);
+      server.createQueue(new QueueConfiguration(queueName).setRoutingType(RoutingType.ANYCAST));
       ActiveMQConnectionFactory factory = new ActiveMQConnectionFactory();
       Connection connection = factory.createConnection();
       Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
@@ -104,7 +105,7 @@ public class MixRoutingTest extends SingleServerTestBase {
    @Test
    public void testMix2() throws Exception {
       SimpleString queueName = SimpleString.toSimpleString(getName());
-      server.createQueue(queueName, RoutingType.ANYCAST, queueName, null, true, false);
+      server.createQueue(new QueueConfiguration(queueName).setRoutingType(RoutingType.ANYCAST));
       ActiveMQConnectionFactory factory = new ActiveMQConnectionFactory();
       Connection connection = factory.createConnection();
       Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
@@ -157,7 +158,7 @@ public class MixRoutingTest extends SingleServerTestBase {
       SimpleString topicName = SimpleString.toSimpleString("topic" + getName());
       AddressInfo info = new AddressInfo(topicName, RoutingType.MULTICAST);
       server.addAddressInfo(info);
-      server.createQueue(queueName, RoutingType.ANYCAST, queueName, null, true, false);
+      server.createQueue(new QueueConfiguration(queueName).setRoutingType(RoutingType.ANYCAST));
       ActiveMQConnectionFactory factory = new ActiveMQConnectionFactory();
       Connection connection = factory.createConnection();
       Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);

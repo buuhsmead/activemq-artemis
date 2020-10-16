@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
@@ -31,8 +32,10 @@ import org.apache.activemq.artemis.core.config.ha.ColocatedPolicyConfiguration;
 import org.apache.activemq.artemis.core.config.ha.SharedStoreMasterPolicyConfiguration;
 import org.apache.activemq.artemis.core.config.ha.SharedStoreSlavePolicyConfiguration;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
+import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.server.impl.InVMNodeManager;
 import org.apache.activemq.artemis.tests.util.TransportConfigurationUtils;
+import org.apache.activemq.artemis.tests.util.Wait;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -118,7 +121,7 @@ public class LiveToLiveFailoverTest extends FailoverTest {
          sf2 = (ClientSessionFactoryInternal) locator.createSessionFactory(backupServer.getServer().getNodeID().toString());
 
          ClientSession session2 = createSession(sf2, false, false);
-         session2.createQueue(ADDRESS, ADDRESS, null, true);
+         session2.createQueue(new QueueConfiguration(ADDRESS));
          addSessionFactory(sf2);
       }
 
@@ -146,7 +149,7 @@ public class LiveToLiveFailoverTest extends FailoverTest {
          sf2 = (ClientSessionFactoryInternal) locator.createSessionFactory(backupServer.getServer().getNodeID().toString());
 
          ClientSession session2 = createSession(sf2, false, false);
-         session2.createQueue(ADDRESS, ADDRESS, null, true);
+         session2.createQueue(new QueueConfiguration(ADDRESS));
          addSessionFactory(sf2);
       }
       return sf;
@@ -172,7 +175,7 @@ public class LiveToLiveFailoverTest extends FailoverTest {
          sf2 = (ClientSessionFactoryInternal) locator.createSessionFactory(backupServer.getServer().getNodeID().toString());
          addSessionFactory(sf2);
          ClientSession session2 = createSession(sf2, false, false);
-         session2.createQueue(ADDRESS, ADDRESS, null, true);
+         session2.createQueue(new QueueConfiguration(ADDRESS));
       }
    }
 
@@ -184,13 +187,19 @@ public class LiveToLiveFailoverTest extends FailoverTest {
       return TransportConfigurationUtils.getInVMAcceptor(live, server);
    }
 
+   /**
+    * TODO: https://issues.apache.org/jira/browse/ARTEMIS-2709
+    *       this test has been intermittently failing since its day one.
+    *       Ignoring the test for now until we can fix it.
+    * @throws Exception
+    */
    @Test
    public void scaleDownDelay() throws Exception {
       createSessionFactory();
 
       ClientSession session = createSession(sf, true, true);
 
-      session.createQueue(ADDRESS, ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(ADDRESS));
 
       ClientProducer producer = session.createProducer(ADDRESS);
 
@@ -198,6 +207,11 @@ public class LiveToLiveFailoverTest extends FailoverTest {
       sendMessages(session, producer, 1000);
 
       crash(session);
+
+      // Wait for failover to happen
+      Queue serverQueue = backupServer.getServer().locateQueue(ADDRESS);
+
+      Wait.assertEquals(1000, serverQueue::getMessageCount);
 
       ClientConsumer consumer = session.createConsumer(ADDRESS);
 
@@ -227,7 +241,7 @@ public class LiveToLiveFailoverTest extends FailoverTest {
 
       ClientSession session = createSession(sf);
 
-      //session.createQueue(FailoverTestBase.ADDRESS, FailoverTestBase.ADDRESS, null, true);
+      //session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       ClientProducer producer = session.createProducer(ADDRESS);
 

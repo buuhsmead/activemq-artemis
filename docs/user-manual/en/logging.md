@@ -1,11 +1,10 @@
 # Logging
 
 Apache ActiveMQ Artemis uses the JBoss Logging framework to do its logging and is
-configurable via the `logging.properties` file found in the
-configuration directories. This is configured by Default to log to both
-the console and to a file.
+configurable via the `logging.properties` file found in the `etc` directory. This
+is configured by default to log to both the console and to a file.
 
-There are 8 loggers available which are as follows:
+There are a handful of general loggers available:
 
 Logger | Description
 ---|---
@@ -16,8 +15,37 @@ org.apache.activemq.artemis.journal|Logs Journal calls
 org.apache.activemq.artemis.jms|Logs JMS calls
 org.apache.activemq.artemis.integration.bootstrap|Logs bootstrap calls
 org.apache.activemq.audit.base|audit log. Disabled by default
+org.apache.activemq.audit.resource|resource audit log. Disabled by default
 org.apache.activemq.audit.message|message audit log. Disabled by default
 
+## Activating TRACE for a specific logger
+
+Sometimes it is necessary to get more detailed logs from a particular logger. For
+example, when you're trying to troublshoot an issue. Say you needed to get TRACE
+logging from the logger `org.foo`. First you would need to add `org.foo` to the
+`loggers` list at the top of `logging.properties`, e.g.:
+
+```
+loggers=...,org.foo
+```
+
+Then you need to configure the logging level for the `org.foo` logger to `TRACE`,
+e.g.:
+
+```
+logger.org.foo.level=TRACE
+```
+
+Lastly, you would need to update the `level` of the necessary `handler` to allow
+the `TRACE` logging through, e.g.:
+
+```
+handler.CONSOLE.level=TRACE
+```
+or
+```
+handler.FILE.level=TRACE
+```
 
 ## Logging in a client or with an Embedded server
 
@@ -29,12 +57,12 @@ the simplest way is to use the "all" client jar.
 <dependency>
    <groupId>org.jboss.logmanager</groupId>
    <artifactId>jboss-logmanager</artifactId>
-   <version>2.0.3.Final</version>
+   <version>2.1.10.Final</version>
 </dependency>
 <dependency>
    <groupId>org.apache.activemq</groupId>
-   <artifactId>activemq-core-client</artifactId>
-   <version>2.5.0</version>
+   <artifactId>activemq-core-client-all</artifactId>
+   <version>2.14.0</version>
 </dependency>
 ```
 
@@ -51,7 +79,7 @@ this is done via the `-Dlogging.configuration` for instance
 >
 > The `logging.configuration` system property needs to be valid URL
 
-The following is a typical `logging.properties for a client`
+The following is a typical `logging.properties` for a client
 
 ```
 # Root logger option
@@ -88,16 +116,24 @@ formatter.PATTERN.properties=pattern
 formatter.PATTERN.pattern=%d{HH:mm:ss,SSS} %-5p [%c] %s%E%n
 ```
 
-## Configuring Audit Log
+## Configuring Audit Logging
 
-The 2 audit loggers can be enabled to record some important operations like
-create/delete queues. By default this logger is disabled. The configuration
-(logging.properties) for audit log is like this by default:
+There are 3 audit loggers that can be enabled separately and audit sifferent types of events, these are:
+
+1. Base logger: This is a highly verbose logger that will capture most events that occur on JMX beans
+2. Resource logger: This logs creation, updates and deletion of resources such as Addresses and Queues and also authentication, the main purpose of this is to track console activity and access to broker.
+3. Message logger: this logs message production and consumption of messages and will have a potentially negatibve affect on performance
+
+These are disabled by default in the logging.properties configuration file:
 
 ```$xslt
 logger.org.apache.activemq.audit.base.level=ERROR
 logger.org.apache.activemq.audit.base.handlers=AUDIT_FILE
 logger.org.apache.activemq.audit.base.useParentHandlers=false
+
+logger.org.apache.activemq.audit.resource.level=ERROR
+logger.org.apache.activemq.audit.resource.handlers=AUDIT_FILE
+logger.org.apache.activemq.audit.resource.useParentHandlers=false
 
 logger.org.apache.activemq.audit.message.level=ERROR
 logger.org.apache.activemq.audit.message.handlers=AUDIT_FILE
@@ -110,20 +146,32 @@ To enable the audit log change the above level to INFO, like this:
 logger.org.apache.activemq.audit.base.level=INFO
 logger.org.apache.activemq.audit.base.handlers=AUDIT_FILE
 logger.org.apache.activemq.audit.base.useParentHandlers=false
-
-logger.org.apache.activemq.audit.message.level=INFO
-logger.org.apache.activemq.audit.message.handlers=AUDIT_FILE
-logger.org.apache.activemq.audit.message.useParentHandlers=false
 ...
 ```
 
-The 2 audit loggers can be disable/enable separately. The second logger
-(org.apache.activemq.audit.message) audits messages in 'hot path'
-(code path that is very sensitive to performance, e.g. sending messages).
-Turn on this audit logger may affect the performance.
+The 3 audit loggers can be disable/enabled separately. 
 
 Once enabled, all audit records are written into a separate log
 file (by default audit.log).
+
+### Logging the clients remote address
+
+It is possible to configure the audit loggers to log the remote address of any calling clients either through normal 
+clients or through the console and JMX. This is configured by enabling a specific login module in the login config file. 
+```$xslt
+org.apache.activemq.artemis.spi.core.security.jaas.AuditLoginModule optional
+       debug=false;
+```
+
+
+> **Note:**
+>
+> This needs to be the first entry in the login.config file
+
+> **Note:**
+>
+> This login module does no authentication, it is used only to catch client information through which ever path a client takes
+
 
 ## Use Custom Handlers
 

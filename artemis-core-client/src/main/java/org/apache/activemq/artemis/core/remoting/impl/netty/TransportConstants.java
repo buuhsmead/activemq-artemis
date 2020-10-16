@@ -20,6 +20,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 
+import io.netty.handler.codec.socksx.SocksVersion;
 import io.netty.util.Version;
 import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
 import org.jboss.logging.Logger;
@@ -27,6 +28,8 @@ import org.jboss.logging.Logger;
 public class TransportConstants {
 
    private static final Logger logger = Logger.getLogger(TransportConstants.class);
+
+   public static final String SSL_CONTEXT_PROP_NAME = "sslContext";
 
    public static final String SSL_ENABLED_PROP_NAME = "sslEnabled";
 
@@ -77,6 +80,8 @@ public class TransportConstants {
    public static final String PROTOCOL_PROP_NAME = "protocol";
 
    public static final String PROTOCOLS_PROP_NAME = "protocols";
+
+   public static final String SCHEME_PROP_NAME = "scheme";
 
    public static final String HOST_PROP_NAME = "host";
 
@@ -160,9 +165,30 @@ public class TransportConstants {
 
    public static final String CLUSTER_CONNECTION = "clusterConnection";
 
+   @Deprecated
    public static final String STOMP_CONSUMERS_CREDIT = "stompConsumerCredits";
 
-   public static final int STOMP_DEFAULT_CONSUMERS_CREDIT = 10 * 1024; // 10K
+   public static final String STOMP_CONSUMER_WINDOW_SIZE = "stompConsumerWindowSize";
+
+   public static final int STOMP_DEFAULT_CONSUMER_WINDOW_SIZE = 10 * 1024; // 10K
+
+   public static final String PROXY_ENABLED_PROP_NAME = "socksEnabled";
+
+   public static final String PROXY_HOST_PROP_NAME = "socksHost";
+
+   public static final String PROXY_PORT_PROP_NAME = "socksPort";
+
+   public static final String PROXY_VERSION_PROP_NAME = "socksVersion";
+
+   public static final String PROXY_USERNAME_PROP_NAME = "socksUsername";
+
+   public static final String PROXY_PASSWORD_PROP_NAME = "socksPassword";
+
+   public static final String PROXY_REMOTE_DNS_PROP_NAME = "socksRemoteDNS";
+
+   public static final String AUTO_START = "autoStart";
+
+   public static final boolean DEFAULT_AUTO_START = true;
 
    public static final boolean DEFAULT_SSL_ENABLED = false;
 
@@ -268,9 +294,15 @@ public class TransportConstants {
 
    public static final String HEART_BEAT_TO_CONNECTION_TTL_MODIFIER = "heartBeatToConnectionTtlModifier";
 
-   public static final String STOMP_ENABLE_MESSAGE_ID = "stomp-enable-message-id";
+   @Deprecated
+   public static final String STOMP_ENABLE_MESSAGE_ID_DEPRECATED = "stomp-enable-message-id";
 
-   public static final String STOMP_MIN_LARGE_MESSAGE_SIZE = "stomp-min-large-message-size";
+   public static final String STOMP_ENABLE_MESSAGE_ID = "stompEnableMessageId";
+
+   @Deprecated
+   public static final String STOMP_MIN_LARGE_MESSAGE_SIZE_DEPRECATED = "stomp-min-large-message-size";
+
+   public static final String STOMP_MIN_LARGE_MESSAGE_SIZE = "stompMinLargeMessageSize";
 
    public static final String NETTY_CONNECT_TIMEOUT = "connect-timeout-millis";
 
@@ -290,6 +322,8 @@ public class TransportConstants {
 
    public static final String QUIET_PERIOD = "quietPeriod";
 
+   public static final String DISABLE_STOMP_SERVER_HEADER = "disableStompServerHeader";
+
    /** We let this to be defined as a System Variable, as we need a different timeout over our testsuite.
     *  When running on a real server, this is the default we want.
     *  When running on a test suite, we need it to be 0, You should see a property on the main pom.xml.
@@ -302,6 +336,20 @@ public class TransportConstants {
     *  When running on a real server, this is the default we want.
     *  When running on a test suite, we need it to be 0, You should see a property on the main pom.xml */
    public static final int DEFAULT_SHUTDOWN_TIMEOUT = parseDefaultVariable("DEFAULT_SHUTDOWN_TIMEOUT", 3_000);
+
+   public static final boolean DEFAULT_PROXY_ENABLED = false;
+
+   public static final String DEFAULT_PROXY_HOST = null;
+
+   public static final int DEFAULT_PROXY_PORT = 0;
+
+   public static final byte DEFAULT_PROXY_VERSION = SocksVersion.SOCKS5.byteValue();
+
+   public static final String DEFAULT_PROXY_USERNAME = null;
+
+   public static final String DEFAULT_PROXY_PASSWORD = null;
+
+   public static final boolean DEFAULT_PROXY_REMOTE_DNS = false;
 
    private static int parseDefaultVariable(String variableName, int defaultValue) {
       try {
@@ -316,7 +364,6 @@ public class TransportConstants {
       return defaultValue;
    }
 
-
    static {
       Set<String> allowableAcceptorKeys = new HashSet<>();
       allowableAcceptorKeys.add(TransportConstants.SSL_ENABLED_PROP_NAME);
@@ -330,6 +377,7 @@ public class TransportConstants {
       //noinspection deprecation
       allowableAcceptorKeys.add(TransportConstants.PROTOCOL_PROP_NAME);
       allowableAcceptorKeys.add(TransportConstants.PROTOCOLS_PROP_NAME);
+      allowableAcceptorKeys.add(TransportConstants.SCHEME_PROP_NAME);
       allowableAcceptorKeys.add(TransportConstants.HOST_PROP_NAME);
       allowableAcceptorKeys.add(TransportConstants.PORT_PROP_NAME);
       allowableAcceptorKeys.add(TransportConstants.KEYSTORE_PROVIDER_PROP_NAME);
@@ -343,6 +391,7 @@ public class TransportConstants {
       allowableAcceptorKeys.add(TransportConstants.NEED_CLIENT_AUTH_PROP_NAME);
       allowableAcceptorKeys.add(TransportConstants.WANT_CLIENT_AUTH_PROP_NAME);
       allowableAcceptorKeys.add(TransportConstants.VERIFY_HOST_PROP_NAME);
+      allowableAcceptorKeys.add(TransportConstants.SNIHOST_PROP_NAME);
       allowableAcceptorKeys.add(TransportConstants.TCP_NODELAY_PROPNAME);
       allowableAcceptorKeys.add(TransportConstants.TCP_SENDBUFFER_SIZE_PROPNAME);
       allowableAcceptorKeys.add(TransportConstants.TCP_RECEIVEBUFFER_SIZE_PROPNAME);
@@ -354,11 +403,14 @@ public class TransportConstants {
       allowableAcceptorKeys.add(TransportConstants.DIRECT_DELIVER);
       allowableAcceptorKeys.add(TransportConstants.CLUSTER_CONNECTION);
       allowableAcceptorKeys.add(TransportConstants.STOMP_CONSUMERS_CREDIT);
+      allowableAcceptorKeys.add(TransportConstants.STOMP_CONSUMER_WINDOW_SIZE);
+      allowableAcceptorKeys.add(TransportConstants.STOMP_MIN_LARGE_MESSAGE_SIZE_DEPRECATED);
       allowableAcceptorKeys.add(TransportConstants.STOMP_MIN_LARGE_MESSAGE_SIZE);
       allowableAcceptorKeys.add(TransportConstants.CONNECTION_TTL);
       allowableAcceptorKeys.add(TransportConstants.CONNECTION_TTL_MAX);
       allowableAcceptorKeys.add(TransportConstants.CONNECTION_TTL_MIN);
       allowableAcceptorKeys.add(TransportConstants.HEART_BEAT_TO_CONNECTION_TTL_MODIFIER);
+      allowableAcceptorKeys.add(TransportConstants.STOMP_ENABLE_MESSAGE_ID_DEPRECATED);
       allowableAcceptorKeys.add(TransportConstants.STOMP_ENABLE_MESSAGE_ID);
       allowableAcceptorKeys.add(TransportConstants.CONNECTIONS_ALLOWED);
       allowableAcceptorKeys.add(TransportConstants.STOMP_MAX_FRAME_PAYLOAD_LENGTH);
@@ -371,6 +423,8 @@ public class TransportConstants {
       allowableAcceptorKeys.add(TransportConstants.TRUST_MANAGER_FACTORY_PLUGIN_PROP_NAME);
       allowableAcceptorKeys.add(TransportConstants.SHUTDOWN_TIMEOUT);
       allowableAcceptorKeys.add(TransportConstants.QUIET_PERIOD);
+      allowableAcceptorKeys.add(TransportConstants.DISABLE_STOMP_SERVER_HEADER);
+      allowableAcceptorKeys.add(TransportConstants.AUTO_START);
 
       ALLOWABLE_ACCEPTOR_KEYS = Collections.unmodifiableSet(allowableAcceptorKeys);
 
@@ -405,6 +459,7 @@ public class TransportConstants {
       allowableConnectorKeys.add(TransportConstants.VERIFY_HOST_PROP_NAME);
       allowableConnectorKeys.add(TransportConstants.TRUST_ALL_PROP_NAME);
       allowableConnectorKeys.add(TransportConstants.FORCE_SSL_PARAMETERS);
+      allowableConnectorKeys.add(TransportConstants.SNIHOST_PROP_NAME);
       allowableConnectorKeys.add(TransportConstants.TCP_NODELAY_PROPNAME);
       allowableConnectorKeys.add(TransportConstants.TCP_SENDBUFFER_SIZE_PROPNAME);
       allowableConnectorKeys.add(TransportConstants.TCP_RECEIVEBUFFER_SIZE_PROPNAME);
@@ -413,6 +468,13 @@ public class TransportConstants {
       allowableConnectorKeys.add(TransportConstants.NIO_REMOTING_THREADS_PROPNAME);
       allowableConnectorKeys.add(TransportConstants.REMOTING_THREADS_PROPNAME);
       allowableConnectorKeys.add(TransportConstants.BATCH_DELAY);
+      allowableConnectorKeys.add(TransportConstants.PROXY_ENABLED_PROP_NAME);
+      allowableConnectorKeys.add(TransportConstants.PROXY_HOST_PROP_NAME);
+      allowableConnectorKeys.add(TransportConstants.PROXY_PORT_PROP_NAME);
+      allowableConnectorKeys.add(TransportConstants.PROXY_VERSION_PROP_NAME);
+      allowableConnectorKeys.add(TransportConstants.PROXY_USERNAME_PROP_NAME);
+      allowableConnectorKeys.add(TransportConstants.PROXY_PASSWORD_PROP_NAME);
+      allowableConnectorKeys.add(TransportConstants.PROXY_REMOTE_DNS_PROP_NAME);
       allowableConnectorKeys.add(ActiveMQDefaultConfiguration.getPropMaskPassword());
       allowableConnectorKeys.add(ActiveMQDefaultConfiguration.getPropPasswordCodec());
       allowableConnectorKeys.add(TransportConstants.NETTY_CONNECT_TIMEOUT);

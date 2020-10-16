@@ -17,6 +17,7 @@
 package org.apache.activemq.artemis.tests.integration.server;
 
 import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
@@ -30,15 +31,12 @@ import org.apache.activemq.artemis.core.client.impl.ClientSessionFactoryInternal
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.impl.AddressInfo;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.integration.cluster.failover.FailoverTestBase;
 import org.apache.activemq.artemis.tests.util.TransportConfigurationUtils;
 import org.junit.Before;
 import org.junit.Test;
 
 public class RetroactiveAddressFailoverTest extends FailoverTestBase {
-
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
 
    protected ServerLocator locator;
 
@@ -77,11 +75,11 @@ public class RetroactiveAddressFailoverTest extends FailoverTestBase {
          producer.send(message);
       }
 
-      org.apache.activemq.artemis.tests.util.Wait.assertTrue(() -> live.locateQueue(divertQueue).getMessageCount() == OFFSET, 3000, 50);
+      org.apache.activemq.artemis.tests.util.Wait.assertTrue(() -> live.locateQueue(divertQueue).getMessageCount() == OFFSET);
 
       crash(session);
 
-      org.apache.activemq.artemis.tests.util.Wait.assertTrue(() -> backup.locateQueue(divertQueue).getMessageCount() == OFFSET, 3000, 50);
+      org.apache.activemq.artemis.tests.util.Wait.assertTrue(() -> backup.locateQueue(divertQueue).getMessageCount() == OFFSET);
 
       for (int j = OFFSET; j < MESSAGE_COUNT + OFFSET; j++) {
          ClientMessage message = session.createMessage(true);
@@ -89,11 +87,11 @@ public class RetroactiveAddressFailoverTest extends FailoverTestBase {
          producer.send(message);
       }
 
-      org.apache.activemq.artemis.tests.util.Wait.assertTrue(() -> backup.locateQueue(divertQueue).getMessageCount() == MESSAGE_COUNT, 3000, 50);
+      org.apache.activemq.artemis.tests.util.Wait.assertTrue(() -> backup.locateQueue(divertQueue).getMessageCount() == MESSAGE_COUNT);
 
-      session.createQueue(addressName.toString(), RoutingType.ANYCAST, queueName.toString());
+      session.createQueue(new QueueConfiguration(queueName).setAddress(addressName).setRoutingType(RoutingType.ANYCAST));
       org.apache.activemq.artemis.tests.util.Wait.assertTrue(() -> backup.locateQueue(queueName) != null);
-      org.apache.activemq.artemis.tests.util.Wait.assertTrue(() -> backup.locateQueue(queueName).getMessageCount() == MESSAGE_COUNT, 500, 50);
+      org.apache.activemq.artemis.tests.util.Wait.assertTrue(() -> backup.locateQueue(queueName).getMessageCount() == MESSAGE_COUNT);
 
       ClientConsumer consumer = session.createConsumer(queueName);
       for (int j = OFFSET; j < MESSAGE_COUNT + OFFSET; j++) {

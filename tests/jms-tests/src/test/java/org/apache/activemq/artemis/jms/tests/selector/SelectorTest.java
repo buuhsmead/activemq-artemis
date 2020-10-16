@@ -74,17 +74,17 @@ public class SelectorTest extends ActiveMQServerTestCase {
          prod.send(redMessage);
          prod.send(blueMessage);
 
-         log.info("sent message");
+         log.debug("sent message");
 
          Message rec = redConsumer.receive();
          ProxyAssertSupport.assertEquals(redMessage.getJMSMessageID(), rec.getJMSMessageID());
          ProxyAssertSupport.assertEquals("red", rec.getStringProperty("color"));
 
-         ProxyAssertSupport.assertNull(redConsumer.receive(3000));
+         ProxyAssertSupport.assertNull(redConsumer.receiveNoWait());
 
          redConsumer.close();
 
-         log.info("closed first consumer");
+         log.debug("closed first consumer");
 
          MessageConsumer universalConsumer = session.createConsumer(queue1);
 
@@ -191,7 +191,7 @@ public class SelectorTest extends ActiveMQServerTestCase {
 
             ProxyAssertSupport.assertEquals("john", m.getStringProperty("beatle"));
 
-            log.info("Got message " + j);
+            log.debug("Got message " + j);
          }
 
          Message m = cons1.receiveNoWait();
@@ -203,7 +203,7 @@ public class SelectorTest extends ActiveMQServerTestCase {
          MessageConsumer cons2 = sess.createConsumer(queue1, selector2);
 
          for (int j = 0; j < 100; j++) {
-            m = cons2.receive(1000);
+            m = cons2.receive(100);
 
             ProxyAssertSupport.assertNotNull(m);
 
@@ -211,15 +211,6 @@ public class SelectorTest extends ActiveMQServerTestCase {
 
             ProxyAssertSupport.assertEquals("kermit the frog", m.getStringProperty("beatle"));
          }
-
-         //         m = cons2.receiveNoWait();
-         //
-         //         if (m != null)
-         //         {
-         //            log.info("got " + m.getStringProperty("beatle") + " j: " + m.getIntProperty("wibble"));
-         //         }
-
-         //ProxyAssertSupport.assertNull(m);
       } finally {
          if (conn != null) {
             conn.close();
@@ -285,7 +276,7 @@ public class SelectorTest extends ActiveMQServerTestCase {
          MessageConsumer cons1 = sess.createConsumer(queue1, selector1);
 
          for (int j = 0; j < NUM_MESSAGES; j++) {
-            Message m = cons1.receive(1000);
+            Message m = cons1.receive(100);
 
             ProxyAssertSupport.assertNotNull(m);
 
@@ -350,7 +341,7 @@ public class SelectorTest extends ActiveMQServerTestCase {
             }
 
             for (int j = 0; j < 10; j++) {
-               Message m = cons1.receive(1000);
+               Message m = cons1.receive(100);
 
                ProxyAssertSupport.assertNotNull(m);
             }
@@ -466,27 +457,27 @@ public class SelectorTest extends ActiveMQServerTestCase {
 
          Message r1 = cons1.receive(500);
          ProxyAssertSupport.assertNotNull(r1);
-         Message n = cons1.receive(500);
+         Message n = cons1.receiveNoWait();
          ProxyAssertSupport.assertNull(n);
 
          Message r2 = cons2.receive(500);
          ProxyAssertSupport.assertNotNull(r2);
-         n = cons2.receive(500);
+         n = cons2.receiveNoWait();
          ProxyAssertSupport.assertNull(n);
 
          Message r3 = cons3.receive(500);
          ProxyAssertSupport.assertNotNull(r3);
-         n = cons3.receive(500);
+         n = cons3.receiveNoWait();
          ProxyAssertSupport.assertNull(n);
 
          Message r4 = cons4.receive(500);
          ProxyAssertSupport.assertNotNull(r4);
-         n = cons4.receive(500);
+         n = cons4.receiveNoWait();
          ProxyAssertSupport.assertNull(n);
 
          Message r5 = cons5.receive(500);
          ProxyAssertSupport.assertNotNull(r5);
-         n = cons5.receive(500);
+         n = cons5.receiveNoWait();
          ProxyAssertSupport.assertNull(n);
 
          ProxyAssertSupport.assertEquals("john", r1.getStringProperty("beatle"));
@@ -618,7 +609,7 @@ public class SelectorTest extends ActiveMQServerTestCase {
          ProxyAssertSupport.assertEquals(DeliveryMode.PERSISTENT, msg.getJMSDeliveryMode());
          ProxyAssertSupport.assertEquals("Persistent", msg.getText());
 
-         ProxyAssertSupport.assertNull(persistentConsumer.receive(1000));
+         ProxyAssertSupport.assertNull(persistentConsumer.receiveNoWait());
 
          persistentConsumer.close();
 
@@ -911,38 +902,38 @@ public class SelectorTest extends ActiveMQServerTestCase {
          tm.setText("1");
          tm.setStringProperty("PROP1", "VALUE1");
          msgProducer.send(tm);
-         System.out.println("Sent message with id [" + tm.getJMSMessageID() + "]");
+         log.debug("Sent message with id [" + tm.getJMSMessageID() + "]");
 
          tm = session.createTextMessage();
          tm.setText("2");
          tm.setStringProperty("PROP1", "VALUE1");
          msgProducer.send(tm);
-         System.out.println("Sent message with id [" + tm.getJMSMessageID() + "]");
+         log.debug("Sent message with id [" + tm.getJMSMessageID() + "]");
 
          tm = session.createTextMessage();
          tm.setText("3");
          tm.setStringProperty("PROP2", "VALUE2");
          msgProducer.send(tm);
-         System.out.println("Sent message with id [" + tm.getJMSMessageID() + "]");
+         log.debug("Sent message with id [" + tm.getJMSMessageID() + "]");
 
          tm = session.createTextMessage();
          tm.setText("4");
          tm.setStringProperty("PROP2", "VALUE2");
          msgProducer.send(tm);
-         System.out.println("Sent message with id [" + tm.getJMSMessageID() + "]");
+         log.debug("Sent message with id [" + tm.getJMSMessageID() + "]");
 
          tm = session.createTextMessage();
          tm.setText("5");
          tm.setStringProperty("PROP1", "VALUE1");
          msgProducer.send(tm);
-         System.out.println("Sent message with id [" + tm.getJMSMessageID() + "]");
+         log.debug("Sent message with id [" + tm.getJMSMessageID() + "]");
 
          tm = session.createTextMessage();
          tm.setText("6");
          tm.setStringProperty("PROP1", "VALUE1");
          tm.setStringProperty("PROP2", "VALUE2");
          msgProducer.send(tm);
-         System.out.println("Sent message with id [" + tm.getJMSMessageID() + "]");
+         log.debug("Sent message with id [" + tm.getJMSMessageID() + "]");
          msgProducer.close();
          msgProducer = null;
 

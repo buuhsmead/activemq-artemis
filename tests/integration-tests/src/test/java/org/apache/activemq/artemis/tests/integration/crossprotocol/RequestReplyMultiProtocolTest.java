@@ -32,6 +32,7 @@ import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.server.impl.AddressInfo;
@@ -88,8 +89,8 @@ public class RequestReplyMultiProtocolTest extends OpenWireTestBase {
    public void setupQueue() throws Exception {
       Wait.assertTrue(server::isStarted);
       Wait.assertTrue(server::isActive);
-      this.server.createQueue(queueName, RoutingType.ANYCAST, queueName, null, true, false, -1, false, true);
-      this.server.createQueue(replyQueue, RoutingType.ANYCAST, replyQueue, null, true, false, -1, false, true);
+      this.server.createQueue(new QueueConfiguration(queueName).setRoutingType(RoutingType.ANYCAST));
+      this.server.createQueue(new QueueConfiguration(replyQueue).setRoutingType(RoutingType.ANYCAST));
       AddressInfo info = new AddressInfo(topicName, RoutingType.MULTICAST);
       this.server.addAddressInfo(info);
    }
@@ -155,7 +156,7 @@ public class RequestReplyMultiProtocolTest extends OpenWireTestBase {
             TextMessage received = (TextMessage)consumer.receive(5000);
 
             Assert.assertNotNull(received);
-            System.out.println("Destination::" + received.getJMSDestination());
+            instanceLog.debug("Destination::" + received.getJMSDestination());
 
             if (useTopic) {
                Assert.assertTrue("JMSDestination type is " + received.getJMSDestination().getClass(),  received.getJMSDestination() instanceof Topic);
@@ -166,7 +167,7 @@ public class RequestReplyMultiProtocolTest extends OpenWireTestBase {
             Assert.assertNotNull(received.getJMSReplyTo());
             Assert.assertEquals("hello " + (i++), received.getText());
 
-            System.out.println("received " + received.getText() + " and " + received.getJMSReplyTo());
+            instanceLog.debug("received " + received.getText() + " and " + received.getJMSReplyTo());
 
             if (destination instanceof Queue) {
                Assert.assertTrue("Type is " + received.getJMSReplyTo().getClass().toString(), received.getJMSReplyTo() instanceof Queue);

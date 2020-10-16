@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -38,14 +39,14 @@ import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.core.settings.HierarchicalRepository;
 import org.apache.activemq.artemis.core.settings.impl.AddressFullMessagePolicy;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.utils.UUIDGenerator;
+import org.jboss.logging.Logger;
 import org.junit.Test;
 
 public class NIOvsOIOTest extends ActiveMQTestBase {
 
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
+   private static final Logger log = Logger.getLogger(NIOvsOIOTest.class);
 
    // Constants -----------------------------------------------------
 
@@ -208,7 +209,7 @@ public class NIOvsOIOTest extends ActiveMQTestBase {
                log.error("Caught exception", e);
             }
 
-            //log.info(id + " sent message " + i);
+            //log.debug(id + " sent message " + i);
 
          }
       }
@@ -249,7 +250,7 @@ public class NIOvsOIOTest extends ActiveMQTestBase {
 
          queueName = UUIDGenerator.getInstance().generateStringUUID();
 
-         session.createQueue(dest, RoutingType.ANYCAST, queueName);
+         session.createQueue(new QueueConfiguration(queueName).setAddress(dest).setRoutingType(RoutingType.ANYCAST));
 
          consumer = session.createConsumer(queueName);
 
@@ -282,7 +283,7 @@ public class NIOvsOIOTest extends ActiveMQTestBase {
             latch.countDown();
          }
 
-         //log.info(id + " got msg " + count);
+         //log.debug(id + " got msg " + count);
 
       }
 

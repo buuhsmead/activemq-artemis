@@ -18,12 +18,9 @@ package org.apache.activemq.artemis.tests.integration.cluster.distribution;
 
 import org.apache.activemq.artemis.core.server.cluster.impl.MessageLoadBalancingType;
 import org.apache.activemq.artemis.tests.util.Wait;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.junit.Test;
 
 public class LargeMessageRedistributionTest extends MessageRedistributionTest {
-
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
 
    @Override
    public boolean isLargeMessage() {
@@ -52,7 +49,7 @@ public class LargeMessageRedistributionTest extends MessageRedistributionTest {
       waitForBindings(0, "queues.testaddress", 1, 0, false);
       waitForBindings(1, "queues.testaddress", 1, 0, false);
 
-      send(0, "queues.testaddress", numMessages, false, null);
+      send(0, "queues.testaddress", numMessages, true, null);
       addConsumer(0, 0, "queue0", null);
 
       verifyReceiveAll(numMessages, 0);

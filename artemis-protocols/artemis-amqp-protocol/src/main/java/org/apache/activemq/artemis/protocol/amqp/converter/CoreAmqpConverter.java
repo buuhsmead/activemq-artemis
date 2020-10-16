@@ -68,7 +68,9 @@ import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ICoreMessage;
 import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.SimpleString;
+import org.apache.activemq.artemis.core.persistence.StorageManager;
 import org.apache.activemq.artemis.protocol.amqp.broker.AMQPMessage;
+import org.apache.activemq.artemis.protocol.amqp.broker.AMQPStandardMessage;
 import org.apache.activemq.artemis.protocol.amqp.converter.jms.ServerJMSBytesMessage;
 import org.apache.activemq.artemis.protocol.amqp.converter.jms.ServerJMSMapMessage;
 import org.apache.activemq.artemis.protocol.amqp.converter.jms.ServerJMSMessage;
@@ -107,22 +109,22 @@ public class CoreAmqpConverter {
 
    private static Logger logger = Logger.getLogger(CoreAmqpConverter.class);
 
-   public static AMQPMessage checkAMQP(Message message) throws Exception {
+   public static AMQPMessage checkAMQP(Message message, StorageManager storageManager) throws Exception {
       if (message instanceof AMQPMessage) {
          return (AMQPMessage)message;
       } else {
          // It will first convert to Core, then to AMQP
-         return fromCore(message.toCore());
+         return fromCore(message.toCore(), storageManager);
       }
    }
 
-   public static AMQPMessage fromCore(ICoreMessage coreMessage) throws Exception {
+   public static AMQPMessage fromCore(ICoreMessage coreMessage, StorageManager storageManager) throws Exception {
       if (coreMessage == null) {
          return null;
       }
       if (coreMessage.isServerMessage() && coreMessage.isLargeMessage() && coreMessage.getType() == EMBEDDED_TYPE) {
          //large AMQP messages received across cluster nodes
-         final Message message = EmbedMessageUtil.extractEmbedded(coreMessage);
+         final Message message = EmbedMessageUtil.extractEmbedded(coreMessage, storageManager);
          if (message instanceof AMQPMessage) {
             return (AMQPMessage) message;
          }
@@ -363,7 +365,7 @@ public class CoreAmqpConverter {
          byte[] data = new byte[buffer.writerIndex()];
          buffer.readBytes(data);
 
-         AMQPMessage amqpMessage = new AMQPMessage(messageFormat, data, null);
+         AMQPMessage amqpMessage = new AMQPStandardMessage(messageFormat, data, null);
          amqpMessage.setMessageID(message.getInnerMessage().getMessageID());
          amqpMessage.setReplyTo(coreMessage.getReplyTo());
          return amqpMessage;
@@ -493,7 +495,7 @@ public class CoreAmqpConverter {
          if (!message.propertyExists(JMS_AMQP_CONTENT_TYPE)) {
             message.setStringProperty(JMS_AMQP_CONTENT_TYPE, SERIALIZED_JAVA_OBJECT_CONTENT_TYPE.toString());
          }
-      } else if (message instanceof ServerJMSMessage) {
+      } else {
          maMap.put(AMQPMessageSupport.JMS_MSG_TYPE, AMQPMessageSupport.JMS_MESSAGE);
          // If this is not an AMQP message that was converted then the original encoding
          // will be unknown so we check for special cases of messages with special data
@@ -510,9 +512,9 @@ public class CoreAmqpConverter {
                   body = new AmqpValue(s.toString());
                }
             }
-         } catch (Throwable ignored) {
-            logger.debug("Exception ignored during conversion", ignored.getMessage(), ignored);
-            body = new AmqpValue("Conversion to AMQP error!");
+         } catch (Throwable e) {
+            logger.debug("Exception ignored during conversion", e.getMessage(), e);
+            body = new AmqpValue("Conversion to AMQP error: " + e.getMessage());
          }
       }
 

@@ -20,7 +20,7 @@
    <groupId>org.apache.activemq</groupId>
    <artifactId>artemis-pom</artifactId>
    <packaging>pom</packaging>
-   <version>2.11.0-SNAPSHOT</version>
+   <version>2.16.0-SNAPSHOT</version>
 
    <parent>
       <groupId>org.apache</groupId>
@@ -71,34 +71,42 @@
    </prerequisites>
 
    <properties>
+      <modular.jdk.surefire.arg />
+      <javac.version>9+181-r4173-1</javac.version>
        <!-- base url for site deployment.  See distribution management for full url.  Override this in settings.xml for staging -->
       <staging.siteURL>scp://people.apache.org/x1/www/activemq.apache.org</staging.siteURL>
 
-      <activemq-artemis-native-version>1.0.1</activemq-artemis-native-version>
+      <retryTests>false</retryTests>
+      <logging.config>logging.properties</logging.config>
+
+      <activemq-artemis-native-version>1.0.2</activemq-artemis-native-version>
       <karaf.version>4.0.6</karaf.version>
       <pax.exam.version>4.9.1</pax.exam.version>
-      <commons.config.version>2.4</commons.config.version>
+      <commons.config.version>2.7</commons.config.version>
       <commons.lang.version>3.0</commons.lang.version>
       <activemq5-version>5.14.5</activemq5-version>
       <apache.derby.version>10.11.1.1</apache.derby.version>
       <commons.beanutils.version>1.9.4</commons.beanutils.version>
+      <commons.dbcp2.version>2.7.0</commons.dbcp2.version>
+      <commons.pool2.version>2.7.0</commons.pool2.version>
       <commons.collections.version>3.2.2</commons.collections.version>
-      <fuse.mqtt.client.version>1.14</fuse.mqtt.client.version>
+      <commons.text.version>1.8</commons.text.version>
+      <fuse.mqtt.client.version>1.16</fuse.mqtt.client.version>
       <guava.version>24.1.1-jre</guava.version>
       <jboss.logging.version>3.4.0.Final</jboss.logging.version>
-      <jetty.version>9.4.3.v20170317</jetty.version>
+      <jetty.version>9.4.27.v20200227</jetty.version>
       <jgroups.version>3.6.13.Final</jgroups.version>
       <maven.assembly.plugin.version>2.4</maven.assembly.plugin.version>
-      <mockito.version>2.25.0</mockito.version>
+      <mockito.version>3.3.3</mockito.version>
       <jctools.version>2.1.2</jctools.version>
-      <netty.version>4.1.34.Final</netty.version>
+      <netty.version>4.1.51.Final</netty.version>
 
       <!-- this is basically for tests -->
-      <netty-tcnative-version>2.0.23.Final</netty-tcnative-version>
-      <proton.version>0.33.2</proton.version>
+      <netty-tcnative-version>2.0.33.Final</netty-tcnative-version>
+      <proton.version>0.33.6</proton.version>
       <resteasy.version>3.0.19.Final</resteasy.version>
       <slf4j.version>1.7.21</slf4j.version>
-      <qpid.jms.version>0.45.0</qpid.jms.version>
+      <qpid.jms.version>0.54.0</qpid.jms.version>
       <johnzon.version>0.9.5</johnzon.version>
       <json-p.spec.version>1.0-alpha-1</json-p.spec.version>
       <javax.inject.version>1</javax.inject.version>
@@ -121,9 +129,10 @@
       <version.maven.jar.plugin>2.4</version.maven.jar.plugin>
       <version.micrometer>1.1.4</version.micrometer>
       <hamcrest.version>2.1</hamcrest.version>
+      <surefire.version>2.22.2</surefire.version>
 
       <!-- used on tests -->
-      <groovy.version>2.4.3</groovy.version>
+      <groovy.version>2.5.10</groovy.version>
 
       <owasp.version>1.4.3</owasp.version>
       <spring.version>5.1.7.RELEASE</spring.version>
@@ -154,9 +163,6 @@
       <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
       <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
-      <maven.compiler.source>1.8</maven.compiler.source>
-      <maven.compiler.target>1.8</maven.compiler.target>
-
      <!--
 
        note for idea users:
@@ -172,8 +178,8 @@
 
       -->
 
-      <activemq-surefire-argline>-Dbrokerconfig.maxDiskUsage=100 -Dorg.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants.DEFAULT_QUIET_PERIOD=0 -Dorg.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants.DEFAULT_SHUTDOWN_TIMEOUT=0 -Djava.util.logging.manager=org.jboss.logmanager.LogManager
-         -Dlogging.configuration="file:${activemq.basedir}/tests/config/logging.properties"
+      <activemq-surefire-argline>-Dorg.apache.commons.logging.Log=org.apache.activemq.artemis.logs.JBossLoggingApacheLoggerBridge -Dorg.apache.activemq.artemis.utils.RetryRule.retry=${retryTests} -Dbrokerconfig.maxDiskUsage=100 -Dorg.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants.DEFAULT_QUIET_PERIOD=0 -Dorg.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants.DEFAULT_SHUTDOWN_TIMEOUT=0 -Djava.util.logging.manager=org.jboss.logmanager.LogManager
+         -Dlogging.configuration="file:${activemq.basedir}/tests/config/${logging.config}"
          -Djava.library.path="${activemq.basedir}/target/bin/lib/linux-x86_64:${activemq.basedir}/target/bin/lib/linux-i686" -Djgroups.bind_addr=localhost -Dorg.apache.activemq.artemis.api.core.UDPBroadcastEndpointFactory.localBindAddress=localhost
          -Djava.net.preferIPv4Stack=true -Dbasedir=${basedir}
       </activemq-surefire-argline>
@@ -181,8 +187,6 @@
       <skipLicenseCheck>true</skipLicenseCheck>
       <skipStyleCheck>true</skipStyleCheck>
       <skipOWASP>true</skipOWASP>
-
-      <javac-compiler-id>javac-with-errorprone</javac-compiler-id>
 
       <directory-version>2.0.0-M15</directory-version>
       <directory-jdbm2-version>2.0.0-M1</directory-jdbm2-version>
@@ -330,6 +334,13 @@
             <scope>provided</scope>
             <optional>true</optional>
             <!-- License: Apache 2.0-->
+         </dependency>
+         <dependency>
+             <groupId>com.google.errorprone</groupId>
+             <artifactId>error_prone_core</artifactId>
+             <version>2.4.0</version>
+             <scope>provided</scope>
+            <optional>true</optional>
          </dependency>
          <!--needed to compile the logging jar-->
          <dependency>
@@ -528,7 +539,19 @@
          </dependency>
          <dependency>
             <groupId>io.netty</groupId>
+            <artifactId>netty-handler-proxy</artifactId>
+            <version>${netty.version}</version>
+            <!-- License: Apache 2.0 -->
+         </dependency>
+         <dependency>
+            <groupId>io.netty</groupId>
             <artifactId>netty-codec</artifactId>
+            <version>${netty.version}</version>
+            <!-- License: Apache 2.0 -->
+         </dependency>
+         <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec-socks</artifactId>
             <version>${netty.version}</version>
             <!-- License: Apache 2.0 -->
          </dependency>
@@ -568,6 +591,12 @@
             <groupId>org.apache.activemq</groupId>
             <artifactId>activemq-client</artifactId>
             <version>${activemq5-version}</version>
+            <exclusions>
+               <exclusion>
+                  <groupId>org.apache.geronimo.specs</groupId>
+                  <artifactId>geronimo-jms_1.1_spec</artifactId>
+               </exclusion>
+            </exclusions>
             <!-- License: Apache 2.0 -->
          </dependency>
          <dependency>
@@ -720,6 +749,22 @@
             <version>2.7.2</version>
          </dependency>
 
+         <!-- needed by artemis-jdbc-store -->
+         <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-dbcp2</artifactId>
+            <version>${commons.dbcp2.version}</version>
+            <!-- license Apache 2 -->
+         </dependency>
+         <!-- used by commons-dbcp2 -->
+         <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-pool2</artifactId>
+            <version>${commons.pool2.version}</version>
+            <!-- license Apache 2 -->
+            <scope>runtime</scope>
+         </dependency>
+
          <!-- Needed for Micrometer -->
          <dependency>
             <groupId>io.micrometer</groupId>
@@ -822,6 +867,11 @@
             <version>${guava.version}</version>
             <!-- License: Apache 2.0 -->
          </dependency>
+         <dependency>
+            <groupId>org.apache.geronimo.specs</groupId>
+            <artifactId>geronimo-jaspic_1.0_spec</artifactId>
+            <version>1.0</version>
+         </dependency>
       </dependencies>
 
    </dependencyManagement>
@@ -853,17 +903,7 @@
             <plugins>
                <plugin>
                   <groupId>org.apache.maven.plugins</groupId>
-                  <artifactId>maven-javadoc-plugin</artifactId>
-                  <configuration>
-                     <additionalparam>-Xdoclint:none</additionalparam>
-                  </configuration>
-               </plugin>
-               <plugin>
-                  <groupId>org.apache.maven.plugins</groupId>
                   <artifactId>maven-compiler-plugin</artifactId>
-                  <!-- version 3.2 is having problems with the APT processor resulting in
-                    java.lang.IllegalStateException: endPosTable already set  -->
-                  <version>3.1</version>
                   <configuration combine.self="override" />
                </plugin>
                <plugin>
@@ -879,21 +919,66 @@
          </build>
       </profile>
       <profile>
-         <id>jdk18</id>
+         <id>jdk8</id>
          <activation>
             <jdk>1.8</jdk>
          </activation>
-         <build>
-            <plugins>
-               <plugin>
-                  <groupId>org.apache.maven.plugins</groupId>
-                  <artifactId>maven-javadoc-plugin</artifactId>
-                  <configuration>
-                     <additionalparam>-Xdoclint:none</additionalparam>
-                  </configuration>
-               </plugin>
-            </plugins>
-         </build>
+          <properties>
+              <maven.compiler.source>8</maven.compiler.source>
+              <maven.compiler.target>8</maven.compiler.target>
+          </properties>
+      </profile>
+      <profile>
+          <id>jdk8-errorprone</id>
+          <activation>
+              <jdk>1.8</jdk>
+              <property>
+                  <name>jdk8-errorprone</name>
+              </property>
+          </activation>
+          <build>
+              <plugins>
+                  <plugin>
+                      <groupId>org.apache.maven.plugins</groupId>
+                      <artifactId>maven-compiler-plugin</artifactId>
+                      <configuration>
+                          <fork>true</fork>
+                          <compilerArgs combine.children="append">
+                              <arg>-XDcompilePolicy=simple</arg>
+                              <arg>-J-Xbootclasspath/p:${settings.localRepository}/com/google/errorprone/javac/${javac.version}/javac-${javac.version}.jar</arg>
+                              <arg>-Xplugin:ErrorProne -Xep:MissingOverride:ERROR -Xep:NonAtomicVolatileUpdate:ERROR -Xep:SynchronizeOnNonFinalField:ERROR -Xep:StaticQualifiedUsingExpression:ERROR -Xep:WaitNotInLoop:ERROR -XepExcludedPaths:.*/generated-sources/.*</arg>
+                          </compilerArgs>
+                      </configuration>
+                  </plugin>
+              </plugins>
+          </build>
+      </profile>
+      <profile>
+          <id>jdk11on</id>
+          <activation>
+              <jdk>[11,)</jdk>
+          </activation>
+          <properties>
+              <maven.compiler.source>8</maven.compiler.source>
+              <maven.compiler.target>11</maven.compiler.target>
+              <modular.jdk.surefire.arg>--add-modules java.sql,jdk.unsupported </modular.jdk.surefire.arg>
+          </properties>
+          <build>
+              <plugins>
+                  <plugin>
+                      <groupId>org.apache.maven.plugins</groupId>
+                      <artifactId>maven-compiler-plugin</artifactId>
+                      <configuration>
+                          <compilerArgs>
+                              <arg>-Xdiags:verbose</arg>
+                              <arg>--add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED</arg>
+                              <arg>-XDcompilePolicy=simple</arg>
+                              <arg>-Xplugin:ErrorProne -Xep:MissingOverride:ERROR -Xep:NonAtomicVolatileUpdate:ERROR -Xep:SynchronizeOnNonFinalField:ERROR -Xep:StaticQualifiedUsingExpression:ERROR -Xep:WaitNotInLoop:ERROR -XepExcludedPaths:.*/generated-sources/.*</arg>
+                          </compilerArgs>
+                      </configuration>
+                  </plugin>
+              </plugins>
+          </build>
       </profile>
       <profile>
          <id>owasp</id>
@@ -979,9 +1064,9 @@
                         </goals>
                         <configuration>
                            <rules>
-                              <!-- we need java8 when building the release -->
                               <requireJavaVersion>
-                                 <version>1.8.0</version>
+                                 <version>[1.8, 9)</version>
+                                 <message>JDK 8 is required when building the release</message>
                               </requireJavaVersion>
                            </rules>
                         </configuration>
@@ -990,6 +1075,21 @@
                </plugin>
             </plugins>
          </build>
+      </profile>
+      <profile>
+         <!-- this will activate the property required to play with tests retry -->
+         <id>tests-retry</id>
+         <properties>
+            <retryTests>true</retryTests>
+         </properties>
+      </profile>
+      <profile>
+         <!-- this will activate the property required to limit logging on the testsuite -->
+         <id>tests-CI</id>
+         <properties>
+            <!-- notice I did not intend to use retryTests on this profile, as this will be optional depending on where you run the tests -->
+            <logging.config>logging-CI.properties</logging.config>
+         </properties>
       </profile>
       <profile>
          <!-- tests is the profile we use to run the entire testsuite
@@ -1352,36 +1452,10 @@
             <plugin>
                <groupId>org.apache.maven.plugins</groupId>
                <artifactId>maven-compiler-plugin</artifactId>
-               <!-- version 3.2 is having problems with the APT processor resulting in
-                    java.lang.IllegalStateException: endPosTable already set  -->
-               <version>3.1</version>
-               <!-- Enable Google's Error-Prone https://github.com/google/error-prone -->
+               <version>3.8.1</version>
                <configuration>
-                 <showWarnings>true</showWarnings>
-                 <forceJavacCompilerUse>true</forceJavacCompilerUse>
-                 <compilerId>${javac-compiler-id}</compilerId>
-                 <compilerArgs>
-                    <arg>-Xep:MissingOverride:ERROR</arg>
-                    <arg>-Xep:NonAtomicVolatileUpdate:ERROR</arg>
-                    <arg>-Xep:SynchronizeOnNonFinalField:ERROR</arg>
-                    <arg>-Xep:StaticAccessedFromInstance:ERROR</arg>
-                    <arg>-Xep:SynchronizeOnNonFinalField:ERROR</arg>
-                    <arg>-Xep:WaitNotInLoop:ERROR</arg>
-                    <arg>-Xdiags:verbose</arg>
-                 </compilerArgs>
+                   <showWarnings>true</showWarnings>
                </configuration>
-               <dependencies>
-                 <dependency>
-                   <groupId>org.codehaus.plexus</groupId>
-                   <artifactId>plexus-compiler-javac-errorprone</artifactId>
-                   <version>2.8</version>
-                 </dependency>
-                 <dependency>
-                   <groupId>com.google.errorprone</groupId>
-                   <artifactId>error_prone_core</artifactId>
-                   <version>2.0.9</version>
-                 </dependency>
-               </dependencies>
             </plugin>
             <plugin>
                <groupId>org.apache.maven.plugins</groupId>
@@ -1391,8 +1465,7 @@
             <plugin>
                <groupId>org.apache.maven.plugins</groupId>
                <artifactId>maven-javadoc-plugin</artifactId>
-
-               <version>2.9</version>
+               <version>3.0.1</version>
             </plugin>
             <plugin>
                <groupId>org.apache.maven.plugins</groupId>
@@ -1448,7 +1521,6 @@
             <plugin>
                <groupId>org.apache.maven.plugins</groupId>
                <artifactId>maven-surefire-plugin</artifactId>
-               <version>2.18.1</version>
                <configuration>
                   <forkMode>once</forkMode>
                   <testFailureIgnore>${testFailureIgnore}</testFailureIgnore>
@@ -1460,7 +1532,6 @@
             <plugin>
                <groupId>org.apache.maven.plugins</groupId>
                <artifactId>maven-surefire-report-plugin</artifactId>
-               <version>2.18.1</version>
             </plugin>
             <plugin>
                <groupId>org.apache.maven.plugins</groupId>
@@ -1534,7 +1605,8 @@
                <configuration>
                  <rules>
                    <requireJavaVersion>
-                     <version>1.8.0</version>
+                     <version>[1.8, 9),[11,)</version>
+                     <message>You must use either JDK 8 or JDK 11+ when building</message>
                    </requireJavaVersion>
                  </rules>
                </configuration>
@@ -1563,7 +1635,7 @@
          <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-checkstyle-plugin</artifactId>
-            <version>3.0.0</version>
+            <version>3.1.1</version>
             <dependencies>
                <dependency>
                   <groupId>com.github.sevntu-checkstyle</groupId>
@@ -1615,19 +1687,24 @@
                <reportFile>${activemq.basedir}/ratReport.txt</reportFile>
                <skip>${skipLicenseCheck}</skip>
                <excludes>
+                  <exclude>**/src/main/webapp/hawtconfig.json</exclude>
+                  <exclude>.repository/**</exclude>
                   <exclude>.travis.yml</exclude>
+                  <exclude>.github/workflows/*</exclude>
                   <exclude>**/footer.html</exclude>
                   <exclude>**/*.txt</exclude>
                   <exclude>**/*.md</exclude>
                   <exclude>etc/ide-settings/**</exclude>
                   <exclude>docs/**/*.json</exclude>
                   <exclude>docs/**/_book/</exclude>
+                  <exclude>docs/**/_layouts/</exclude>
                   <exclude>**/target/</exclude>
                   <exclude>**/META-INF/services/*</exclude>
                   <exclude>**/META-INF/MANIFEST.MF</exclude>
                   <exclude>**/*.iml</exclude>
                   <exclude>**/*.jceks</exclude>
                   <exclude>**/*.jks</exclude>
+                  <exclude>**/*.p12</exclude>
                   <exclude>**/xml.xsd</exclude>
                   <exclude>**/org/apache/activemq/artemis/utils/json/**</exclude>
                   <exclude>**/org/apache/activemq/artemis/utils/Base64.java</exclude>
@@ -1640,6 +1717,7 @@
                   <exclude>**/org.apache.activemq.artemis.cfg</exclude>
                   <exclude>**/nb-configuration.xml</exclude>
                   <exclude>**/nbactions-tests.xml</exclude>
+                  <exclude>**/.vscode/settings.json</exclude>
                   <!-- activemq5 unit tests exclude -->
                   <exclude>**/*.data</exclude>
                   <exclude>**/*.bin</exclude>
@@ -1685,7 +1763,7 @@
          <plugin>
             <groupId>org.apache.felix</groupId>
             <artifactId>maven-bundle-plugin</artifactId>
-            <version>3.0.0</version>
+            <version>4.2.1</version>
             <extensions>true</extensions>
          </plugin>
          <plugin>
@@ -1778,7 +1856,6 @@
          <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-javadoc-plugin</artifactId>
-            <version>2.9</version>
             <configuration>
                <minmemory>128m</minmemory>
                <maxmemory>1024m</maxmemory>

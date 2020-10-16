@@ -18,6 +18,7 @@ package org.apache.activemq.artemis.core.protocol.core.impl.wireformat;
 
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.QueueAttributes;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.utils.BufferHelper;
@@ -35,6 +36,8 @@ public class CreateQueueMessage_V2 extends CreateQueueMessage {
    private Boolean exclusive;
 
    private Boolean groupRebalance;
+
+   private Boolean groupRebalancePauseDispatch;
 
    private Integer groupBuckets;
 
@@ -58,6 +61,9 @@ public class CreateQueueMessage_V2 extends CreateQueueMessage {
 
    private Long ringSize;
 
+   private Boolean enabled;
+
+   @Deprecated
    public CreateQueueMessage_V2(final SimpleString address,
                                 final SimpleString queueName,
                                 final boolean temporary,
@@ -77,6 +83,7 @@ public class CreateQueueMessage_V2 extends CreateQueueMessage {
          requiresResponse,
          queueAttributes.getExclusive(),
          queueAttributes.getGroupRebalance(),
+         queueAttributes.getGroupRebalancePauseDispatch(),
          queueAttributes.getGroupBuckets(),
          queueAttributes.getGroupFirstKey(),
          queueAttributes.getLastValue(),
@@ -87,7 +94,39 @@ public class CreateQueueMessage_V2 extends CreateQueueMessage {
          queueAttributes.getAutoDelete(),
          queueAttributes.getAutoDeleteDelay(),
          queueAttributes.getAutoDeleteMessageCount(),
-         queueAttributes.getRingSize()
+         queueAttributes.getRingSize(),
+         queueAttributes.isEnabled()
+      );
+   }
+
+   public CreateQueueMessage_V2(final QueueConfiguration queueConfiguration,
+                                final boolean requiresResponse) {
+      this(
+         queueConfiguration.getAddress(),
+         queueConfiguration.getName(),
+         queueConfiguration.getRoutingType(),
+         queueConfiguration.getFilterString(),
+         queueConfiguration.isDurable(),
+         queueConfiguration.isTemporary(),
+         queueConfiguration.getMaxConsumers(),
+         queueConfiguration.isPurgeOnNoConsumers(),
+         queueConfiguration.isAutoCreated(),
+         requiresResponse,
+         queueConfiguration.isExclusive(),
+         queueConfiguration.isGroupRebalance(),
+         queueConfiguration.isGroupRebalancePauseDispatch(),
+         queueConfiguration.getGroupBuckets(),
+         queueConfiguration.getGroupFirstKey(),
+         queueConfiguration.isLastValue(),
+         queueConfiguration.getLastValueKey(),
+         queueConfiguration.isNonDestructive(),
+         queueConfiguration.getConsumersBeforeDispatch(),
+         queueConfiguration.getDelayBeforeDispatch(),
+         queueConfiguration.isAutoDelete(),
+         queueConfiguration.getAutoDeleteDelay(),
+         queueConfiguration.getAutoDeleteMessageCount(),
+         queueConfiguration.getRingSize(),
+         queueConfiguration.isEnabled()
       );
    }
 
@@ -103,6 +142,7 @@ public class CreateQueueMessage_V2 extends CreateQueueMessage {
                                 final boolean requiresResponse,
                                 final Boolean exclusive,
                                 final Boolean groupRebalance,
+                                final Boolean groupRebalancePauseDispatch,
                                 final Integer groupBuckets,
                                 final SimpleString groupFirstKey,
                                 final Boolean lastValue,
@@ -113,7 +153,8 @@ public class CreateQueueMessage_V2 extends CreateQueueMessage {
                                 final Boolean autoDelete,
                                 final Long autoDeleteDelay,
                                 final Long autoDeleteMessageCount,
-                                final Long ringSize) {
+                                final Long ringSize,
+                                final Boolean enabled) {
       this();
 
       this.address = address;
@@ -128,6 +169,7 @@ public class CreateQueueMessage_V2 extends CreateQueueMessage {
       this.purgeOnNoConsumers = purgeOnNoConsumers;
       this.exclusive = exclusive;
       this.groupRebalance = groupRebalance;
+      this.groupRebalancePauseDispatch = groupRebalancePauseDispatch;
       this.groupBuckets = groupBuckets;
       this.groupFirstKey = groupFirstKey;
       this.lastValue = lastValue;
@@ -139,6 +181,7 @@ public class CreateQueueMessage_V2 extends CreateQueueMessage {
       this.autoDeleteDelay = autoDeleteDelay;
       this.autoDeleteMessageCount = autoDeleteMessageCount;
       this.ringSize = ringSize;
+      this.enabled = enabled;
    }
 
    public CreateQueueMessage_V2() {
@@ -146,6 +189,33 @@ public class CreateQueueMessage_V2 extends CreateQueueMessage {
    }
 
    // Public --------------------------------------------------------
+
+   public QueueConfiguration toQueueConfiguration() {
+      return new QueueConfiguration(queueName)
+         .setAddress(address)
+         .setDurable(durable)
+         .setRoutingType(routingType)
+         .setExclusive(exclusive)
+         .setGroupRebalance(groupRebalance)
+         .setGroupRebalancePauseDispatch(groupRebalancePauseDispatch)
+         .setNonDestructive(nonDestructive)
+         .setLastValue(lastValue)
+         .setFilterString(filterString)
+         .setMaxConsumers(maxConsumers)
+         .setPurgeOnNoConsumers(purgeOnNoConsumers)
+         .setConsumersBeforeDispatch(consumersBeforeDispatch)
+         .setDelayBeforeDispatch(delayBeforeDispatch)
+         .setGroupBuckets(groupBuckets)
+         .setGroupFirstKey(groupFirstKey)
+         .setLastValueKey(lastValueKey)
+         .setAutoDelete(autoDelete)
+         .setAutoDeleteDelay(autoDeleteDelay)
+         .setAutoDeleteMessageCount(autoDeleteMessageCount)
+         .setTemporary(temporary)
+         .setAutoCreated(autoCreated)
+         .setRingSize(ringSize)
+         .setEnabled(enabled);
+   }
 
    @Override
    public String toString() {
@@ -156,6 +226,7 @@ public class CreateQueueMessage_V2 extends CreateQueueMessage {
       buff.append(", purgeOnNoConsumers=" + purgeOnNoConsumers);
       buff.append(", exclusive=" + exclusive);
       buff.append(", groupRebalance=" + groupRebalance);
+      buff.append(", groupRebalancePauseDispatch=" + groupRebalancePauseDispatch);
       buff.append(", groupBuckets=" + groupBuckets);
       buff.append(", groupFirstKey=" + groupFirstKey);
       buff.append(", lastValue=" + lastValue);
@@ -167,6 +238,7 @@ public class CreateQueueMessage_V2 extends CreateQueueMessage {
       buff.append(", autoDeleteDelay=" + autoDeleteDelay);
       buff.append(", autoDeleteMessageCount=" + autoDeleteMessageCount);
       buff.append(", ringSize=" + ringSize);
+      buff.append(", enabled=" + enabled);
 
       buff.append("]");
       return buff.toString();
@@ -260,6 +332,14 @@ public class CreateQueueMessage_V2 extends CreateQueueMessage {
       this.groupRebalance = groupRebalance;
    }
 
+   public Boolean isGroupRebalancePauseDispatch() {
+      return groupRebalancePauseDispatch;
+   }
+
+   public void setGroupRebalancePauseDispatch(Boolean groupRebalancePauseDispatch) {
+      this.groupRebalancePauseDispatch = groupRebalancePauseDispatch;
+   }
+
    public Integer getGroupBuckets() {
       return groupBuckets;
    }
@@ -308,6 +388,14 @@ public class CreateQueueMessage_V2 extends CreateQueueMessage {
       this.ringSize = ringSize;
    }
 
+   public Boolean isEnabled() {
+      return enabled;
+   }
+
+   public void setEnabled(Boolean enabled) {
+      this.enabled = enabled;
+   }
+
    @Override
    public void encodeRest(final ActiveMQBuffer buffer) {
       super.encodeRest(buffer);
@@ -328,6 +416,8 @@ public class CreateQueueMessage_V2 extends CreateQueueMessage {
       BufferHelper.writeNullableLong(buffer, autoDeleteMessageCount);
       buffer.writeNullableSimpleString(groupFirstKey);
       BufferHelper.writeNullableLong(buffer, ringSize);
+      BufferHelper.writeNullableBoolean(buffer, enabled);
+      BufferHelper.writeNullableBoolean(buffer, groupRebalancePauseDispatch);
    }
 
    @Override
@@ -358,6 +448,12 @@ public class CreateQueueMessage_V2 extends CreateQueueMessage {
       if (buffer.readableBytes() > 0) {
          ringSize = BufferHelper.readNullableLong(buffer);
       }
+      if (buffer.readableBytes() > 0) {
+         enabled = BufferHelper.readNullableBoolean(buffer);
+      }
+      if (buffer.readableBytes() > 0) {
+         groupRebalancePauseDispatch = BufferHelper.readNullableBoolean(buffer);
+      }
    }
 
    @Override
@@ -370,6 +466,7 @@ public class CreateQueueMessage_V2 extends CreateQueueMessage {
       result = prime * result + (purgeOnNoConsumers ? 1231 : 1237);
       result = prime * result + (exclusive == null ? 0 : exclusive ? 1231 : 1237);
       result = prime * result + (groupRebalance == null ? 0 : groupRebalance ? 1231 : 1237);
+      result = prime * result + (groupRebalancePauseDispatch == null ? 0 : groupRebalancePauseDispatch ? 1231 : 1237);
       result = prime * result + (groupBuckets == null ? 0 : groupBuckets.hashCode());
       result = prime * result + (groupFirstKey == null ? 0 : groupFirstKey.hashCode());
       result = prime * result + (lastValue == null ? 0 : lastValue ? 1231 : 1237);
@@ -381,6 +478,7 @@ public class CreateQueueMessage_V2 extends CreateQueueMessage {
       result = prime * result + (autoDeleteDelay == null ? 0 : autoDeleteDelay.hashCode());
       result = prime * result + (autoDeleteMessageCount == null ? 0 : autoDeleteMessageCount.hashCode());
       result = prime * result + (ringSize == null ? 0 : ringSize.hashCode());
+      result = prime * result + (enabled ? 1231 : 1237);
       return result;
    }
 
@@ -408,6 +506,11 @@ public class CreateQueueMessage_V2 extends CreateQueueMessage {
          if (other.groupRebalance != null)
             return false;
       } else if (!groupRebalance.equals(other.groupRebalance))
+         return false;
+      if (groupRebalancePauseDispatch == null) {
+         if (other.groupRebalancePauseDispatch != null)
+            return false;
+      } else if (!groupRebalancePauseDispatch.equals(other.groupRebalancePauseDispatch))
          return false;
       if (groupBuckets == null) {
          if (other.groupBuckets != null)
@@ -463,6 +566,11 @@ public class CreateQueueMessage_V2 extends CreateQueueMessage {
          if (other.ringSize != null)
             return false;
       } else if (!ringSize.equals(other.ringSize))
+         return false;
+      if (enabled == null) {
+         if (other.enabled != null)
+            return false;
+      } else if (!enabled.equals(other.enabled))
          return false;
       if (routingType == null) {
          if (other.routingType != null)

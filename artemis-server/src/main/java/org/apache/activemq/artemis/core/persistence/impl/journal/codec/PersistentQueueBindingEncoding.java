@@ -46,6 +46,8 @@ public class PersistentQueueBindingEncoding implements EncodingSupport, QueueBin
 
    public boolean purgeOnNoConsumers;
 
+   public boolean enabled;
+
    public boolean exclusive;
 
    public boolean lastValue;
@@ -63,6 +65,8 @@ public class PersistentQueueBindingEncoding implements EncodingSupport, QueueBin
    public boolean configurationManaged;
 
    public boolean groupRebalance;
+
+   public boolean groupRebalancePauseDispatch;
 
    public int groupBuckets;
 
@@ -96,6 +100,8 @@ public class PersistentQueueBindingEncoding implements EncodingSupport, QueueBin
          maxConsumers +
          ", purgeOnNoConsumers=" +
          purgeOnNoConsumers +
+         ", enabled=" +
+         enabled +
          ", exclusive=" +
          exclusive +
          ", lastValue=" +
@@ -114,6 +120,8 @@ public class PersistentQueueBindingEncoding implements EncodingSupport, QueueBin
          configurationManaged +
          ", groupRebalance=" +
          groupRebalance +
+         ", groupRebalancePauseDispatch=" +
+         groupRebalancePauseDispatch +
          ", groupBuckets=" +
          groupBuckets +
          ", groupFirstKey=" +
@@ -134,8 +142,10 @@ public class PersistentQueueBindingEncoding implements EncodingSupport, QueueBin
                                          final boolean autoCreated,
                                          final int maxConsumers,
                                          final boolean purgeOnNoConsumers,
+                                         final boolean enabled,
                                          final boolean exclusive,
                                          final boolean groupRebalance,
+                                         final boolean groupRebalancePauseDispatch,
                                          final int groupBuckets,
                                          final SimpleString groupFirstKey,
                                          final boolean lastValue,
@@ -156,6 +166,8 @@ public class PersistentQueueBindingEncoding implements EncodingSupport, QueueBin
       this.autoCreated = autoCreated;
       this.maxConsumers = maxConsumers;
       this.purgeOnNoConsumers = purgeOnNoConsumers;
+      this.groupRebalancePauseDispatch = groupRebalancePauseDispatch;
+      this.enabled = enabled;
       this.exclusive = exclusive;
       this.groupRebalance = groupRebalance;
       this.groupBuckets = groupBuckets;
@@ -256,6 +268,16 @@ public class PersistentQueueBindingEncoding implements EncodingSupport, QueueBin
    }
 
    @Override
+   public boolean isEnabled() {
+      return enabled;
+   }
+
+   @Override
+   public void setEnabled(boolean enabled) {
+      this.enabled = enabled;
+   }
+
+   @Override
    public boolean isExclusive() {
       return exclusive;
    }
@@ -328,6 +350,11 @@ public class PersistentQueueBindingEncoding implements EncodingSupport, QueueBin
    @Override
    public boolean isGroupRebalance() {
       return groupRebalance;
+   }
+
+   @Override
+   public boolean isGroupRebalancePauseDispatch() {
+      return groupRebalancePauseDispatch;
    }
 
    @Override
@@ -461,6 +488,17 @@ public class PersistentQueueBindingEncoding implements EncodingSupport, QueueBin
       } else {
          ringSize = ActiveMQDefaultConfiguration.getDefaultRingSize();
       }
+      if (buffer.readableBytes() > 0) {
+         enabled = buffer.readBoolean();
+      } else {
+         enabled = ActiveMQDefaultConfiguration.getDefaultEnabled();
+      }
+
+      if (buffer.readableBytes() > 0) {
+         groupRebalancePauseDispatch = buffer.readBoolean();
+      } else {
+         groupRebalancePauseDispatch = ActiveMQDefaultConfiguration.getDefaultGroupRebalancePauseDispatch();
+      }
    }
 
    @Override
@@ -487,6 +525,8 @@ public class PersistentQueueBindingEncoding implements EncodingSupport, QueueBin
       buffer.writeLong(autoDeleteMessageCount);
       buffer.writeNullableSimpleString(groupFirstKey);
       buffer.writeLong(ringSize);
+      buffer.writeBoolean(enabled);
+      buffer.writeBoolean(groupRebalancePauseDispatch);
    }
 
    @Override
@@ -510,12 +550,16 @@ public class PersistentQueueBindingEncoding implements EncodingSupport, QueueBin
          DataConstants.SIZE_LONG +
          DataConstants.SIZE_LONG +
          SimpleString.sizeofNullableString(groupFirstKey) +
-         DataConstants.SIZE_LONG;
+         DataConstants.SIZE_LONG +
+         DataConstants.SIZE_BOOLEAN +
+         DataConstants.SIZE_BOOLEAN;
    }
 
    private SimpleString createMetadata() {
       StringBuilder metadata = new StringBuilder();
-      metadata.append("user=").append(user).append(";");
+      if (user != null) {
+         metadata.append("user=").append(user).append(";");
+      }
       return SimpleString.toSimpleString(metadata.toString());
    }
 }

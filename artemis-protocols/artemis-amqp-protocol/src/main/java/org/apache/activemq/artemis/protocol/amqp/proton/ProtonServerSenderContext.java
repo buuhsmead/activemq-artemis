@@ -16,6 +16,7 @@
  */
 package org.apache.activemq.artemis.protocol.amqp.proton;
 
+import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -29,6 +30,7 @@ import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.io.IOCallback;
+import org.apache.activemq.artemis.core.message.LargeBodyReader;
 import org.apache.activemq.artemis.core.persistence.OperationContext;
 import org.apache.activemq.artemis.core.server.AddressQueryResult;
 import org.apache.activemq.artemis.core.server.Consumer;
@@ -37,6 +39,7 @@ import org.apache.activemq.artemis.core.server.QueueQueryResult;
 import org.apache.activemq.artemis.core.server.ServerConsumer;
 import org.apache.activemq.artemis.core.server.impl.ServerConsumerImpl;
 import org.apache.activemq.artemis.jms.client.ActiveMQDestination;
+import org.apache.activemq.artemis.protocol.amqp.broker.AMQPLargeMessage;
 import org.apache.activemq.artemis.protocol.amqp.broker.AMQPMessage;
 import org.apache.activemq.artemis.protocol.amqp.broker.AMQPSessionCallback;
 import org.apache.activemq.artemis.protocol.amqp.broker.ActiveMQProtonRemotingConnection;
@@ -59,7 +62,6 @@ import org.apache.qpid.proton.amqp.Symbol;
 import org.apache.qpid.proton.amqp.messaging.Accepted;
 import org.apache.qpid.proton.amqp.messaging.Modified;
 import org.apache.qpid.proton.amqp.messaging.Outcome;
-import org.apache.qpid.proton.amqp.messaging.Rejected;
 import org.apache.qpid.proton.amqp.messaging.Source;
 import org.apache.qpid.proton.amqp.messaging.TerminusDurability;
 import org.apache.qpid.proton.amqp.messaging.TerminusExpiryPolicy;
@@ -109,6 +111,12 @@ public class ProtonServerSenderContext extends ProtonInitializable implements Pr
    private boolean preSettle;
    private SimpleString tempQueueName;
    private final AtomicBoolean draining = new AtomicBoolean(false);
+
+   // once a large message is accepted, we shouldn't accept any further messages
+   // as large message could be interrupted due to flow control and resumed at the same message
+   volatile boolean hasLarge = false;
+   volatile LargeMessageDeliveryContext pendingLargeMessage = null;
+
 
    private int credits = 0;
 
@@ -170,6 +178,11 @@ public class ProtonServerSenderContext extends ProtonInitializable implements Pr
    }
 
    public boolean hasCredits() {
+      if (hasLarge) {
+         // we will resume accepting once the large message is finished
+         return false;
+      }
+
       if (!connection.flowControl(onflowControlReady)) {
          return false;
       }
@@ -511,7 +524,7 @@ public class ProtonServerSenderContext extends ProtonInitializable implements Pr
 
    private SimpleString getMatchingQueue(SimpleString queueName, SimpleString address, RoutingType routingType) throws Exception {
       if (queueName != null) {
-         QueueQueryResult result = sessionSPI.queueQuery(queueName, routingType, false);
+         QueueQueryResult result = sessionSPI.queueQuery(CompositeAddress.toFullyQualified(address, queueName), routingType, true);
          if (!result.isExists()) {
             throw new ActiveMQAMQPNotFoundException("Queue: '" + queueName + "' does not exist");
          } else {
@@ -556,8 +569,24 @@ public class ProtonServerSenderContext extends ProtonInitializable implements Pr
     */
    @Override
    public void close(boolean remoteLinkClose) throws ActiveMQAMQPException {
+      // we need to mark closed first to make sure no more adds are accepted
+      closed = true;
+
+      // MessageReferences are sent to the Connection executor (Netty Loop)
+      // as a result the returning references have to be done later after they
+      // had their chance to finish and clear the runnable
+      connection.runLater(() -> {
+         try {
+            internalClose(remoteLinkClose);
+         } catch (Exception e) {
+            log.warn(e.getMessage(), e);
+         }
+      });
+   }
+
+   private void internalClose(boolean remoteLinkClose) throws ActiveMQAMQPException {
       try {
-         closed = true;
+         protonSession.removeSender(sender);
          sessionSPI.closeSender(brokerConsumer);
          // if this is a link close rather than a connection close or detach, we need to delete
          // any durable resources for say pub subs
@@ -763,9 +792,13 @@ public class ProtonServerSenderContext extends ProtonInitializable implements Pr
             credits--;
          }
 
+         if (messageReference.getMessage() instanceof AMQPLargeMessage) {
+            hasLarge = true;
+         }
+
          if (messageReference instanceof Runnable && consumer.allowReferenceCallback()) {
             messageReference.onDelivery(executeDelivery);
-            connection.runNow((Runnable)messageReference);
+            connection.runNow((Runnable) messageReference);
          } else {
             connection.runNow(() -> executeDelivery(messageReference));
          }
@@ -784,37 +817,83 @@ public class ProtonServerSenderContext extends ProtonInitializable implements Pr
             log.debug("Not delivering message " + messageReference + " as the sender is closed and credits were available, if you see too many of these it means clients are issuing credits and closing the connection with pending credits a lot of times");
             return;
          }
-         AMQPMessage message = CoreAmqpConverter.checkAMQP(messageReference.getMessage());
+         AMQPMessage message = CoreAmqpConverter.checkAMQP(messageReference.getMessage(), sessionSPI.getStorageManager());
 
-         sessionSPI.invokeOutgoing(message, (ActiveMQProtonRemotingConnection) sessionSPI.getTransportConnection().getProtocolConnection());
+         if (sessionSPI.invokeOutgoing(message, (ActiveMQProtonRemotingConnection) sessionSPI.getTransportConnection().getProtocolConnection()) != null) {
+            return;
+         }
+         if (message instanceof AMQPLargeMessage) {
+            deliverLarge(messageReference, (AMQPLargeMessage) message);
+         } else {
+            deliverStandard(messageReference, message);
+         }
+
+      } catch (Exception e) {
+         log.warn(e.getMessage(), e);
+         brokerConsumer.errorProcessing(e, messageReference);
+      }
+   }
+
+   private class LargeMessageDeliveryContext {
+
+      LargeMessageDeliveryContext(MessageReference reference, AMQPLargeMessage message, Delivery delivery) {
+         this.position = 0L;
+         this.reference = reference;
+         this.message = message;
+         this.delivery = delivery;
+      }
+
+      long position;
+      final MessageReference reference;
+      final AMQPLargeMessage message;
+      final Delivery delivery;
+
+      void resume() {
+         connection.runNow(this::deliver);
+      }
+
+      void deliver() {
+
+         // This is discounting some bytes due to Transfer payload
+         int frameSize = protonSession.session.getConnection().getTransport().getOutboundFrameSizeLimit() - 50 - (delivery.getTag() != null ? delivery.getTag().length : 0);
 
          // Let the Message decide how to present the message bytes
-         ReadableBuffer sendBuffer = message.getSendBuffer(messageReference.getDeliveryCount());
-         // we only need a tag if we are going to settle later
-         byte[] tag = preSettle ? new byte[0] : protonSession.getTag();
-
-         boolean releaseRequired = sendBuffer instanceof NettyReadable;
-         final Delivery delivery;
-         delivery = sender.delivery(tag, 0, tag.length);
-         delivery.setMessageFormat((int) message.getMessageFormat());
-         delivery.setContext(messageReference);
-
+         LargeBodyReader context = message.getLargeBodyReader();
          try {
 
-            if (releaseRequired) {
-               sender.send(sendBuffer);
-               // Above send copied, so release now if needed
-               releaseRequired = false;
-               ((NettyReadable) sendBuffer).getByteBuf().release();
-            } else {
-               // Don't have pooled content, no need to release or copy.
-               sender.sendNoCopy(sendBuffer);
+            context.open();
+            try {
+               context.position(position);
+               long bodySize = context.getSize();
+
+               // TODO: it would be nice to use pooled buffer here,
+               //       however I would need a version of ReadableBuffer for Netty
+               ByteBuffer buf = ByteBuffer.allocate(frameSize);
+
+               for (; position < bodySize; ) {
+                  if (!connection.flowControl(this::resume)) {
+                     context.close();
+                     return;
+                  }
+                  buf.clear();
+                  int size = context.readInto(buf);
+
+                  sender.send(new ReadableBuffer.ByteBufferReader(buf));
+
+                  position += size;
+
+                  if (position < bodySize) {
+                     connection.instantFlush();
+                  }
+               }
+            } finally {
+               context.close();
             }
 
             if (preSettle) {
                // Presettled means the client implicitly accepts any delivery we send it.
                try {
-                  sessionSPI.ack(null, brokerConsumer, messageReference.getMessage());
+                  sessionSPI.ack(null, brokerConsumer, reference.getMessage());
                } catch (Exception e) {
                   log.debug(e.getMessage(), e);
                }
@@ -823,18 +902,85 @@ public class ProtonServerSenderContext extends ProtonInitializable implements Pr
                sender.advance();
             }
 
-            connection.flush();
-         } finally {
+            connection.instantFlush();
+
             synchronized (creditsLock) {
                pending.decrementAndGet();
             }
-            if (releaseRequired) {
-               ((NettyReadable) sendBuffer).getByteBuf().release();
-            }
+
+            finishLargeMessage();
+         } catch (Exception e) {
+            log.warn(e.getMessage(), e);
+            brokerConsumer.errorProcessing(e, reference);
          }
-      } catch (Exception e) {
-         log.warn(e.getMessage(), e);
-         brokerConsumer.errorProcessing(e, messageReference);
+      }
+   }
+
+   private void finishLargeMessage() {
+      pendingLargeMessage = null;
+      hasLarge = false;
+      brokerConsumer.promptDelivery();
+   }
+
+   private void deliverLarge(MessageReference messageReference, AMQPLargeMessage message) {
+
+      // we only need a tag if we are going to settle later
+      byte[] tag = preSettle ? new byte[0] : protonSession.getTag();
+
+      final Delivery delivery;
+      delivery = sender.delivery(tag, 0, tag.length);
+      delivery.setMessageFormat((int) message.getMessageFormat());
+      delivery.setContext(messageReference);
+
+      pendingLargeMessage = new LargeMessageDeliveryContext(messageReference, message, delivery);
+      pendingLargeMessage.deliver();
+
+   }
+
+   private void deliverStandard(MessageReference messageReference, AMQPMessage message) {
+      // Let the Message decide how to present the message bytes
+      ReadableBuffer sendBuffer = message.getSendBuffer(messageReference.getDeliveryCount());
+      // we only need a tag if we are going to settle later
+      byte[] tag = preSettle ? new byte[0] : protonSession.getTag();
+
+      boolean releaseRequired = sendBuffer instanceof NettyReadable;
+      final Delivery delivery;
+      delivery = sender.delivery(tag, 0, tag.length);
+      delivery.setMessageFormat((int) message.getMessageFormat());
+      delivery.setContext(messageReference);
+
+      try {
+
+         if (releaseRequired) {
+            sender.send(sendBuffer);
+            // Above send copied, so release now if needed
+            releaseRequired = false;
+            ((NettyReadable) sendBuffer).getByteBuf().release();
+         } else {
+            // Don't have pooled content, no need to release or copy.
+            sender.sendNoCopy(sendBuffer);
+         }
+
+         if (preSettle) {
+            // Presettled means the client implicitly accepts any delivery we send it.
+            try {
+               sessionSPI.ack(null, brokerConsumer, messageReference.getMessage());
+            } catch (Exception e) {
+               log.debug(e.getMessage(), e);
+            }
+            delivery.settle();
+         } else {
+            sender.advance();
+         }
+
+         connection.flush();
+      } finally {
+         synchronized (creditsLock) {
+            pending.decrementAndGet();
+         }
+         if (releaseRequired) {
+            ((NettyReadable) sendBuffer).getByteBuf().release();
+         }
       }
    }
 
@@ -864,11 +1010,11 @@ public class ProtonServerSenderContext extends ProtonInitializable implements Pr
    }
 
    private static SimpleString createQueueName(boolean useCoreSubscriptionNaming,
-                                         String clientId,
-                                         String pubId,
-                                         boolean shared,
-                                         boolean global,
-                                         boolean isVolatile) {
+                                               String clientId,
+                                               String pubId,
+                                               boolean shared,
+                                               boolean global,
+                                               boolean isVolatile) {
       if (useCoreSubscriptionNaming) {
          final boolean durable = !isVolatile;
          final String subscriptionName = pubId.contains("|") ? pubId.split("\\|")[0] : pubId;
@@ -897,6 +1043,10 @@ public class ProtonServerSenderContext extends ProtonInitializable implements Pr
    public void reportDrained() {
       connection.requireInHandler();
       sender.drained();
-      connection.flush();
+      connection.instantFlush();
+   }
+
+   public AMQPSessionContext getSessionContext() {
+      return protonSession;
    }
 }

@@ -19,6 +19,7 @@ package org.apache.activemq.artemis.api.core;
 
 import java.io.Serializable;
 
+@Deprecated
 public class QueueAttributes implements Serializable {
 
    public static final String ROUTING_TYPE = "routing-type";
@@ -27,6 +28,7 @@ public class QueueAttributes implements Serializable {
    public static final String MAX_CONSUMERS = "max-consumers";
    public static final String EXCLUSIVE = "exclusive";
    public static final String GROUP_REBALANCE = "group-rebalance";
+   public static final String GROUP_REBALANCE_PAUSE_DISPATCH = "group-rebalance-pause-dispatch";
    public static final String GROUP_BUCKETS = "group-buckets";
    public static final String GROUP_FIRST_KEY = "group-first-key";
    public static final String LAST_VALUE = "last-value";
@@ -40,6 +42,7 @@ public class QueueAttributes implements Serializable {
    public static final String AUTO_DELETE_DELAY = "auto-delete-delay";
    public static final String AUTO_DELETE_MESSAGE_COUNT = "auto-delete-message-count";
    public static final String RING_SIZE = "ring-size";
+   public static final String ENABLED = "enabled";
 
    private RoutingType routingType;
    private SimpleString filterString;
@@ -47,6 +50,7 @@ public class QueueAttributes implements Serializable {
    private Integer maxConsumers;
    private Boolean exclusive;
    private Boolean groupRebalance;
+   private Boolean groupRebalancePauseDispatch;
    private Integer groupBuckets;
    private SimpleString groupFirstKey;
    private Boolean lastValue;
@@ -60,6 +64,7 @@ public class QueueAttributes implements Serializable {
    private Long autoDeleteDelay;
    private Long autoDeleteMessageCount;
    private Long ringSize;
+   private Boolean enabled;
 
 
    public void set(String key, String value) {
@@ -90,6 +95,8 @@ public class QueueAttributes implements Serializable {
             setConsumerPriority(Integer.valueOf(value));
          } else if (key.equals(GROUP_REBALANCE)) {
             setGroupRebalance(Boolean.valueOf(value));
+         } else if (key.equals(GROUP_REBALANCE_PAUSE_DISPATCH)) {
+            setGroupRebalancePauseDispatch(Boolean.valueOf(value));
          } else if (key.equals(GROUP_BUCKETS)) {
             setGroupBuckets(Integer.valueOf(value));
          } else if (key.equals(GROUP_FIRST_KEY)) {
@@ -102,7 +109,63 @@ public class QueueAttributes implements Serializable {
             setAutoDeleteMessageCount(Long.valueOf(value));
          } else if (key.equals(RING_SIZE)) {
             setRingSize(Long.valueOf(value));
+         } else if (key.equals(ENABLED)) {
+            setEnabled(Boolean.valueOf(value));
          }
+      }
+   }
+
+   public QueueConfiguration toQueueConfiguration() {
+      return new QueueConfiguration("")
+         .setDurable(this.getDurable())
+         .setRoutingType(this.getRoutingType())
+         .setExclusive(this.getExclusive())
+         .setRingSize(this.getRingSize())
+         .setEnabled(this.isEnabled())
+         .setGroupRebalance(this.getGroupRebalance())
+         .setGroupRebalancePauseDispatch(this.getGroupRebalancePauseDispatch())
+         .setNonDestructive(this.getNonDestructive())
+         .setLastValue(this.getLastValue())
+         .setFilterString(this.getFilterString())
+         .setMaxConsumers(this.getMaxConsumers())
+         .setPurgeOnNoConsumers(this.getPurgeOnNoConsumers())
+         .setConsumersBeforeDispatch(this.getConsumersBeforeDispatch())
+         .setDelayBeforeDispatch(this.getDelayBeforeDispatch())
+         .setGroupBuckets(this.getGroupBuckets())
+         .setGroupFirstKey(this.getGroupFirstKey())
+         .setLastValueKey(this.getLastValueKey())
+         .setConsumerPriority(this.getConsumerPriority())
+         .setAutoDelete(this.getAutoDelete())
+         .setAutoDeleteMessageCount(this.getAutoDeleteMessageCount())
+         .setAutoDeleteDelay(this.getAutoDeleteDelay());
+   }
+
+   public static QueueAttributes fromQueueConfiguration(QueueConfiguration queueConfiguration) {
+      if (queueConfiguration == null) {
+         return null;
+      } else {
+         return new QueueAttributes()
+            .setDurable(queueConfiguration.isDurable())
+            .setRoutingType(queueConfiguration.getRoutingType())
+            .setExclusive(queueConfiguration.isExclusive())
+            .setRingSize(queueConfiguration.getRingSize())
+            .setEnabled(queueConfiguration.isEnabled())
+            .setGroupRebalance(queueConfiguration.isGroupRebalance())
+            .setGroupRebalancePauseDispatch(queueConfiguration.isGroupRebalancePauseDispatch())
+            .setNonDestructive(queueConfiguration.isNonDestructive())
+            .setLastValue(queueConfiguration.isLastValue())
+            .setFilterString(queueConfiguration.getFilterString())
+            .setMaxConsumers(queueConfiguration.getMaxConsumers())
+            .setPurgeOnNoConsumers(queueConfiguration.isPurgeOnNoConsumers())
+            .setConsumersBeforeDispatch(queueConfiguration.getConsumersBeforeDispatch())
+            .setDelayBeforeDispatch(queueConfiguration.getDelayBeforeDispatch())
+            .setGroupBuckets(queueConfiguration.getGroupBuckets())
+            .setGroupFirstKey(queueConfiguration.getGroupFirstKey())
+            .setLastValueKey(queueConfiguration.getLastValueKey())
+            .setConsumerPriority(queueConfiguration.getConsumerPriority())
+            .setAutoDelete(queueConfiguration.isAutoDelete())
+            .setAutoDeleteDelay(queueConfiguration.getAutoDeleteDelay())
+            .setAutoDeleteMessageCount(queueConfiguration.getAutoDeleteMessageCount());
       }
    }
 
@@ -223,6 +286,15 @@ public class QueueAttributes implements Serializable {
       return this;
    }
 
+   public Boolean getGroupRebalancePauseDispatch() {
+      return groupRebalancePauseDispatch;
+   }
+
+   public QueueAttributes setGroupRebalancePauseDispatch(Boolean groupRebalancePauseDispatch) {
+      this.groupRebalancePauseDispatch = groupRebalancePauseDispatch;
+      return this;
+   }
+
    public Integer getGroupBuckets() {
       return groupBuckets;
    }
@@ -274,6 +346,15 @@ public class QueueAttributes implements Serializable {
 
    public QueueAttributes setRingSize(Long ringSize) {
       this.ringSize = ringSize;
+      return this;
+   }
+
+   public Boolean isEnabled() {
+      return enabled;
+   }
+
+   public QueueAttributes setEnabled(Boolean enabled) {
+      this.enabled = enabled;
       return this;
    }
 }

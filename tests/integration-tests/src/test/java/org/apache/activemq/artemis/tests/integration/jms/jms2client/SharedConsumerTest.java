@@ -25,7 +25,9 @@ import java.util.Random;
 
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.postoffice.Binding;
+import org.apache.activemq.artemis.core.postoffice.impl.LocalQueueBinding;
 import org.apache.activemq.artemis.tests.util.JMSTestBase;
+import org.apache.activemq.artemis.utils.Wait;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -60,13 +62,28 @@ public class SharedConsumerTest extends JMSTestBase {
 
          for (int i = 0; i < numMessages; i += 2) {
             String msg = con1.receiveBody(String.class, 5000);
-            System.out.println("msg = " + msg);
             msg = con2.receiveBody(String.class, 5000);
-            System.out.println("msg = " + msg);
          }
 
       } finally {
          context.close();
+      }
+   }
+
+   @Test
+   public void sharedDurableSubUser() throws Exception {
+      try (JMSContext context = cf.createContext("foo", "bar")) {
+         context.createSharedDurableConsumer(topic1, "mySharedCon");
+         boolean found = false;
+         for (Binding binding : server.getPostOffice().getBindingsForAddress(SimpleString.toSimpleString(topic1.getTopicName())).getBindings()) {
+            found = true;
+            assertTrue(binding instanceof LocalQueueBinding);
+            assertEquals("mySharedCon", ((LocalQueueBinding)binding).getQueue().getName().toString());
+            assertNotNull(((LocalQueueBinding)binding).getQueue().getUser());
+            assertEquals("foo", ((LocalQueueBinding)binding).getQueue().getUser().toString());
+         }
+
+         assertTrue(found);
       }
    }
 
@@ -95,8 +112,7 @@ public class SharedConsumerTest extends JMSTestBase {
          Binding binding = server.getPostOffice().getBinding(new SimpleString("nonDurable.mySharedCon"));
          assertNotNull(binding);
          con2.close();
-         binding = server.getPostOffice().getBinding(new SimpleString("nonDurable.mySharedCon"));
-         assertNull(binding);
+         Wait.assertTrue(() -> server.getPostOffice().getBinding(new SimpleString("nonDurable.mySharedCon")) == null, 2000, 100);
          con1 = context.createSharedConsumer(topic2, "mySharedCon");
       } finally {
          context.close();

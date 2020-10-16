@@ -30,19 +30,16 @@ import javax.jms.TextMessage;
 import javax.jms.Topic;
 import javax.naming.Context;
 import javax.naming.InitialContext;
-import javax.naming.NamingException;
-
 import java.util.ArrayList;
 import java.util.Hashtable;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 
-import org.apache.activemq.artemis.core.server.ActiveMQServer;
+import org.apache.activemq.artemis.api.core.SimpleString;
+import org.apache.activemq.artemis.utils.Wait;
 import org.apache.qpid.jms.JmsConnectionFactory;
 import org.junit.Test;
 
@@ -50,19 +47,13 @@ import static org.hamcrest.CoreMatchers.is;
 
 public class TopicDurableTests extends JMSClientTestSupport {
 
-   @Override
-   protected void createAddressAndQueues(ActiveMQServer server) throws Exception {
-      // do not create unnecessary queues
-   }
-
-
    @Test
    public void testMessageDurableSubscription() throws Exception {
       JmsConnectionFactory connectionFactory = new JmsConnectionFactory(getBrokerQpidJMSConnectionURI() + "?jms.clientID=jmsTopicClient");
       Connection connection = connectionFactory.createConnection();
       connection.start();
 
-      System.out.println("testMessageDurableSubscription");
+      instanceLog.debug("testMessageDurableSubscription");
       Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
       Topic testTopic =  session.createTopic("jmsTopic");
 
@@ -76,39 +67,39 @@ public class TopicDurableTests extends JMSClientTestSupport {
       String batchPrefix = "First";
       List<Message> listMsgs = generateMessages(session, batchPrefix, count);
       sendMessages(messageProducer, listMsgs);
-      System.out.println("First batch messages sent");
+      instanceLog.debug("First batch messages sent");
 
       List<Message> recvd1 = receiveMessages(subscriber1, count);
       List<Message> recvd2 = receiveMessages(subscriber2, count);
 
       assertThat(recvd1.size(), is(count));
       assertMessageContent(recvd1, batchPrefix);
-      System.out.println(sub1ID + " :First batch messages received");
+      instanceLog.debug(sub1ID + " :First batch messages received");
 
       assertThat(recvd2.size(), is(count));
       assertMessageContent(recvd2, batchPrefix);
-      System.out.println(sub2ID + " :First batch messages received");
+      instanceLog.debug(sub2ID + " :First batch messages received");
 
       subscriber1.close();
-      System.out.println(sub1ID + " : closed");
+      instanceLog.debug(sub1ID + " : closed");
 
       batchPrefix = "Second";
       listMsgs = generateMessages(session, batchPrefix, count);
       sendMessages(messageProducer, listMsgs);
-      System.out.println("Second batch messages sent");
+      instanceLog.debug("Second batch messages sent");
 
       recvd2 = receiveMessages(subscriber2, count);
       assertThat(recvd2.size(), is(count));
       assertMessageContent(recvd2, batchPrefix);
-      System.out.println(sub2ID + " :Second batch messages received");
+      instanceLog.debug(sub2ID + " :Second batch messages received");
 
       subscriber1 = session.createDurableSubscriber(testTopic, sub1ID);
-      System.out.println(sub1ID + " :connected");
+      instanceLog.debug(sub1ID + " :connected");
 
       recvd1 = receiveMessages(subscriber1, count);
       assertThat(recvd1.size(), is(count));
       assertMessageContent(recvd1, batchPrefix);
-      System.out.println(sub1ID + " :Second batch messages received");
+      instanceLog.debug(sub1ID + " :Second batch messages received");
 
       subscriber1.close();
       subscriber2.close();
@@ -119,10 +110,10 @@ public class TopicDurableTests extends JMSClientTestSupport {
 
 
    @Test
-   public void testSharedNonDurableSubscription() throws JMSException, NamingException, InterruptedException, ExecutionException, TimeoutException {
+   public void testSharedNonDurableSubscription() throws Exception {
       int iterations = 10;
       for (int i = 0; i < iterations; i++) {
-         System.out.println("testSharedNonDurableSubscription; iteration: " + i);
+         instanceLog.debug("testSharedNonDurableSubscription; iteration: " + i);
          //SETUP-START
          JmsConnectionFactory connectionFactory1 = new JmsConnectionFactory(getBrokerQpidJMSConnectionURI());
          Connection connection1 = connectionFactory1.createConnection();
@@ -156,14 +147,14 @@ public class TopicDurableTests extends JMSClientTestSupport {
          List<Message> listMsgs = generateMessages(session, count);
          List<CompletableFuture<List<Message>>> results = receiveMessagesAsync(count, subscriber1, subscriber2, subscriber3);
          sendMessages(messageProducer, listMsgs);
-         System.out.println("messages sent");
+         instanceLog.debug("messages sent");
 
          assertThat("Each message should be received only by one consumer",
                     results.get(0).get(20, TimeUnit.SECONDS).size() +
                        results.get(1).get(20, TimeUnit.SECONDS).size() +
                        results.get(2).get(20, TimeUnit.SECONDS).size(),
                     is(count));
-         System.out.println("messages received");
+         instanceLog.debug("messages received");
          //BODY-E
 
          //TEAR-DOWN-S
@@ -176,6 +167,9 @@ public class TopicDurableTests extends JMSClientTestSupport {
          connection1.close();
          connection2.close();
          //TEAR-DOWN-E
+
+         // ensure the topic is auto-deleted before continuing to the next iteration
+         Wait.assertTrue(() -> server.getAddressInfo(SimpleString.toSimpleString("jmsTopic")) == null, 2000, 100);
       }
    }
 
@@ -244,7 +238,7 @@ public class TopicDurableTests extends JMSClientTestSupport {
          resultsList.add(new CompletableFuture<>());
          receivedResList.add(new ArrayList<>());
          MessageListener myListener = message -> {
-            System.out.println("Mesages received" + message + " count: " + totalCount.get());
+            instanceLog.debug("Mesages received" + message + " count: " + totalCount.get());
             receivedResList.get(index).add(message);
             if (totalCount.decrementAndGet() == 0) {
                for (int j = 0; j < consumer.length; j++) {

@@ -24,7 +24,7 @@ under the License.
    <parent>
       <groupId>org.apache.activemq.examples.clustered</groupId>
       <artifactId>broker-features</artifactId>
-      <version>2.11.0-SNAPSHOT</version>
+      <version>2.16.0-SNAPSHOT</version>
    </parent>
 
    <groupId>org.apache.activemq.examples.federation</groupId>
@@ -53,6 +53,7 @@ under the License.
             <module>federated-address</module>
             <module>federated-address-downstream</module>
             <module>federated-address-downstream-upstream</module>
+            <module>federated-address-divert</module>
          </modules>
       </profile>
       <profile>
@@ -62,7 +63,9 @@ under the License.
             <module>federated-queue-downstream</module>
             <module>federated-queue-downstream-upstream</module>
             <module>federated-address</module>
+            <module>federated-address-downstream</module>
             <module>federated-address-downstream-upstream</module>
+            <module>federated-address-divert</module>
          </modules>
       </profile>
    </profiles>

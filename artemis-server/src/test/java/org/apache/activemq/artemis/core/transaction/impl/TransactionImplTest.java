@@ -26,6 +26,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.Pair;
@@ -46,6 +47,7 @@ import org.apache.activemq.artemis.core.persistence.OperationContext;
 import org.apache.activemq.artemis.core.persistence.QueueBindingInfo;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
 import org.apache.activemq.artemis.core.persistence.config.PersistedAddressSetting;
+import org.apache.activemq.artemis.core.persistence.config.PersistedDivertConfiguration;
 import org.apache.activemq.artemis.core.persistence.config.PersistedRoles;
 import org.apache.activemq.artemis.core.persistence.impl.PageCountPending;
 import org.apache.activemq.artemis.core.postoffice.Binding;
@@ -62,10 +64,12 @@ import org.apache.activemq.artemis.core.transaction.ResourceManager;
 import org.apache.activemq.artemis.core.transaction.Transaction;
 import org.apache.activemq.artemis.core.transaction.TransactionOperation;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.jboss.logging.Logger;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class TransactionImplTest extends ActiveMQTestBase {
+   private static final Logger log = Logger.getLogger(TransactionImplTest.class);
 
    @Test
    public void testTimeoutAndThenCommitWithARollback() throws Exception {
@@ -93,7 +97,7 @@ public class TransactionImplTest extends ActiveMQTestBase {
 
          @Override
          public void afterCommit(Transaction tx) {
-            System.out.println("commit...");
+            log.debug("commit...");
             commit.incrementAndGet();
          }
 
@@ -104,7 +108,7 @@ public class TransactionImplTest extends ActiveMQTestBase {
 
          @Override
          public void afterRollback(Transaction tx) {
-            System.out.println("rollback...");
+            log.debug("rollback...");
             rollback.incrementAndGet();
          }
 
@@ -161,7 +165,7 @@ public class TransactionImplTest extends ActiveMQTestBase {
 
          @Override
          public void afterCommit(Transaction tx) {
-            System.out.println("commit...");
+            log.debug("commit...");
             commit.incrementAndGet();
          }
 
@@ -172,7 +176,7 @@ public class TransactionImplTest extends ActiveMQTestBase {
 
          @Override
          public void afterRollback(Transaction tx) {
-            System.out.println("rollback...");
+            log.debug("rollback...");
             rollback.incrementAndGet();
          }
 
@@ -237,6 +241,16 @@ public class TransactionImplTest extends ActiveMQTestBase {
 
       @Override
       public void stop(boolean ioCriticalError, boolean sendFailover) throws Exception {
+
+      }
+
+      @Override
+      public void deleteLargeMessageBody(LargeServerMessage largeServerMessage) throws ActiveMQException {
+
+      }
+
+      @Override
+      public void addBytesToLargeMessage(SequentialFile file, long messageId, ActiveMQBuffer bytes) throws Exception {
 
       }
 
@@ -343,8 +357,8 @@ public class TransactionImplTest extends ActiveMQTestBase {
       }
 
       @Override
-      public void deleteMessage(long messageID) throws Exception {
-
+      public boolean deleteMessage(long messageID) throws Exception {
+         return true;
       }
 
       @Override
@@ -358,13 +372,13 @@ public class TransactionImplTest extends ActiveMQTestBase {
       }
 
       @Override
-      public void updateDeliveryCount(MessageReference ref) throws Exception {
-
+      public boolean updateDeliveryCount(MessageReference ref) throws Exception {
+         return true;
       }
 
       @Override
-      public void updateScheduledDeliveryTime(MessageReference ref) throws Exception {
-
+      public boolean updateScheduledDeliveryTime(MessageReference ref) throws Exception {
+         return true;
       }
 
       @Override
@@ -450,6 +464,11 @@ public class TransactionImplTest extends ActiveMQTestBase {
 
       @Override
       public LargeServerMessage createLargeMessage(long id, Message message) throws Exception {
+         return null;
+      }
+
+      @Override
+      public LargeServerMessage largeMessageCreated(long id, LargeServerMessage largeMessage) throws Exception {
          return null;
       }
 
@@ -589,6 +608,21 @@ public class TransactionImplTest extends ActiveMQTestBase {
 
       @Override
       public List<PersistedRoles> recoverPersistedRoles() throws Exception {
+         return null;
+      }
+
+      @Override
+      public void storeDivertConfiguration(PersistedDivertConfiguration persistedDivertConfiguration) throws Exception {
+
+      }
+
+      @Override
+      public void deleteDivertConfiguration(String divertName) throws Exception {
+
+      }
+
+      @Override
+      public List<PersistedDivertConfiguration> recoverDivertConfigurations() {
          return null;
       }
 

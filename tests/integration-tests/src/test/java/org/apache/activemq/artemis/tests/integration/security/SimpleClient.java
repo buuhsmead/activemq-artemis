@@ -16,6 +16,7 @@
  */
 package org.apache.activemq.artemis.tests.integration.security;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
@@ -38,7 +39,6 @@ final class SimpleClient {
             throw new Exception("require 1 argument: connector factory class name");
          }
 
-         System.out.println("I'm here");
          String connectorFactoryClassName = args[0];
 
          String queueName = RandomUtil.randomString();
@@ -49,7 +49,7 @@ final class SimpleClient {
             ClientSessionFactory sf = locator.createSessionFactory();
             ClientSession session = sf.createSession(false, true, true);
 
-            session.createQueue(queueName, queueName, null, false);
+            session.createQueue(new QueueConfiguration(queueName).setDurable(false));
             ClientProducer producer = session.createProducer(queueName);
             ClientConsumer consumer = session.createConsumer(queueName);
 

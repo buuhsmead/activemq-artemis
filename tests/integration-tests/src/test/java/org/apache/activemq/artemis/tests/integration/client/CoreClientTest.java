@@ -28,6 +28,7 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
@@ -47,7 +48,6 @@ import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.jms.client.ActiveMQTextMessage;
 import org.apache.activemq.artemis.spi.core.security.ActiveMQJAASSecurityManager;
 import org.apache.activemq.artemis.spi.core.security.jaas.InVMLoginModule;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.utils.ActiveMQThreadFactory;
 import org.apache.activemq.artemis.utils.UUIDGenerator;
@@ -55,8 +55,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class CoreClientTest extends ActiveMQTestBase {
-
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
 
    @Test
    public void testCoreClientNetty() throws Exception {
@@ -118,7 +116,7 @@ public class CoreClientTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(false, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -139,8 +137,6 @@ public class CoreClientTest extends ActiveMQTestBase {
 
          producer.send(message);
       }
-
-      CoreClientTest.log.info("sent messages");
 
       ClientConsumer consumer = session.createConsumer(QUEUE);
 
@@ -231,7 +227,7 @@ public class CoreClientTest extends ActiveMQTestBase {
          String queueName = UUIDGenerator.getInstance().generateSimpleStringUUID().toString();
          String address = prefix + baseAddress;
 
-         session.createQueue(prefix + baseAddress, null, queueName, null, false);
+         session.createQueue(new QueueConfiguration(queueName).setAddress(prefix + baseAddress).setDurable(false));
          consumerMap.put(address, session.createConsumer(queueName));
       }
 
@@ -239,7 +235,7 @@ public class CoreClientTest extends ActiveMQTestBase {
          String queueName = UUIDGenerator.getInstance().generateSimpleStringUUID().toString();
          String address = prefix + baseAddress;
 
-         session.createQueue(prefix + baseAddress, null, queueName, null, false);
+         session.createQueue(new QueueConfiguration(queueName).setAddress(prefix + baseAddress).setDurable(false));
          consumerMap.put(address, session.createConsumer(queueName));
       }
 

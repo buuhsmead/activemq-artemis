@@ -27,7 +27,7 @@ public class Wait {
 
 
    public static final long MAX_WAIT_MILLIS = 30 * 1000;
-   public static final int SLEEP_MILLIS = 1000;
+   public static final int SLEEP_MILLIS = 100;
    public static final String DEFAULT_FAILURE_MESSAGE = "Condition wasn't met";
 
    public interface Condition {
@@ -39,12 +39,20 @@ public class Wait {
       long getCount() throws Exception;
    }
 
+   public interface ObjectCondition {
+      Object getObject() throws Exception;
+   }
+
    public interface IntCondition {
       int getCount() throws Exception;
    }
 
    public static boolean waitFor(Condition condition) throws Exception {
       return waitFor(condition, MAX_WAIT_MILLIS);
+   }
+
+   public static void assertEquals(Object obj, ObjectCondition condition) throws Exception {
+      assertEquals(obj, condition, MAX_WAIT_MILLIS, SLEEP_MILLIS);
    }
 
 
@@ -71,6 +79,15 @@ public class Wait {
 
    public static void assertEquals(int size, IntCondition condition, long timeout) throws Exception {
       assertEquals(size, condition, timeout, SLEEP_MILLIS);
+   }
+
+
+   public static void assertEquals(Object obj, ObjectCondition condition, long timeout, long sleepMillis) throws Exception {
+      boolean result = waitFor(() -> (obj == condition || obj.equals(condition.getObject())), timeout, sleepMillis);
+
+      if (!result) {
+         Assert.assertEquals(obj, condition.getObject());
+      }
    }
 
    public static void assertEquals(int size, IntCondition condition, long timeout, long sleepMillis) throws Exception {
@@ -101,6 +118,9 @@ public class Wait {
       assertTrue(DEFAULT_FAILURE_MESSAGE, () -> !condition.isSatisfied(), duration, sleep);
    }
 
+   public static void assertTrue(Condition condition, final long duration) {
+      assertTrue(DEFAULT_FAILURE_MESSAGE, condition, duration, SLEEP_MILLIS);
+   }
 
    public static void assertTrue(String failureMessage, Condition condition) {
       assertTrue(failureMessage, condition, MAX_WAIT_MILLIS);

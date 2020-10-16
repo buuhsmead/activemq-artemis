@@ -31,6 +31,7 @@ import org.apache.activemq.ActiveMQConnection;
 import org.apache.activemq.ActiveMQConnectionFactory;
 import org.apache.activemq.ActiveMQXAConnectionFactory;
 import org.apache.activemq.artemis.api.core.ActiveMQNonExistentQueueException;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.command.ActiveMQDestination;
@@ -66,15 +67,15 @@ public class BasicOpenWireTest extends OpenWireTestBase {
       System.setProperty("org.apache.activemq.transport.AbstractInactivityMonitor.keepAliveTime", "5");
       createFactories();
       SimpleString coreQueue = new SimpleString(queueName);
-      this.server.createQueue(coreQueue, RoutingType.ANYCAST, coreQueue, null, true, false, -1, false, true);
+      this.server.createQueue(new QueueConfiguration(coreQueue).setRoutingType(RoutingType.ANYCAST));
       testQueues.put(queueName, coreQueue);
 
       SimpleString coreQueue2 = new SimpleString(queueName2);
-      this.server.createQueue(coreQueue2, RoutingType.ANYCAST, coreQueue2, null, true, false, -1, false, true);
+      this.server.createQueue(new QueueConfiguration(coreQueue2).setRoutingType(RoutingType.ANYCAST));
       testQueues.put(queueName2, coreQueue2);
 
       SimpleString durableQueue = new SimpleString(durableQueueName);
-      this.server.createQueue(durableQueue, RoutingType.ANYCAST, durableQueue, null, true, false, -1, false, true);
+      this.server.createQueue(new QueueConfiguration(durableQueue).setRoutingType(RoutingType.ANYCAST));
       testQueues.put(durableQueueName, durableQueue);
 
       if (!enableSecurity) {
@@ -96,12 +97,9 @@ public class BasicOpenWireTest extends OpenWireTestBase {
    @After
    public void tearDown() throws Exception {
       System.clearProperty("org.apache.activemq.transport.AbstractInactivityMonitor.keepAliveTime");
-      System.out.println("tear down! " + connection);
       try {
          if (connection != null) {
-            System.out.println("closing connection");
             connection.close();
-            System.out.println("connection closed.");
          }
 
          Iterator<SimpleString> iterQueues = testQueues.values().iterator();
@@ -115,15 +113,12 @@ public class BasicOpenWireTest extends OpenWireTestBase {
                // just print, what else can we do?
                e.printStackTrace();
             }
-            System.out.println("Destroyed queue: " + coreQ);
          }
          testQueues.clear();
       } catch (Throwable e) {
-         System.out.println("Exception !! " + e);
          e.printStackTrace();
       } finally {
          super.tearDown();
-         System.out.println("Super done.");
       }
    }
 
@@ -151,7 +146,7 @@ public class BasicOpenWireTest extends OpenWireTestBase {
       SimpleString coreQ = testQueues.get(qname);
       if (coreQ == null) {
          coreQ = new SimpleString(qname);
-         this.server.createQueue(coreQ, RoutingType.ANYCAST, coreQ, null, true, false, -1, false, true);
+         this.server.createQueue(new QueueConfiguration(coreQ).setRoutingType(RoutingType.ANYCAST));
          testQueues.put(qname, coreQ);
       }
    }

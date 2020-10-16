@@ -39,6 +39,7 @@ import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.BroadcastGroupConfiguration;
 import org.apache.activemq.artemis.api.core.DiscoveryGroupConfiguration;
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.UDPBroadcastEndpointFactory;
@@ -84,9 +85,9 @@ import org.apache.activemq.artemis.core.server.group.GroupingHandler;
 import org.apache.activemq.artemis.core.server.group.impl.GroupingHandlerConfiguration;
 import org.apache.activemq.artemis.core.server.impl.AddressInfo;
 import org.apache.activemq.artemis.core.server.impl.InVMNodeManager;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.utils.PortCheckRule;
+import org.jboss.logging.Logger;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -94,7 +95,7 @@ import org.junit.ClassRule;
 
 public abstract class ClusterTestBase extends ActiveMQTestBase {
 
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
+   private static final Logger log = Logger.getLogger(ClusterTestBase.class);
 
    private static final int[] PORTS = {TransportConstants.DEFAULT_PORT, TransportConstants.DEFAULT_PORT + 1, TransportConstants.DEFAULT_PORT + 2, TransportConstants.DEFAULT_PORT + 3, TransportConstants.DEFAULT_PORT + 4, TransportConstants.DEFAULT_PORT + 5, TransportConstants.DEFAULT_PORT + 6, TransportConstants.DEFAULT_PORT + 7, TransportConstants.DEFAULT_PORT + 8, TransportConstants.DEFAULT_PORT + 9,};
 
@@ -302,52 +303,56 @@ public abstract class ClusterTestBase extends ActiveMQTestBase {
    }
 
    private void logTopologyDiagram() {
-      StringBuffer topologyDiagram = new StringBuffer();
-      for (ActiveMQServer activeMQServer : servers) {
-         if (activeMQServer != null) {
-            topologyDiagram.append("\n").append(activeMQServer.getIdentity()).append("\n");
-            if (activeMQServer.isStarted()) {
-               Set<ClusterConnection> ccs = activeMQServer.getClusterManager().getClusterConnections();
+      try {
+         StringBuffer topologyDiagram = new StringBuffer();
+         for (ActiveMQServer activeMQServer : servers) {
+            if (activeMQServer != null) {
+               topologyDiagram.append("\n").append(activeMQServer.getIdentity()).append("\n");
+               if (activeMQServer.isStarted()) {
+                  Set<ClusterConnection> ccs = activeMQServer.getClusterManager().getClusterConnections();
 
-               if (ccs.size() >= 1) {
-                  ClusterConnectionImpl clusterConnection = (ClusterConnectionImpl) ccs.iterator().next();
-                  Collection<TopologyMemberImpl> members = clusterConnection.getTopology().getMembers();
-                  for (TopologyMemberImpl member : members) {
-                     String nodeId = member.getNodeId();
-                     String liveServer = null;
-                     String backupServer = null;
-                     for (ActiveMQServer server : servers) {
-                        if (server != null && server.getNodeID() != null && server.isActive() && server.getNodeID().toString().equals(nodeId)) {
-                           if (server.isActive()) {
-                              liveServer = server.getIdentity();
-                              if (member.getLive() != null) {
-                                 liveServer += "(notified)";
+                  if (ccs.size() >= 1) {
+                     ClusterConnectionImpl clusterConnection = (ClusterConnectionImpl) ccs.iterator().next();
+                     Collection<TopologyMemberImpl> members = clusterConnection.getTopology().getMembers();
+                     for (TopologyMemberImpl member : members) {
+                        String nodeId = member.getNodeId();
+                        String liveServer = null;
+                        String backupServer = null;
+                        for (ActiveMQServer server : servers) {
+                           if (server != null && server.getNodeID() != null && server.isActive() && server.getNodeID().toString().equals(nodeId)) {
+                              if (server.isActive()) {
+                                 liveServer = server.getIdentity();
+                                 if (member.getLive() != null) {
+                                    liveServer += "(notified)";
+                                 } else {
+                                    liveServer += "(not notified)";
+                                 }
                               } else {
-                                 liveServer += "(not notified)";
-                              }
-                           } else {
-                              backupServer = server.getIdentity();
-                              if (member.getBackup() != null) {
-                                 liveServer += "(notified)";
-                              } else {
-                                 liveServer += "(not notified)";
+                                 backupServer = server.getIdentity();
+                                 if (member.getBackup() != null) {
+                                    liveServer += "(notified)";
+                                 } else {
+                                    liveServer += "(not notified)";
+                                 }
                               }
                            }
                         }
-                     }
 
-                     topologyDiagram.append("\t").append("|\n").append("\t->").append(liveServer).append("/").append(backupServer).append("\n");
+                        topologyDiagram.append("\t").append("|\n").append("\t->").append(liveServer).append("/").append(backupServer).append("\n");
+                     }
+                  } else {
+                     topologyDiagram.append("-> no cluster connections\n");
                   }
                } else {
-                  topologyDiagram.append("-> no cluster connections\n");
+                  topologyDiagram.append("-> stopped\n");
                }
-            } else {
-               topologyDiagram.append("-> stopped\n");
             }
          }
+         topologyDiagram.append("\n");
+         log.debug(topologyDiagram.toString());
+      } catch (Throwable e) {
+         log.warn("error printing the topology::" + e.getMessage(), e);
       }
-      topologyDiagram.append("\n");
-      log.info(topologyDiagram.toString());
    }
 
    protected void waitForMessages(final int node, final String address, final int count) throws Exception {
@@ -425,14 +430,14 @@ public abstract class ClusterTestBase extends ActiveMQTestBase {
       PostOffice po = server.getPostOffice();
       Bindings bindings = po.getBindingsForAddress(new SimpleString(address));
 
-      System.out.println("=======================================================================");
-      System.out.println("Binding information for address = " + address + " on node " + node);
+      log.debug("=======================================================================");
+      log.debug("Binding information for address = " + address + " on node " + node);
 
       for (Binding binding : bindings.getBindings()) {
          if (binding.isConnected() && (binding instanceof LocalQueueBinding && local || binding instanceof RemoteQueueBinding && !local)) {
             QueueBinding qBinding = (QueueBinding) binding;
 
-            System.out.println("Binding = " + qBinding + ", queue=" + qBinding.getQueue());
+            log.debug("Binding = " + qBinding + ", queue=" + qBinding.getQueue());
          }
       }
 
@@ -539,9 +544,9 @@ public abstract class ClusterTestBase extends ActiveMQTestBase {
          filterString = ClusterTestBase.FILTER_PROP.toString() + "='" + filterVal + "'";
       }
 
-      log.info("Creating " + queueName + " , address " + address + " on " + servers[node]);
+      log.debug("Creating " + queueName + " , address " + address + " on " + servers[node]);
 
-      session.createQueue(address, routingType, queueName, filterString, durable);
+      session.createQueue(new QueueConfiguration(queueName).setAddress(address).setRoutingType(routingType).setFilterString(filterString).setDurable(durable));
 
       session.close();
    }
@@ -863,7 +868,7 @@ public abstract class ClusterTestBase extends ActiveMQTestBase {
             ClientMessage message = holder.consumer.receive(2000);
 
             if (message == null) {
-               log.info("*** dumping consumers:");
+               log.debug("*** dumping consumers:");
 
                dumpConsumers();
 
@@ -947,7 +952,7 @@ public abstract class ClusterTestBase extends ActiveMQTestBase {
             ClientMessage message = holder.consumer.receive(WAIT_TIMEOUT);
 
             if (message == null) {
-               log.info("*** dumping consumers:");
+               log.debug("*** dumping consumers:");
 
                dumpConsumers();
 
@@ -973,9 +978,9 @@ public abstract class ClusterTestBase extends ActiveMQTestBase {
                      message.getObjectProperty(ClusterTestBase.COUNT_PROP);
                }
                outOfOrder = true;
-               System.out.println("Message j=" + j + " was received out of order = " +
+               log.debug("Message j=" + j + " was received out of order = " +
                                      message.getObjectProperty(ClusterTestBase.COUNT_PROP));
-               log.info("Message j=" + j +
+               log.debug("Message j=" + j +
                            " was received out of order = " +
                            message.getObjectProperty(ClusterTestBase.COUNT_PROP));
             }
@@ -988,7 +993,7 @@ public abstract class ClusterTestBase extends ActiveMQTestBase {
    private void dumpConsumers() throws Exception {
       for (int i = 0; i < consumers.length; i++) {
          if (consumers[i] != null && !consumers[i].consumer.isClosed()) {
-            log.info("Dumping consumer " + i);
+            log.debug("Dumping consumer " + i);
 
             checkReceive(i);
          }
@@ -1041,11 +1046,11 @@ public abstract class ClusterTestBase extends ActiveMQTestBase {
             message = holder.consumer.receive(500);
 
             if (message != null) {
-               log.info("check receive Consumer " + consumerID +
+               log.debug("check receive Consumer " + consumerID +
                            " received message " +
                            message.getObjectProperty(ClusterTestBase.COUNT_PROP));
             } else {
-               log.info("check receive Consumer " + consumerID + " null message");
+               log.debug("check receive Consumer " + consumerID + " null message");
             }
          }
          while (message != null);
@@ -1215,7 +1220,7 @@ public abstract class ClusterTestBase extends ActiveMQTestBase {
 
                checkMessageBody(message);
 
-               // log.info("consumer " + consumerIDs[i] + " received message " + count);
+               // log.debug("consumer " + consumerIDs[i] + " received message " + count);
 
                Assert.assertFalse(counts.contains(count));
 
@@ -1396,7 +1401,7 @@ public abstract class ClusterTestBase extends ActiveMQTestBase {
 
       setSessionFactoryCreateLocator(node, ha, serverTotc);
 
-      locators[node].setProtocolManagerFactory(ActiveMQServerSideProtocolManagerFactory.getInstance(locators[node]));
+      locators[node].setProtocolManagerFactory(ActiveMQServerSideProtocolManagerFactory.getInstance(locators[node], servers[node].getStorageManager()));
 
       locators[node].setBlockOnNonDurableSend(true).setBlockOnDurableSend(true);
       addServerLocator(locators[node]);
@@ -1915,7 +1920,7 @@ public abstract class ClusterTestBase extends ActiveMQTestBase {
 
    protected void startServers(final int... nodes) throws Exception {
       for (int node : nodes) {
-         log.info("#test start node " + node);
+         log.debug("#test start node " + node);
          final long currentTime = System.currentTimeMillis();
          boolean waitForSelf = currentTime - timeStarts[node] < TIMEOUT_START_SERVER;
          boolean waitForPrevious = node > 0 && currentTime - timeStarts[node - 1] < TIMEOUT_START_SERVER;
@@ -1923,11 +1928,17 @@ public abstract class ClusterTestBase extends ActiveMQTestBase {
             Thread.sleep(TIMEOUT_START_SERVER);
          }
          timeStarts[node] = System.currentTimeMillis();
-         log.info("starting server " + servers[node]);
+         log.debug("starting server " + servers[node]);
          servers[node].start();
 
-         log.info("started server " + servers[node]);
+         log.debug("started server " + servers[node]);
          waitForServerToStart(servers[node]);
+
+         for (int i = 0; i < node * 1000; i++) {
+            // it is common to have messages landing with similar IDs on separate nodes, which could hide a few issues.
+            // so we make them unequal
+            servers[node].getStorageManager().generateID();
+         }
       }
    }
 
@@ -1943,7 +1954,7 @@ public abstract class ClusterTestBase extends ActiveMQTestBase {
    }
 
    protected void stopServers(final int... nodes) throws Exception {
-      log.info("Stopping nodes " + Arrays.toString(nodes));
+      log.debug("Stopping nodes " + Arrays.toString(nodes));
       Exception exception = null;
       for (int node : nodes) {
          if (servers[node] != null && servers[node].isStarted()) {
@@ -1955,9 +1966,9 @@ public abstract class ClusterTestBase extends ActiveMQTestBase {
 
                timeStarts[node] = System.currentTimeMillis();
 
-               log.info("stopping server " + node);
+               log.debug("stopping server " + node);
                servers[node].stop();
-               log.info("server " + node + " stopped");
+               log.debug("server " + node + " stopped");
             } catch (Exception e) {
                exception = e;
             }

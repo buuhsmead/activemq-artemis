@@ -22,6 +22,8 @@ import org.apache.activemq.artemis.core.server.transformer.Transformer;
 
 public interface Divert extends Bindable {
 
+   SimpleString getAddress();
+
    Filter getFilter();
 
    boolean isExclusive();
@@ -31,4 +33,16 @@ public interface Divert extends Bindable {
    SimpleString getRoutingName();
 
    Transformer getTransformer();
+
+   SimpleString getForwardAddress();
+
+   ComponentConfigurationRoutingType getRoutingType();
+
+   void setFilter(Filter filter);
+
+   void setTransformer(Transformer transformer);
+
+   void setForwardAddress(SimpleString forwardAddress);
+
+   void setRoutingType(ComponentConfigurationRoutingType routingType);
 }

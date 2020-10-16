@@ -20,13 +20,16 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.filter.Filter;
+import org.apache.activemq.artemis.core.paging.PagingManager;
 import org.apache.activemq.artemis.core.paging.cursor.PageSubscription;
 import org.apache.activemq.artemis.core.postoffice.PostOffice;
 import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.server.QueueConfig;
 import org.apache.activemq.artemis.core.server.QueueFactory;
+import org.apache.activemq.artemis.core.server.impl.QueueFactoryImpl;
 import org.apache.activemq.artemis.core.server.impl.QueueImpl;
 import org.apache.activemq.artemis.utils.ActiveMQThreadFactory;
 import org.apache.activemq.artemis.utils.actors.ArtemisExecutor;
@@ -41,9 +44,15 @@ public final class FakeQueueFactory implements QueueFactory {
 
    @Override
    public Queue createQueueWith(final QueueConfig config) {
-      return new QueueImpl(config.id(), config.address(), config.name(), config.filter(), config.pageSubscription(),
+      return new QueueImpl(config.id(), config.address(), config.name(), config.filter(), config.getPagingStore(), config.pageSubscription(),
                            config.user(), config.isDurable(), config.isTemporary(), config.isAutoCreated(),
                            scheduledExecutor, postOffice, null, null, ArtemisExecutor.delegate(executor), null, this);
+   }
+
+   @Override
+   public Queue createQueueWith(QueueConfiguration config, PagingManager pagingManager) throws Exception {
+      PageSubscription pageSubscription = QueueFactoryImpl.getPageSubscription(config, pagingManager);
+      return new QueueImpl(config, pageSubscription != null ? pageSubscription.getPagingStore() : null, pageSubscription, scheduledExecutor, postOffice, null, null, ArtemisExecutor.delegate(executor), null, this);
    }
 
    @Deprecated
@@ -57,7 +66,7 @@ public final class FakeQueueFactory implements QueueFactory {
                             final boolean durable,
                             final boolean temporary,
                             final boolean autoCreated) {
-      return new QueueImpl(persistenceID, address, name, filter, subscription, user, durable, temporary, autoCreated,
+      return new QueueImpl(persistenceID, address, name, filter, subscription != null ? subscription.getPagingStore() : null, subscription, user, durable, temporary, autoCreated,
                            scheduledExecutor, postOffice, null, null, ArtemisExecutor.delegate(executor), null, this);
    }
 

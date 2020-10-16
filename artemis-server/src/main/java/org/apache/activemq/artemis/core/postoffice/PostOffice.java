@@ -16,20 +16,22 @@
  */
 package org.apache.activemq.artemis.core.postoffice;
 
+import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
+import java.util.stream.Stream;
 
 import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.Pair;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.filter.Filter;
 import org.apache.activemq.artemis.core.server.ActiveMQComponent;
 import org.apache.activemq.artemis.core.server.MessageReference;
 import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.server.RoutingContext;
-import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.core.server.cluster.impl.MessageLoadBalancingType;
 import org.apache.activemq.artemis.core.server.impl.AddressInfo;
 import org.apache.activemq.artemis.core.transaction.Transaction;
@@ -65,6 +67,7 @@ public interface PostOffice extends ActiveMQComponent {
 
    AddressInfo updateAddressInfo(SimpleString addressName, EnumSet<RoutingType> routingTypes) throws Exception;
 
+   @Deprecated
    QueueBinding updateQueue(SimpleString name,
                             RoutingType routingType,
                             Filter filter,
@@ -80,6 +83,7 @@ public interface PostOffice extends ActiveMQComponent {
                             SimpleString user,
                             Boolean configurationManaged) throws Exception;
 
+   @Deprecated
    QueueBinding updateQueue(SimpleString name,
                             RoutingType routingType,
                             Filter filter,
@@ -95,6 +99,16 @@ public interface PostOffice extends ActiveMQComponent {
                             SimpleString user,
                             Boolean configurationManaged,
                             Long ringSize) throws Exception;
+
+   QueueBinding updateQueue(QueueConfiguration queueConfiguration) throws Exception;
+
+   /**
+    * @param queueConfiguration
+    * @param forceUpdate Setting to <code>true</code> will make <code>null</code> values override current values too
+    * @return
+    * @throws Exception
+    */
+   QueueBinding updateQueue(QueueConfiguration queueConfiguration, boolean forceUpdate) throws Exception;
 
    List<Queue> listQueuesForAddress(SimpleString address) throws Exception;
 
@@ -122,11 +136,11 @@ public interface PostOffice extends ActiveMQComponent {
 
    Binding getBinding(SimpleString uniqueName);
 
-   Bindings getMatchingBindings(SimpleString address) throws Exception;
+   Collection<Binding> getMatchingBindings(SimpleString address) throws Exception;
 
-   Bindings getDirectBindings(SimpleString address) throws Exception;
+   Collection<Binding> getDirectBindings(SimpleString address) throws Exception;
 
-   Map<SimpleString, Binding> getAllBindings();
+   Stream<Binding> getAllBindings();
 
    SimpleString getMatchingQueue(SimpleString address, RoutingType routingType) throws Exception;
 
@@ -159,7 +173,20 @@ public interface PostOffice extends ActiveMQComponent {
                        boolean rejectDuplicates,
                        Binding binding) throws Exception;
 
-   MessageReference reroute(Message message, Queue queue, Transaction tx) throws Exception;
+   /**
+    * This method was renamed as reload, use the new method instead
+    * @param message
+    * @param queue
+    * @param tx
+    * @return
+    * @throws Exception
+    */
+   @Deprecated
+   default MessageReference reroute(Message message, Queue queue, Transaction tx) throws Exception {
+      return reload(message, queue, tx);
+   }
+
+   MessageReference reload(Message message, Queue queue, Transaction tx) throws Exception;
 
    Pair<RoutingContext, Message> redistribute(Message message,
                                                     Queue originatingQueue,

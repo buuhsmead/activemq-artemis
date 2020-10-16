@@ -43,6 +43,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
 import org.apache.activemq.artemis.api.core.BroadcastGroupConfiguration;
 import org.apache.activemq.artemis.api.core.DiscoveryGroupConfiguration;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.core.config.BridgeConfiguration;
@@ -55,6 +56,7 @@ import org.apache.activemq.artemis.core.config.CoreQueueConfiguration;
 import org.apache.activemq.artemis.core.config.DivertConfiguration;
 import org.apache.activemq.artemis.core.config.FederationConfiguration;
 import org.apache.activemq.artemis.core.config.HAPolicyConfiguration;
+import org.apache.activemq.artemis.core.config.MetricsConfiguration;
 import org.apache.activemq.artemis.core.config.StoreConfiguration;
 import org.apache.activemq.artemis.core.config.WildcardConfiguration;
 import org.apache.activemq.artemis.core.config.ha.ReplicaPolicyConfiguration;
@@ -77,6 +79,7 @@ import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerCriticalPlug
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerFederationPlugin;
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerMessagePlugin;
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerQueuePlugin;
+import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerResourcePlugin;
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerSessionPlugin;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.core.settings.impl.ResourceLimitSettings;
@@ -118,6 +121,10 @@ public class ConfigurationImpl implements Configuration, Serializable {
    private int threadPoolMaxSize = ActiveMQDefaultConfiguration.getDefaultThreadPoolMaxSize();
 
    private long securityInvalidationInterval = ActiveMQDefaultConfiguration.getDefaultSecurityInvalidationInterval();
+
+   private long authenticationCacheSize = ActiveMQDefaultConfiguration.getDefaultAuthenticationCacheSize();
+
+   private long authorizationCacheSize = ActiveMQDefaultConfiguration.getDefaultAuthorizationCacheSize();
 
    private boolean securityEnabled = ActiveMQDefaultConfiguration.isDefaultSecurityEnabled();
 
@@ -161,7 +168,9 @@ public class ConfigurationImpl implements Configuration, Serializable {
 
    protected List<FederationConfiguration> federationConfigurations = new ArrayList<>();
 
-   private List<CoreQueueConfiguration> queueConfigurations = new ArrayList<>();
+   @Deprecated
+   // this can eventually be replaced with List<QueueConfiguration>, but to keep existing semantics it must stay as is for now
+   private List<CoreQueueConfiguration> coreQueueConfigurations = new ArrayList<>();
 
    private List<CoreAddressConfiguration> addressConfigurations = new ArrayList<>();
 
@@ -266,7 +275,7 @@ public class ConfigurationImpl implements Configuration, Serializable {
 
    private List<SecuritySettingPlugin> securitySettingPlugins = new ArrayList<>();
 
-   private ActiveMQMetricsPlugin metricsPlugin = null;
+   private MetricsConfiguration metricsConfiguration = null;
 
    private final List<ActiveMQServerBasePlugin> brokerPlugins = new CopyOnWriteArrayList<>();
    private final List<ActiveMQServerConnectionPlugin> brokerConnectionPlugins = new CopyOnWriteArrayList<>();
@@ -279,6 +288,7 @@ public class ConfigurationImpl implements Configuration, Serializable {
    private final List<ActiveMQServerBridgePlugin> brokerBridgePlugins = new CopyOnWriteArrayList<>();
    private final List<ActiveMQServerCriticalPlugin> brokerCriticalPlugins = new CopyOnWriteArrayList<>();
    private final List<ActiveMQServerFederationPlugin> brokerFederationPlugins = new CopyOnWriteArrayList<>();
+   private final List<ActiveMQServerResourcePlugin> brokerResourcePlugins = new CopyOnWriteArrayList<>();
 
    private Map<String, Set<String>> securityRoleNameMappings = new HashMap<>();
 
@@ -341,6 +351,8 @@ public class ConfigurationImpl implements Configuration, Serializable {
    private long criticalAnalyzerCheckPeriod = 0; // non set
 
    private int pageSyncTimeout = ActiveMQDefaultConfiguration.getDefaultJournalBufferTimeoutNio();
+
+   private String temporaryQueueNamespace = ActiveMQDefaultConfiguration.getDefaultTemporaryQueueNamespace();
 
    /**
     * Parent folder for all data folders.
@@ -497,6 +509,28 @@ public class ConfigurationImpl implements Configuration, Serializable {
    @Override
    public ConfigurationImpl setSecurityInvalidationInterval(final long interval) {
       securityInvalidationInterval = interval;
+      return this;
+   }
+
+   @Override
+   public long getAuthenticationCacheSize() {
+      return authenticationCacheSize;
+   }
+
+   @Override
+   public ConfigurationImpl setAuthenticationCacheSize(final long size) {
+      authenticationCacheSize = size;
+      return this;
+   }
+
+   @Override
+   public long getAuthorizationCacheSize() {
+      return authorizationCacheSize;
+   }
+
+   @Override
+   public ConfigurationImpl setAuthorizationCacheSize(final long size) {
+      authorizationCacheSize = size;
       return this;
    }
 
@@ -716,20 +750,48 @@ public class ConfigurationImpl implements Configuration, Serializable {
       return this;
    }
 
+   @Deprecated
    @Override
    public List<CoreQueueConfiguration> getQueueConfigurations() {
-      return queueConfigurations;
+      return coreQueueConfigurations;
    }
 
    @Override
-   public ConfigurationImpl setQueueConfigurations(final List<CoreQueueConfiguration> configs) {
-      queueConfigurations = configs;
+   /**
+    * Note: modifying the returned {@code List} will not impact the underlying {@code List}.
+    */
+   public List<QueueConfiguration> getQueueConfigs() {
+      List<QueueConfiguration> result = new ArrayList<>();
+      for (CoreQueueConfiguration coreQueueConfiguration : coreQueueConfigurations) {
+         result.add(coreQueueConfiguration.toQueueConfiguration());
+      }
+      return result;
+   }
+
+   @Deprecated
+   @Override
+   public ConfigurationImpl setQueueConfigurations(final List<CoreQueueConfiguration> coreQueueConfigurations) {
+      this.coreQueueConfigurations = coreQueueConfigurations;
+      return this;
+   }
+
+   @Override
+   public ConfigurationImpl setQueueConfigs(final List<QueueConfiguration> configs) {
+      for (QueueConfiguration queueConfiguration : configs) {
+         coreQueueConfigurations.add(CoreQueueConfiguration.fromQueueConfiguration(queueConfiguration));
+      }
       return this;
    }
 
    @Override
    public ConfigurationImpl addQueueConfiguration(final CoreQueueConfiguration config) {
-      queueConfigurations.add(config);
+      coreQueueConfigurations.add(config);
+      return this;
+   }
+
+   @Override
+   public ConfigurationImpl addQueueConfiguration(final QueueConfiguration config) {
+      coreQueueConfigurations.add(CoreQueueConfiguration.fromQueueConfiguration(config));
       return this;
    }
 
@@ -1456,9 +1518,18 @@ public class ConfigurationImpl implements Configuration, Serializable {
       return this.securitySettingPlugins;
    }
 
+   @Deprecated
    @Override
    public ActiveMQMetricsPlugin getMetricsPlugin() {
-      return this.metricsPlugin;
+      if (metricsConfiguration != null) {
+         return metricsConfiguration.getPlugin();
+      }
+      return null;
+   }
+
+   @Override
+   public MetricsConfiguration getMetricsConfiguration() {
+      return this.metricsConfiguration;
    }
 
    @Override
@@ -1499,6 +1570,9 @@ public class ConfigurationImpl implements Configuration, Serializable {
       if (plugin instanceof ActiveMQServerFederationPlugin) {
          brokerFederationPlugins.add((ActiveMQServerFederationPlugin) plugin);
       }
+      if (plugin instanceof ActiveMQServerResourcePlugin) {
+         brokerResourcePlugins.add((ActiveMQServerResourcePlugin) plugin);
+      }
    }
 
    @Override
@@ -1533,6 +1607,9 @@ public class ConfigurationImpl implements Configuration, Serializable {
       }
       if (plugin instanceof ActiveMQServerFederationPlugin) {
          brokerFederationPlugins.remove(plugin);
+      }
+      if (plugin instanceof ActiveMQServerResourcePlugin) {
+         brokerResourcePlugins.remove(plugin);
       }
    }
 
@@ -1594,6 +1671,11 @@ public class ConfigurationImpl implements Configuration, Serializable {
    @Override
    public List<FederationConfiguration> getFederationConfigurations() {
       return federationConfigurations;
+   }
+
+   @Override
+   public List<ActiveMQServerResourcePlugin> getBrokerResourcePlugins() {
+      return brokerResourcePlugins;
    }
 
    @Override
@@ -1681,9 +1763,19 @@ public class ConfigurationImpl implements Configuration, Serializable {
       return this;
    }
 
+   @Deprecated
    @Override
    public ConfigurationImpl setMetricsPlugin(final ActiveMQMetricsPlugin plugin) {
-      this.metricsPlugin = plugin;
+      if (metricsConfiguration == null) {
+         metricsConfiguration = new MetricsConfiguration();
+      }
+      metricsConfiguration.setPlugin(plugin);
+      return this;
+   }
+
+   @Override
+   public ConfigurationImpl setMetricsConfiguration(final MetricsConfiguration metricsConfiguration) {
+      this.metricsConfiguration = metricsConfiguration;
       return this;
    }
 
@@ -1873,7 +1965,7 @@ public class ConfigurationImpl implements Configuration, Serializable {
       result = prime * result + (persistDeliveryCountBeforeDelivery ? 1231 : 1237);
       result = prime * result + (persistIDCache ? 1231 : 1237);
       result = prime * result + (persistenceEnabled ? 1231 : 1237);
-      result = prime * result + ((queueConfigurations == null) ? 0 : queueConfigurations.hashCode());
+//      result = prime * result + ((queueConfigurations == null) ? 0 : queueConfigurations.hashCode());
       result = prime * result + scheduledThreadPoolMaxSize;
       result = prime * result + (securityEnabled ? 1231 : 1237);
       result = prime * result + (populateValidatedUser ? 1231 : 1237);
@@ -2087,11 +2179,11 @@ public class ConfigurationImpl implements Configuration, Serializable {
          return false;
       if (persistenceEnabled != other.persistenceEnabled)
          return false;
-      if (queueConfigurations == null) {
-         if (other.queueConfigurations != null)
-            return false;
-      } else if (!queueConfigurations.equals(other.queueConfigurations))
-         return false;
+//      if (queueConfigurations == null) {
+//         if (other.queueConfigurations != null)
+//            return false;
+//      } else if (!queueConfigurations.equals(other.queueConfigurations))
+//         return false;
       if (scheduledThreadPoolMaxSize != other.scheduledThreadPoolMaxSize)
          return false;
       if (securityEnabled != other.securityEnabled)
@@ -2403,6 +2495,17 @@ public class ConfigurationImpl implements Configuration, Serializable {
       } catch (Exception e) {
          throw new RuntimeException(e);
       }
+   }
+
+   @Override
+   public String getTemporaryQueueNamespace() {
+      return temporaryQueueNamespace;
+   }
+
+   @Override
+   public ConfigurationImpl setTemporaryQueueNamespace(final String temporaryQueueNamespace) {
+      this.temporaryQueueNamespace = temporaryQueueNamespace;
+      return this;
    }
 
 }

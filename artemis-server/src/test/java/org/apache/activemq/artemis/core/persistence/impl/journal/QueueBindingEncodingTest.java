@@ -50,6 +50,8 @@ public class QueueBindingEncodingTest extends Assert {
       final byte routingType = RandomUtil.randomByte();
       final boolean configurationManaged = RandomUtil.randomBoolean();
       final long ringSize = RandomUtil.randomLong();
+      final boolean enabled = RandomUtil.randomBoolean();
+      final boolean groupRebalancePauseDispatch = RandomUtil.randomBoolean();
 
       PersistentQueueBindingEncoding encoding = new PersistentQueueBindingEncoding(name,
                                                                                    address,
@@ -58,8 +60,10 @@ public class QueueBindingEncodingTest extends Assert {
                                                                                    autoCreated,
                                                                                    maxConsumers,
                                                                                    purgeOnNoConsumers,
+                                                                                   enabled,
                                                                                    exclusive,
                                                                                    groupRebalance,
+                                                                                   groupRebalancePauseDispatch,
                                                                                    groupBuckets,
                                                                                    groupFirstKey,
                                                                                    lastValue,
@@ -87,6 +91,7 @@ public class QueueBindingEncodingTest extends Assert {
       assertEquals(autoCreated, decoding.isAutoCreated());
       assertEquals(maxConsumers, decoding.getMaxConsumers());
       assertEquals(purgeOnNoConsumers, decoding.isPurgeOnNoConsumers());
+      assertEquals(enabled, decoding.isEnabled());
       assertEquals(exclusive, decoding.isExclusive());
       assertEquals(groupRebalance, decoding.isGroupRebalance());
       assertEquals(groupBuckets, decoding.getGroupBuckets());
@@ -102,5 +107,8 @@ public class QueueBindingEncodingTest extends Assert {
       assertEquals(routingType, decoding.getRoutingType());
       assertEquals(configurationManaged, decoding.isConfigurationManaged());
       assertEquals(ringSize, decoding.getRingSize());
+
+      assertEquals(groupRebalancePauseDispatch, decoding.isGroupRebalancePauseDispatch());
+
    }
 }

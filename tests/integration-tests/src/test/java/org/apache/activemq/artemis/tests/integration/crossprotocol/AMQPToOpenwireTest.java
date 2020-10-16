@@ -16,7 +16,6 @@
  */
 package org.apache.activemq.artemis.tests.integration.crossprotocol;
 
-import javax.jms.BytesMessage;
 import javax.jms.Connection;
 import javax.jms.Message;
 import javax.jms.MessageConsumer;
@@ -24,14 +23,13 @@ import javax.jms.MessageProducer;
 import javax.jms.ObjectMessage;
 import javax.jms.Queue;
 import javax.jms.Session;
-import java.io.ByteArrayInputStream;
-import java.io.ObjectInputStream;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.activemq.ActiveMQConnectionFactory;
 import org.apache.activemq.ActiveMQXAConnectionFactory;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.config.Configuration;
@@ -75,7 +73,7 @@ public class AMQPToOpenwireTest extends ActiveMQTestBase {
       serverConfig.getAddressesSettings().put("#", new AddressSettings().setAutoCreateQueues(false).setAutoCreateAddresses(false).setDeadLetterAddress(new SimpleString("ActiveMQ.DLQ")));
       serverConfig.setSecurityEnabled(false);
       coreQueue = new SimpleString(queueName);
-      server.createQueue(coreQueue, RoutingType.ANYCAST, coreQueue, null, false, false);
+      server.createQueue(new QueueConfiguration(coreQueue).setRoutingType(RoutingType.ANYCAST).setDurable(false));
       qpidfactory = new JmsConnectionFactory("amqp://localhost:61616");
    }
 
@@ -104,16 +102,11 @@ public class AMQPToOpenwireTest extends ActiveMQTestBase {
          queue = session.createQueue(queueName);
          MessageConsumer consumer = session.createConsumer(queue);
          connection.start();
-         BytesMessage receive = (BytesMessage) consumer.receive(5000);
+         ObjectMessage receive = (ObjectMessage) consumer.receive(5000);
          assertNotNull(receive);
-         byte[] bytes = new byte[(int) receive.getBodyLength()];
-         receive.readBytes(bytes);
-         ObjectInputStream ois = new ObjectInputStream(new ByteArrayInputStream(bytes));
-         list = (ArrayList) ois.readObject();
+         list = (ArrayList)receive.getObject();
          assertEquals(list.get(0), "aString");
          connection.close();
-      } catch (Exception e) {
-         e.printStackTrace();
       } finally {
          if (connection != null) {
             connection.close();

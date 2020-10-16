@@ -45,6 +45,7 @@ import org.apache.activemq.artemis.api.core.ActiveMQNonExistentQueueException;
 import org.apache.activemq.artemis.api.core.ActiveMQQueueExistsException;
 import org.apache.activemq.artemis.api.core.ActiveMQRemoteDisconnectException;
 import org.apache.activemq.artemis.api.core.ActiveMQSecurityException;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.client.ActiveMQClientLogger;
@@ -79,10 +80,12 @@ import org.apache.activemq.artemis.core.transaction.ResourceManager;
 import org.apache.activemq.artemis.core.transaction.Transaction;
 import org.apache.activemq.artemis.core.transaction.TransactionOperationAbstract;
 import org.apache.activemq.artemis.core.transaction.TransactionPropertyIndexes;
+import org.apache.activemq.artemis.logs.AuditLogger;
 import org.apache.activemq.artemis.spi.core.protocol.AbstractRemotingConnection;
 import org.apache.activemq.artemis.spi.core.protocol.ConnectionEntry;
 import org.apache.activemq.artemis.spi.core.remoting.Connection;
 import org.apache.activemq.artemis.utils.UUIDGenerator;
+import org.apache.activemq.artemis.utils.actors.Actor;
 import org.apache.activemq.artemis.utils.collections.ConcurrentHashSet;
 import org.apache.activemq.command.ActiveMQDestination;
 import org.apache.activemq.command.ActiveMQMessage;
@@ -191,6 +194,7 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
    private ConnectionEntry connectionEntry;
    private boolean useKeepAlive;
    private long maxInactivityDuration;
+   private Actor<Command> openWireActor;
 
    private final Set<SimpleString> knownDestinations = new ConcurrentHashSet<>();
 
@@ -234,6 +238,12 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
 
    // SecurityAuth implementation
    @Override
+   public String getSecurityDomain() {
+      return protocolManager.getSecurityDomain();
+   }
+
+   // SecurityAuth implementation
+   @Override
    public String getPassword() {
       ConnectionInfo info = getConnectionInfo();
       if (info == null) {
@@ -270,15 +280,34 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
    @Override
    public void bufferReceived(Object connectionID, ActiveMQBuffer buffer) {
       super.bufferReceived(connectionID, buffer);
+
       try {
-
-         recoverOperationContext();
-
          Command command = (Command) inWireFormat.unmarshal(buffer);
 
          // log the openwire command
          if (logger.isTraceEnabled()) {
             traceBufferReceived(connectionID, command);
+         }
+
+         if (openWireActor != null) {
+            openWireActor.act(command);
+         } else {
+            act(command);
+         }
+      } catch (Exception e) {
+         ActiveMQServerLogger.LOGGER.debug(e);
+         sendException(e);
+      }
+
+   }
+
+
+   private void act(Command command) {
+      try {
+         recoverOperationContext();
+
+         if (AuditLogger.isAnyLoggingEnabled()) {
+            AuditLogger.setRemoteAddress(getRemoteAddress());
          }
 
          boolean responseRequired = command.isResponseRequired();
@@ -734,11 +763,14 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
 
       createInternalSession(info);
 
+      // the actor can only be used after the WireFormat has been initialized with versioning
+      this.openWireActor = new Actor<>(executor, this::act);
+
       return context;
    }
 
    private void createInternalSession(ConnectionInfo info) throws Exception {
-      internalSession = server.createSession(UUIDGenerator.getInstance().generateStringUUID(), context.getUserName(), info.getPassword(), -1, this, true, false, false, false, null, null, true, operationContext, protocolManager.getPrefixes());
+      internalSession = server.createSession(UUIDGenerator.getInstance().generateStringUUID(), context.getUserName(), info.getPassword(), -1, this, true, false, false, false, null, null, true, operationContext, protocolManager.getPrefixes(), protocolManager.getSecurityDomain());
    }
 
    //raise the refCount of context
@@ -797,19 +829,19 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
       SimpleString qName = SimpleString.toSimpleString(dest.getPhysicalName());
       if (server.locateQueue(qName) == null) {
          AddressSettings addressSettings = server.getAddressSettingsRepository().getMatch(dest.getPhysicalName());
-         AddressInfo addressInfo = new AddressInfo(qName, dest.isTopic() ? RoutingType.MULTICAST : RoutingType.ANYCAST);
-         if (AdvisorySupport.isAdvisoryTopic(dest) && protocolManager.isSuppressInternalManagementObjects()) {
-            addressInfo.setInternal(true);
-         }
          if (dest.isQueue() && (addressSettings.isAutoCreateQueues() || dest.isTemporary())) {
             try {
-               internalSession.createQueue(addressInfo, qName, null, dest.isTemporary(), !dest.isTemporary(), !dest.isTemporary());
+               internalSession.createQueue(new QueueConfiguration(qName).setRoutingType(RoutingType.ANYCAST).setDurable(!dest.isTemporary()).setTemporary(dest.isTemporary()).setAutoCreated(!dest.isTemporary()));
                created = true;
             } catch (ActiveMQQueueExistsException exists) {
                // The queue may have been created by another thread in the mean time.  Catch and do nothing.
             }
          } else if (dest.isTopic() && (addressSettings.isAutoCreateAddresses() || dest.isTemporary())) {
             try {
+               AddressInfo addressInfo = new AddressInfo(qName, RoutingType.MULTICAST);
+               if (AdvisorySupport.isAdvisoryTopic(dest) && protocolManager.isSuppressInternalManagementObjects()) {
+                  addressInfo.setInternal(true);
+               }
                if (internalSession.getAddress(addressInfo.getName()) == null) {
                   internalSession.createAddress(addressInfo, !dest.isTemporary());
                   created = true;
@@ -821,9 +853,13 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
       }
 
       if (dest.isTemporary()) {
-         //Openwire needs to store the DestinationInfo in order to send
-         //Advisory messages to clients
-         this.state.addTempDestination(info);
+         //Openwire needs to store the DestinationInfo in order to send Advisory messages to clients
+         if (!tempDestinationExists(info.getDestination().getPhysicalName())) {
+            this.state.addTempDestination(info);
+            if (logger.isDebugEnabled()) {
+               logger.debug(this + " added temp destination to state: " + info.getDestination().getPhysicalName() + "; " + state.getTempDestinations().size());
+            }
+         }
       }
 
       if (created && !AdvisorySupport.isAdvisoryTopic(dest)) {
@@ -931,6 +967,9 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
    public void tempQueueDeleted(SimpleString bindingName) {
       ActiveMQDestination dest = new ActiveMQTempQueue(bindingName.toString());
       state.removeTempDestination(dest);
+      if (logger.isDebugEnabled()) {
+         logger.debug(this + " removed temp destination from state: " + bindingName + "; " + state.getTempDestinations().size());
+      }
 
       if (!AdvisorySupport.isAdvisoryTopic(dest)) {
          AMQConnectionContext context = getContext();
@@ -1028,6 +1067,12 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
 
    public void removeDestination(ActiveMQDestination dest) throws Exception {
       if (dest.isQueue()) {
+
+         if (!dest.isTemporary()) {
+            // this should not really happen,
+            // so I'm not creating a Logger for this
+            logger.warn("OpenWire client sending a queue remove towards " + dest.getPhysicalName());
+         }
          try {
             server.destroyQueue(new SimpleString(dest.getPhysicalName()), getRemotingConnection());
          } catch (ActiveMQNonExistentQueueException neq) {
@@ -1081,6 +1126,19 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
       for (ConsumerState consumerState : sessionState.getConsumerStates()) {
          consumerState.getInfo().setLastDeliveredSequenceId(lastDeliveredSequenceId);
       }
+   }
+
+   private boolean tempDestinationExists(String name) {
+      boolean result = false;
+
+      for (DestinationInfo destinationInfo : state.getTempDestinations()) {
+         if (destinationInfo.getDestination().getPhysicalName().equals(name)) {
+            result = true;
+            break;
+         }
+      }
+
+      return result;
    }
 
    CommandProcessor commandProcessorInstance = new CommandProcessor();
@@ -1166,6 +1224,16 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
 
       @Override
       public Response processRemoveProducer(ProducerId id) throws Exception {
+         ConnectionState cs = getState();
+         if (cs != null) {
+            SessionState ss = cs.getSessionState(id.getParentId());
+            if (ss != null) {
+               ss.removeProducer(id);
+            }
+         }
+         synchronized (producerExchanges) {
+            producerExchanges.remove(id);
+         }
          return null;
       }
 
@@ -1264,7 +1332,7 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
                      logger.trace("xarollback into " + tx + " sending tx back as it was suspended");
                   }
                   // Put it back
-                  resourceManager.putTransaction(xid, tx);
+                  resourceManager.putTransaction(xid, tx, OpenWireConnection.this);
                   XAException ex = new XAException("Cannot commit transaction, it is suspended " + xid);
                   ex.errorCode = XAException.XAER_PROTO;
                   throw ex;
@@ -1418,7 +1486,7 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
             } else {
                if (tx.getState() == Transaction.State.SUSPENDED) {
                   // Put it back
-                  resourceManager.putTransaction(xid, tx);
+                  resourceManager.putTransaction(xid, tx, OpenWireConnection.this);
                   XAException ex = new XAException("Cannot commit transaction, it is suspended " + xid);
                   ex.errorCode = XAException.XAER_PROTO;
                   throw ex;
@@ -1676,7 +1744,7 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
 
    }
 
-   private void recoverOperationContext() {
+   private void   recoverOperationContext() {
       server.getStorageManager().setContext(this.operationContext);
    }
 
@@ -1684,11 +1752,11 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
       server.getStorageManager().clearContext();
    }
 
-   private Transaction lookupTX(TransactionId txID, AMQSession session) throws IllegalStateException {
+   private Transaction lookupTX(TransactionId txID, AMQSession session) throws Exception {
       return lookupTX(txID, session, false);
    }
 
-   private Transaction lookupTX(TransactionId txID, AMQSession session, boolean remove) throws IllegalStateException {
+   private Transaction lookupTX(TransactionId txID, AMQSession session, boolean remove) throws Exception {
       if (txID == null) {
          return null;
       }
@@ -1697,7 +1765,7 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
       Transaction transaction;
       if (txID.isXATransaction()) {
          xid = OpenWireUtil.toXID(txID);
-         transaction = remove ? server.getResourceManager().removeTransaction(xid) : server.getResourceManager().getTransaction(xid);
+         transaction = remove ? server.getResourceManager().removeTransaction(xid, this) : server.getResourceManager().getTransaction(xid);
       } else {
          transaction = remove ? txMap.remove(txID) : txMap.get(txID);
       }

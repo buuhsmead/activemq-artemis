@@ -23,6 +23,7 @@ import javax.management.openmbean.CompositeData;
 import javax.management.openmbean.CompositeDataSupport;
 import javax.management.openmbean.TabularDataSupport;
 import javax.transaction.xa.XAResource;
+import javax.transaction.xa.Xid;
 import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
@@ -41,6 +42,7 @@ import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.JsonUtil;
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
@@ -72,8 +74,10 @@ import org.apache.activemq.artemis.tests.integration.jms.server.management.JMSUt
 import org.apache.activemq.artemis.tests.util.Wait;
 import org.apache.activemq.artemis.utils.Base64;
 import org.apache.activemq.artemis.utils.RandomUtil;
+import org.apache.activemq.artemis.utils.RetryRule;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -83,6 +87,9 @@ import static org.apache.activemq.artemis.core.management.impl.openmbean.Composi
 
 @RunWith(value = Parameterized.class)
 public class QueueControlTest extends ManagementTestBase {
+
+   @Rule
+   public RetryRule retryRule = new RetryRule(2);
 
    private ActiveMQServer server;
    private ClientSession session;
@@ -103,6 +110,126 @@ public class QueueControlTest extends ManagementTestBase {
       this.durable = durable;
    }
 
+   @Test
+   public void testGetPreparedTransactionMessageCount() throws Exception {
+      SimpleString address = RandomUtil.randomSimpleString();
+      SimpleString queue = RandomUtil.randomSimpleString();
+
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
+
+      ClientProducer producer = session.createProducer(address);
+
+      for (int i = 0; i < 10; i++) {
+         producer.send(session.createMessage(true));
+      }
+
+      producer.close();
+
+      ClientSession xaSession = locator.createSessionFactory().createXASession();
+
+      ClientConsumer consumer = xaSession.createConsumer(queue);
+
+      Xid xid = newXID();
+
+      xaSession.start(xid, XAResource.TMNOFLAGS);
+
+      xaSession.start();
+
+      for (int i = 0; i < 10; i++) {
+         ClientMessage receive = consumer.receive();
+         receive.acknowledge();
+      }
+
+      xaSession.end(xid, XAResource.TMSUCCESS);
+
+      xaSession.prepare(xid);
+
+      QueueControl queueControl = createManagementControl(address, queue);
+
+      int count = queueControl.getPreparedTransactionMessageCount();
+
+      Assert.assertEquals(10, count);
+
+      consumer.close();
+
+      session.deleteQueue(queue);
+   }
+
+   @Test
+   public void testGetPreparedTransactionMessageCountDifferentQueues() throws Exception {
+      SimpleString address = RandomUtil.randomSimpleString();
+      SimpleString address2 = RandomUtil.randomSimpleString();
+      SimpleString queue = RandomUtil.randomSimpleString();
+      SimpleString queue2 = RandomUtil.randomSimpleString();
+
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
+
+      session.createQueue(new QueueConfiguration(queue2).setAddress(address2).setDurable(durable));
+
+      ClientProducer producer = session.createProducer(address);
+      ClientProducer producer2 = session.createProducer(address2);
+
+      for (int i = 0; i < 10; i++) {
+         producer.send(session.createMessage(true));
+         producer2.send(session.createMessage(true));
+      }
+
+      producer.close();
+      producer2.close();
+
+      ClientSession xaSession = locator.createSessionFactory().createXASession();
+
+      ClientConsumer consumer = xaSession.createConsumer(queue);
+
+      ClientConsumer consumer2 = xaSession.createConsumer(queue2);
+
+      Xid xid = newXID();
+
+      xaSession.start(xid, XAResource.TMNOFLAGS);
+
+      xaSession.start();
+
+      for (int i = 0; i < 10; i++) {
+         ClientMessage receive = consumer.receive();
+         receive.acknowledge();
+         receive = consumer2.receive();
+         receive.acknowledge();
+      }
+
+      xaSession.end(xid, XAResource.TMSUCCESS);
+
+      xaSession.prepare(xid);
+
+      QueueControl queueControl = createManagementControl(address, queue);
+
+      int count = queueControl.getPreparedTransactionMessageCount();
+
+      Assert.assertEquals(10, count);
+
+      consumer.close();
+
+      consumer2.close();
+
+      session.deleteQueue(queue);
+
+      session.deleteQueue(queue2);
+   }
+
+   @Test
+   public void testGetPreparedTransactionMessageCountNoTX() throws Exception {
+      SimpleString address = RandomUtil.randomSimpleString();
+      SimpleString queue = RandomUtil.randomSimpleString();
+
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
+
+      QueueControl queueControl = createManagementControl(address, queue);
+
+      int count = queueControl.getPreparedTransactionMessageCount();
+
+      Assert.assertEquals(0, count);
+
+      session.deleteQueue(queue);
+   }
 
    @Test
    public void testAttributes() throws Exception {
@@ -110,7 +237,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString queue = RandomUtil.randomSimpleString();
       SimpleString filter = new SimpleString("color = 'blue'");
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, filter, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setFilterString(filter).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
       Assert.assertEquals(queue.toString(), queueControl.getName());
@@ -118,6 +245,21 @@ public class QueueControlTest extends ManagementTestBase {
       Assert.assertEquals(filter.toString(), queueControl.getFilter());
       Assert.assertEquals(durable, queueControl.isDurable());
       Assert.assertFalse(queueControl.isTemporary());
+
+      session.deleteQueue(queue);
+   }
+
+   @Test
+   public void testGroupAttributes() throws Exception {
+      SimpleString address = RandomUtil.randomSimpleString();
+      SimpleString queue = RandomUtil.randomSimpleString();
+
+      session.createQueue(address, RoutingType.MULTICAST, queue);
+
+      QueueControl queueControl = createManagementControl(address, queue);
+      Assert.assertFalse(queueControl.isGroupRebalance());
+      Assert.assertEquals(-1, queueControl.getGroupBuckets());
+      Assert.assertEquals(null, queueControl.getGroupFirstKey());
 
       session.deleteQueue(queue);
    }
@@ -131,8 +273,8 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString multicastQueue = ResourceNames.getRetroactiveResourceQueueName(internalNamingPrefix, delimiter, baseAddress, RoutingType.MULTICAST);
       SimpleString anycastQueue = ResourceNames.getRetroactiveResourceQueueName(internalNamingPrefix, delimiter, baseAddress, RoutingType.ANYCAST);
 
-      session.createQueue(address, RoutingType.MULTICAST, multicastQueue, null, durable);
-      session.createQueue(address, RoutingType.MULTICAST, anycastQueue, null, durable);
+      session.createQueue(new QueueConfiguration(multicastQueue).setAddress(address).setDurable(durable));
+      session.createQueue(new QueueConfiguration(anycastQueue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, multicastQueue);
       Assert.assertTrue(queueControl.isRetroactiveResource());
@@ -148,7 +290,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
       Assert.assertEquals(queue.toString(), queueControl.getName());
@@ -163,7 +305,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString queue = RandomUtil.randomSimpleString();
       final SimpleString deadLetterAddress = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
       Assert.assertNull(queueControl.getDeadLetterAddress());
@@ -188,7 +330,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString queue = RandomUtil.randomSimpleString();
       String deadLetterAddress = RandomUtil.randomString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
 
@@ -206,7 +348,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString queue = RandomUtil.randomSimpleString();
       final SimpleString expiryAddress = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
       Assert.assertNull(queueControl.getExpiryAddress());
@@ -231,7 +373,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString queue = RandomUtil.randomSimpleString();
       String expiryAddress = RandomUtil.randomString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
 
@@ -251,17 +393,17 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
 
       Assert.assertEquals(0, queueControl.getConsumerCount());
 
       ClientConsumer consumer = session.createConsumer(queue);
-      Assert.assertEquals(1, queueControl.getConsumerCount());
+      Wait.assertEquals(1, () -> queueControl.getConsumerCount());
 
       consumer.close();
-      Assert.assertEquals(0, queueControl.getConsumerCount());
+      Wait.assertEquals(0, () -> queueControl.getConsumerCount());
 
       session.deleteQueue(queue);
    }
@@ -271,16 +413,14 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
 
-      Assert.assertEquals(0, queueControl.getConsumerCount());
+      Wait.assertEquals(0, () -> queueControl.getConsumerCount());
 
       ClientConsumer consumer = session.createConsumer(queue);
-      Assert.assertEquals(1, queueControl.getConsumerCount());
-
-      System.out.println("Consumers: " + queueControl.listConsumersAsJSON());
+      Wait.assertEquals(1, () -> queueControl.getConsumerCount());
 
       JsonArray obj = JsonUtil.readJsonArray(queueControl.listConsumersAsJSON());
 
@@ -301,7 +441,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
       Assert.assertEquals(0, getMessageCount(queueControl));
@@ -322,7 +462,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
       Assert.assertEquals(0, getMessageCount(queueControl));
@@ -334,15 +474,11 @@ public class QueueControlTest extends ManagementTestBase {
       ClientProducer producer = session.createProducer(address);
       producer.send(session.createMessage(false).putStringProperty("x", "valueX").putStringProperty("y", "valueY"));
 
-      System.out.println("first:" + queueControl.getFirstMessageAsJSON());
-
       long firstMessageTimestamp = queueControl.getFirstMessageTimestamp();
-      System.out.println("first message timestamp: " + firstMessageTimestamp);
       assertTrue(beforeSend <= firstMessageTimestamp);
       assertTrue(firstMessageTimestamp <= System.currentTimeMillis());
 
       long firstMessageAge = queueControl.getFirstMessageAge();
-      System.out.println("first message age: " + firstMessageAge);
       assertTrue(firstMessageAge <= (System.currentTimeMillis() - firstMessageTimestamp));
 
       session.deleteQueue(queue);
@@ -353,16 +489,16 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
       Assert.assertEquals(0, getMessagesAdded(queueControl));
 
       ClientProducer producer = session.createProducer(address);
       producer.send(session.createMessage(durable));
-      Assert.assertEquals(1, getMessagesAdded(queueControl));
+      Wait.assertEquals(1, () -> getMessagesAdded(queueControl));
       producer.send(session.createMessage(durable));
-      Assert.assertEquals(2, getMessagesAdded(queueControl));
+      Wait.assertEquals(2, () -> getMessagesAdded(queueControl));
 
       consumeMessages(2, session, queue);
 
@@ -376,7 +512,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, false);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(false));
 
       QueueControl queueControl = createManagementControl(address, queue);
       Assert.assertEquals(0, queueControl.getMessagesAcknowledged());
@@ -384,10 +520,10 @@ public class QueueControlTest extends ManagementTestBase {
       ClientProducer producer = session.createProducer(address);
       producer.send(session.createMessage(false));
       consumeMessages(1, session, queue);
-      Assert.assertEquals(1, queueControl.getMessagesAcknowledged());
+      Wait.assertEquals(1, () -> queueControl.getMessagesAcknowledged());
       producer.send(session.createMessage(false));
       consumeMessages(1, session, queue);
-      Assert.assertEquals(2, queueControl.getMessagesAcknowledged());
+      Wait.assertEquals(2, () -> queueControl.getMessagesAcknowledged());
 
       //      ManagementTestBase.consumeMessages(2, session, queue);
 
@@ -401,7 +537,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
       Assert.assertEquals(0, queueControl.getMessagesAcknowledged());
@@ -447,7 +583,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
       Assert.assertEquals(0, queueControl.getMessagesAcknowledged());
@@ -488,7 +624,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
       Assert.assertEquals(0, queueControl.getScheduledCount());
@@ -536,7 +672,7 @@ public class QueueControlTest extends ManagementTestBase {
          SimpleString address = RandomUtil.randomSimpleString();
          queue = RandomUtil.randomSimpleString();
 
-         transSession.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+         transSession.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
          final QueueControl queueControl = createManagementControl(address, queue);
 
@@ -621,7 +757,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
       int intValue = RandomUtil.randomInt();
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       Queue srvqueue = server.locateQueue(queue);
 
@@ -649,8 +785,6 @@ public class QueueControlTest extends ManagementTestBase {
       assertEquals(2, srvqueue.getDeliveringCount());
       assertEquals(2, srvqueue.getConsumerCount());
 
-      System.out.println(queueControl.listDeliveringMessagesAsJSON());
-
       Map<String, Map<String, Object>[]> deliveringMap = queueControl.listDeliveringMessages();
       assertEquals(2, deliveringMap.size());
 
@@ -665,7 +799,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
       int intValue = RandomUtil.randomInt();
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       Queue srvqueue = server.locateQueue(queue);
 
@@ -689,8 +823,6 @@ public class QueueControlTest extends ManagementTestBase {
       consumer.close();
       assertEquals(1, srvqueue.getDeliveringCount());
 
-      System.out.println(queueControl.listDeliveringMessagesAsJSON());
-
       Map<String, Map<String, Object>[]> deliveringMap = queueControl.listDeliveringMessages();
       assertEquals(1, deliveringMap.size());
 
@@ -703,7 +835,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
       int intValue = RandomUtil.randomInt();
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
 
@@ -737,7 +869,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
       int intValue = RandomUtil.randomInt();
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
 
@@ -773,7 +905,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       ClientProducer producer = session.createProducer(address);
       producer.send(session.createMessage(durable));
@@ -809,7 +941,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString queue = RandomUtil.randomSimpleString();
 
       try {
-         session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+         session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
          for (int i = 0; i < THREAD_COUNT; i++) {
             producerExecutor.submit(() -> {
@@ -875,7 +1007,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
       int intValue = RandomUtil.randomInt();
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
 
@@ -912,7 +1044,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       QueueControl queueControl = createManagementControl(address, queue);
 
       ClientProducer producer = session.createProducer(address);
@@ -942,7 +1074,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       QueueControl queueControl = createManagementControl(address, queue);
 
       ClientProducer producer = session.createProducer(address);
@@ -963,7 +1095,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       QueueControl queueControl = createManagementControl(address, queue);
 
       ClientProducer producer = session.createProducer(address);
@@ -989,7 +1121,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       QueueControl queueControl = createManagementControl(address, queue);
 
       ClientProducer producer = session.createProducer(address);
@@ -1032,8 +1164,8 @@ public class QueueControlTest extends ManagementTestBase {
       AddressSettings addressSettings = new AddressSettings().setMaxDeliveryAttempts(1).setDeadLetterAddress(dla);
       server.getAddressSettingsRepository().addMatch(adName.toString(), addressSettings);
 
-      session.createQueue(dla, RoutingType.MULTICAST, dlq, null, durable);
-      session.createQueue(adName, RoutingType.MULTICAST, qName, null, durable);
+      session.createQueue(new QueueConfiguration(dlq).setAddress(dla).setDurable(durable));
+      session.createQueue(new QueueConfiguration(qName).setAddress(adName).setDurable(durable));
 
       // Send message to queue.
       ClientProducer producer = session.createProducer(adName);
@@ -1073,6 +1205,61 @@ public class QueueControlTest extends ManagementTestBase {
       clientConsumer.close();
    }
 
+   /**
+    * Test retry - get a message from auto-created DLA/DLQ and put on original queue.
+    */
+   @Test
+   public void testRetryMessageWithAutoCreatedResources() throws Exception {
+      final SimpleString dla = new SimpleString("DLA");
+      final SimpleString qName = new SimpleString("q1");
+      final SimpleString adName = new SimpleString("ad1");
+      final String sampleText = "Put me on DLQ";
+
+      AddressSettings addressSettings = server.getAddressSettingsRepository().getMatch(adName.toString());
+      final SimpleString dlq = addressSettings.getDeadLetterQueuePrefix().concat(adName).concat(addressSettings.getDeadLetterQueueSuffix());
+
+      server.getAddressSettingsRepository().addMatch(adName.toString(), new AddressSettings().setMaxDeliveryAttempts(1).setDeadLetterAddress(dla).setAutoCreateDeadLetterResources(true));
+
+      session.createQueue(new QueueConfiguration(qName).setAddress(adName).setDurable(durable));
+
+      // Send message to queue.
+      ClientProducer producer = session.createProducer(adName);
+      producer.send(createTextMessage(session, sampleText));
+      session.start();
+
+      ClientConsumer clientConsumer = session.createConsumer(qName);
+      ClientMessage clientMessage = clientConsumer.receive(500);
+      clientMessage.acknowledge();
+      Assert.assertNotNull(clientMessage);
+
+      Assert.assertEquals(clientMessage.getBodyBuffer().readString(), sampleText);
+
+      // force a rollback to DLQ
+      session.rollback();
+      clientMessage = clientConsumer.receiveImmediate();
+      Assert.assertNull(clientMessage);
+
+      QueueControl queueControl = createManagementControl(dla, dlq);
+      assertMessageMetrics(queueControl, 1, true);
+      final long messageID = getFirstMessageId(queueControl);
+
+      // Retry the message - i.e. it should go from DLQ to original Queue.
+      Assert.assertTrue(queueControl.retryMessage(messageID));
+
+      // Assert DLQ is empty...
+      Assert.assertEquals(0, getMessageCount(queueControl));
+      assertMessageMetrics(queueControl, 0, durable);
+
+      // .. and that the message is now on the original queue once more.
+      clientMessage = clientConsumer.receive(500);
+      clientMessage.acknowledge();
+      Assert.assertNotNull(clientMessage);
+
+      Assert.assertEquals(sampleText, clientMessage.getBodyBuffer().readString());
+
+      clientConsumer.close();
+   }
+
    @Test
    public void testRetryMessageWithoutDLQ() throws Exception {
       final SimpleString qName = new SimpleString("q1");
@@ -1081,8 +1268,8 @@ public class QueueControlTest extends ManagementTestBase {
       final SimpleString adName2 = new SimpleString("ad2");
       final String sampleText = "Put me on DLQ";
 
-      session.createQueue(adName, RoutingType.MULTICAST, qName, null, durable);
-      session.createQueue(adName2, RoutingType.MULTICAST, qName2, null, durable);
+      session.createQueue(new QueueConfiguration(qName).setAddress(adName).setDurable(durable));
+      session.createQueue(new QueueConfiguration(qName2).setAddress(adName2).setDurable(durable));
 
       // Send message to queue.
       ClientProducer producer = session.createProducer(adName);
@@ -1140,8 +1327,8 @@ public class QueueControlTest extends ManagementTestBase {
       server.getAddressSettingsRepository().addMatch(forwardingAddress.toString(), addressSettings);
 
       // create target queue, DLQ and source topic
-      session.createQueue(dla, RoutingType.MULTICAST, dlq, null, durable);
-      session.createQueue(forwardingAddress, RoutingType.MULTICAST, forwardingQueue, null, durable);
+      session.createQueue(new QueueConfiguration(dlq).setAddress(dla).setDurable(durable));
+      session.createQueue(new QueueConfiguration(forwardingQueue).setAddress(forwardingAddress).setDurable(durable));
       session.createAddress(myTopic, RoutingType.MULTICAST, false);
 
       DivertConfiguration divert = new DivertConfiguration().setName("local-divert")
@@ -1202,8 +1389,8 @@ public class QueueControlTest extends ManagementTestBase {
       AddressSettings addressSettings = new AddressSettings().setMaxDeliveryAttempts(1).setDeadLetterAddress(dla);
       server.getAddressSettingsRepository().addMatch(adName.toString(), addressSettings);
 
-      session.createQueue(dla, RoutingType.MULTICAST, dlq, null, durable);
-      session.createQueue(adName, RoutingType.MULTICAST, qName, null, durable);
+      session.createQueue(new QueueConfiguration(dlq).setAddress(dla).setDurable(durable));
+      session.createQueue(new QueueConfiguration(qName).setAddress(adName).setDurable(durable));
 
       // Send message to queue.
       ClientProducer producer = session.createProducer(adName);
@@ -1288,8 +1475,8 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString otherAddress = RandomUtil.randomSimpleString();
       SimpleString otherQueue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
-      session.createQueue(otherAddress, RoutingType.MULTICAST, otherQueue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
+      session.createQueue(new QueueConfiguration(otherQueue).setAddress(otherAddress).setDurable(durable));
       ClientProducer producer = session.createProducer(address);
 
       // send on queue
@@ -1343,9 +1530,9 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString queueB = new SimpleString("B");
       SimpleString queueC = new SimpleString("C");
 
-      server.createQueue(address, RoutingType.MULTICAST, queueA, null, durable, false);
-      server.createQueue(address, RoutingType.MULTICAST, queueB, null, durable, false);
-      server.createQueue(address, RoutingType.MULTICAST, queueC, null, durable, false);
+      server.createQueue(new QueueConfiguration(queueA).setAddress(address).setDurable(durable));
+      server.createQueue(new QueueConfiguration(queueB).setAddress(address).setDurable(durable));
+      server.createQueue(new QueueConfiguration(queueC).setAddress(address).setDurable(durable));
 
 
       QueueControl queueControlA = createManagementControl(address, queueA);
@@ -1406,7 +1593,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString queue = RandomUtil.randomSimpleString();
       SimpleString unknownQueue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       ClientProducer producer = session.createProducer(address);
 
       // send on queue
@@ -1452,8 +1639,8 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString otherAddress = RandomUtil.randomSimpleString();
       SimpleString otherQueue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
-      session.createQueue(otherAddress, RoutingType.MULTICAST,otherQueue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
+      session.createQueue(new QueueConfiguration(otherQueue).setAddress(otherAddress).setDurable(durable));
       ClientProducer producer = session.createProducer(address);
 
       // send on queue
@@ -1499,8 +1686,8 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString otherAddress = RandomUtil.randomSimpleString();
       SimpleString otherQueue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
-      session.createQueue(otherAddress, RoutingType.MULTICAST, otherQueue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
+      session.createQueue(new QueueConfiguration(otherQueue).setAddress(otherAddress).setDurable(durable));
       ClientProducer producer = session.createProducer(address);
 
       // send 2 messages on queue
@@ -1552,9 +1739,9 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString otherQueue1 = new SimpleString("child.queue.1");
       SimpleString otherQueue2 = new SimpleString("child.queue.2");
 
-      session.createQueue(address, RoutingType.ANYCAST, queue, null, durable);
-      session.createQueue(otherAddress, RoutingType.MULTICAST, otherQueue1, null, durable);
-      session.createQueue(otherAddress, RoutingType.MULTICAST, otherQueue2, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setRoutingType(RoutingType.ANYCAST).setDurable(durable));
+      session.createQueue(new QueueConfiguration(otherQueue1).setAddress(otherAddress).setDurable(durable));
+      session.createQueue(new QueueConfiguration(otherQueue2).setAddress(otherAddress).setDurable(durable));
       ClientProducer producer = session.createProducer(address);
 
       producer.send(session.createMessage(durable));
@@ -1592,7 +1779,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString queue = RandomUtil.randomSimpleString();
       SimpleString unknownQueue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       ClientProducer producer = session.createProducer(address);
 
       // send 2 messages on queue
@@ -1619,6 +1806,47 @@ public class QueueControlTest extends ManagementTestBase {
       session.deleteQueue(queue);
    }
 
+   @Test
+   public void testCopiedMessageProperties() throws Exception {
+      final String testAddress = "testAddress";
+      final SimpleString queue = SimpleString.toSimpleString("queue");
+      final int COUNT = 5;
+
+      for (int i = 0; i < COUNT; i++) {
+         server.createQueue(new QueueConfiguration(queue.concat(Integer.toString(i))).setAddress(testAddress + i).setRoutingType(RoutingType.ANYCAST));
+      }
+
+      ServerLocator locator = createInVMNonHALocator();
+      ClientSessionFactory sf = createSessionFactory(locator);
+      ClientSession session = sf.createSession(false, true, true);
+      session.start();
+
+      ClientProducer producer = session.createProducer(new SimpleString(testAddress + "0"));
+      ClientMessage message = session.createMessage(durable);
+      producer.send(message);
+      producer.close();
+
+      for (int i = 0; i < COUNT - 1; i++) {
+         QueueControl queueControl = createManagementControl(SimpleString.toSimpleString(testAddress + i), queue.concat(Integer.toString(i)), RoutingType.ANYCAST);
+         QueueControl otherQueueControl = createManagementControl(SimpleString.toSimpleString(testAddress + (i + 1)), queue.concat(Integer.toString(i + 1)), RoutingType.ANYCAST);
+         assertMessageMetrics(queueControl, 1, durable);
+         assertMessageMetrics(otherQueueControl, 0, durable);
+
+         int moved = queueControl.moveMessages(null, queue.concat(Integer.toString(i + 1)).toString());
+         Assert.assertEquals(1, moved);
+         assertMessageMetrics(queueControl, 0, durable);
+         assertMessageMetrics(otherQueueControl, 1, durable);
+      }
+
+      ClientConsumer consumer1 = session.createConsumer(queue.concat(Integer.toString(COUNT - 1)));
+      message = consumer1.receive(1000);
+      Assert.assertNotNull(message);
+      message.acknowledge();
+      System.out.println(message);
+      Assert.assertEquals(testAddress + (COUNT - 1), message.getAddress());
+      Assert.assertEquals(testAddress + (COUNT - 2), message.getStringProperty(Message.HDR_ORIGINAL_ADDRESS));
+   }
+
    /**
     * <ol>
     * <li>send 2 message to queue</li>
@@ -1636,7 +1864,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       ClientProducer producer = session.createProducer(address);
 
       // send on queue
@@ -1680,7 +1908,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       ClientProducer producer = session.createProducer(address);
 
       // send on queue
@@ -1720,7 +1948,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       ClientProducer producer = session.createProducer(address);
 
       // send on queue
@@ -1743,7 +1971,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       ClientProducer producer = session.createProducer(address);
 
       // send on queue
@@ -1775,7 +2003,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queueName = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queueName, null, durable);
+      session.createQueue(new QueueConfiguration(queueName).setAddress(address).setDurable(durable));
 
       Queue queue = server.locateQueue(queueName);
       Assert.assertFalse(queue.getPageSubscription().isPaging());
@@ -1823,7 +2051,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       ClientProducer producer = session.createProducer(address);
 
       // send on queue
@@ -1846,7 +2074,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       ClientProducer producer = session.createProducer(address);
 
       // send 2 messages on queue
@@ -1877,7 +2105,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       ClientProducer producer = session.createProducer(address);
 
       // send 2 messages on queue, both scheduled
@@ -1917,7 +2145,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       ClientProducer producer = session.createProducer(address);
 
       // send messages on queue
@@ -1969,7 +2197,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, queue, null, false);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(false));
       ClientProducer producer = session.createProducer(address);
 
       ClientMessage matchingMessage = session.createMessage(false);
@@ -2005,7 +2233,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, queue, null, false);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(false));
       ClientProducer producer = session.createProducer(address);
 
       ClientMessage matchingMessage = session.createMessage(false);
@@ -2037,7 +2265,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, queue, null, false);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(false));
       ClientProducer producer = session.createProducer(address);
 
       ClientMessage matchingMessage = session.createMessage(false);
@@ -2075,7 +2303,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, queue, null, false);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(false));
       ClientProducer producer = session.createProducer(address);
 
       ClientMessage message1 = session.createMessage(false);
@@ -2114,7 +2342,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, queue, null, false);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(false));
       ClientProducer producer = session.createProducer(address);
 
       ClientMessage message1 = session.createMessage(false);
@@ -2154,7 +2382,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       ClientProducer producer = session.createProducer(address);
 
       // send on queue
@@ -2185,7 +2413,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       ClientProducer producer = session.createProducer(address);
 
       // send on queue
@@ -2232,7 +2460,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, queue, null, false);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(false));
       ClientProducer producer = session.createProducer(address);
 
       for (int i = 0; i < 100; i++) {
@@ -2265,7 +2493,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, queue, null, false);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(false));
       ClientProducer producer = session.createProducer(address);
 
       for (int i = 0; i < 100; i++) {
@@ -2292,7 +2520,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       ClientProducer producer = session.createProducer(address);
 
       // send on queue
@@ -2334,8 +2562,8 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString expiryAddress = RandomUtil.randomSimpleString();
       SimpleString expiryQueue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
-      session.createQueue(expiryAddress, RoutingType.MULTICAST, expiryQueue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
+      session.createQueue(new QueueConfiguration(expiryQueue).setAddress(expiryAddress).setDurable(durable));
       ClientProducer producer = session.createProducer(address);
 
       // send on queue
@@ -2375,8 +2603,8 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString deadLetterAddress = RandomUtil.randomSimpleString();
       SimpleString deadLetterQueue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
-      session.createQueue(deadLetterAddress, RoutingType.MULTICAST, deadLetterQueue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
+      session.createQueue(new QueueConfiguration(deadLetterQueue).setAddress(deadLetterAddress).setDurable(durable));
       ClientProducer producer = session.createProducer(address);
 
       // send 2 messages on queue
@@ -2420,7 +2648,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       ClientProducer producer = session.createProducer(address);
 
       ClientMessage message = session.createMessage(durable);
@@ -2454,7 +2682,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       ClientProducer producer = session.createProducer(address);
 
       ClientMessage message = session.createMessage(durable);
@@ -2488,12 +2716,12 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       QueueControl queueControl = createManagementControl(address, queue);
 
       ActiveMQServerControl serverControl = ManagementControlHelper.createActiveMQServerControl(mbeanServer);
       serverControl.enableMessageCounters();
-      serverControl.setMessageCounterSamplePeriod(100);
+      serverControl.setMessageCounterSamplePeriod(99999);
 
       String jsonString = queueControl.listMessageCounter();
       MessageCounterInfo info = MessageCounterInfo.fromJSON(jsonString);
@@ -2503,34 +2731,44 @@ public class QueueControlTest extends ManagementTestBase {
 
       ClientProducer producer = session.createProducer(address);
       producer.send(session.createMessage(durable));
+      Wait.assertTrue(() -> server.locateQueue(queue).getMessageCount() == 1);
 
-      Thread.sleep(200);
+      ((MessageCounterManagerImpl)server.getManagementService().getMessageCounterManager()).getMessageCounter(queue.toString()).onTimer();
+      Thread.sleep(50);
       jsonString = queueControl.listMessageCounter();
       info = MessageCounterInfo.fromJSON(jsonString);
       Assert.assertEquals(1, info.getDepth());
       Assert.assertEquals(1, info.getDepthDelta());
       Assert.assertEquals(1, info.getCount());
       Assert.assertEquals(1, info.getCountDelta());
+      Assert.assertEquals(info.getUpdateTimestamp(), info.getLastAddTimestamp());
+      Assert.assertTrue(info.getLastAckTimestamp().contains("12/31/69")); // no acks received yet
 
       producer.send(session.createMessage(durable));
+      Wait.assertTrue(() -> server.locateQueue(queue).getMessageCount() == 2);
 
-      Thread.sleep(200);
+      ((MessageCounterManagerImpl)server.getManagementService().getMessageCounterManager()).getMessageCounter(queue.toString()).onTimer();
+      Thread.sleep(50);
       jsonString = queueControl.listMessageCounter();
       info = MessageCounterInfo.fromJSON(jsonString);
       Assert.assertEquals(2, info.getDepth());
       Assert.assertEquals(1, info.getDepthDelta());
       Assert.assertEquals(2, info.getCount());
       Assert.assertEquals(1, info.getCountDelta());
+      Assert.assertEquals(info.getUpdateTimestamp(), info.getLastAddTimestamp());
+      Assert.assertTrue(info.getLastAckTimestamp().contains("12/31/69")); // no acks received yet
 
       consumeMessages(2, session, queue);
 
-      Thread.sleep(200);
+      ((MessageCounterManagerImpl)server.getManagementService().getMessageCounterManager()).getMessageCounter(queue.toString()).onTimer();
+      Thread.sleep(50);
       jsonString = queueControl.listMessageCounter();
       info = MessageCounterInfo.fromJSON(jsonString);
       Assert.assertEquals(0, info.getDepth());
       Assert.assertEquals(-2, info.getDepthDelta());
       Assert.assertEquals(2, info.getCount());
       Assert.assertEquals(0, info.getCountDelta());
+      Assert.assertEquals(info.getUpdateTimestamp(), info.getLastAckTimestamp());
 
       session.deleteQueue(queue);
    }
@@ -2540,7 +2778,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       QueueControl queueControl = createManagementControl(address, queue);
 
       ActiveMQServerControl serverControl = ManagementControlHelper.createActiveMQServerControl(mbeanServer);
@@ -2592,7 +2830,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       QueueControl queueControl = createManagementControl(address, queue);
 
       String history = queueControl.listMessageCounterAsHTML();
@@ -2607,7 +2845,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       QueueControl queueControl = createManagementControl(address, queue);
 
       ActiveMQServerControl serverControl = ManagementControlHelper.createActiveMQServerControl(mbeanServer);
@@ -2627,7 +2865,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
       QueueControl queueControl = createManagementControl(address, queue);
 
       ActiveMQServerControl serverControl = ManagementControlHelper.createActiveMQServerControl(mbeanServer);
@@ -2643,8 +2881,8 @@ public class QueueControlTest extends ManagementTestBase {
 
    @Test
    public void testMoveMessagesBack() throws Exception {
-      server.createQueue(new SimpleString("q1"), RoutingType.MULTICAST, new SimpleString("q1"), null, durable, false);
-      server.createQueue(new SimpleString("q2"), RoutingType.MULTICAST, new SimpleString("q2"), null, durable, false);
+      server.createQueue(new QueueConfiguration(new SimpleString("q1")).setRoutingType(RoutingType.MULTICAST).setDurable(durable));
+      server.createQueue(new QueueConfiguration(new SimpleString("q2")).setRoutingType(RoutingType.MULTICAST).setDurable(durable));
 
       ServerLocator locator = createInVMNonHALocator();
 
@@ -2707,8 +2945,8 @@ public class QueueControlTest extends ManagementTestBase {
 
    @Test
    public void testMoveMessagesBack2() throws Exception {
-      server.createQueue(new SimpleString("q1"), RoutingType.MULTICAST, new SimpleString("q1"), null, durable, false);
-      server.createQueue(new SimpleString("q2"), RoutingType.MULTICAST, new SimpleString("q2"), null, durable, false);
+      server.createQueue(new QueueConfiguration(new SimpleString("q1")).setRoutingType(RoutingType.MULTICAST).setDurable(durable));
+      server.createQueue(new QueueConfiguration(new SimpleString("q2")).setRoutingType(RoutingType.MULTICAST).setDurable(durable));
 
       ServerLocator locator = createInVMNonHALocator();
 
@@ -2785,7 +3023,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString queue = RandomUtil.randomSimpleString();
 
       try {
-         session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+         session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
          QueueControl queueControl = createManagementControl(address, queue);
 
          ActiveMQServerControl serverControl = ManagementControlHelper.createActiveMQServerControl(mbeanServer);
@@ -2806,7 +3044,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
       Assert.assertEquals(0, getMessagesAdded(queueControl));
@@ -2833,7 +3071,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
       Assert.assertEquals(0, queueControl.getMessagesAcknowledged());
@@ -2858,7 +3096,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
       Assert.assertEquals(0, queueControl.getMessagesExpired());
@@ -2903,7 +3141,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
       Assert.assertEquals(0, queueControl.getMessagesExpired());
@@ -2954,31 +3192,27 @@ public class QueueControlTest extends ManagementTestBase {
 
       SimpleString testQueueName = new SimpleString("newQueue");
       String testQueueName2 = "newQueue2";
-      this.server.createQueue(testQueueName, RoutingType.MULTICAST, testQueueName, null, durable, false);
+      this.server.createQueue(new QueueConfiguration(testQueueName).setDurable(durable));
 
       Notification notif = listener.getNotification();
 
-      System.out.println("got notif: " + notif);
       assertEquals(CoreNotificationType.BINDING_ADDED.toString(), notif.getType());
 
       this.server.destroyQueue(testQueueName);
 
       notif = listener.getNotification();
-      System.out.println("got notif: " + notif);
       assertEquals(CoreNotificationType.BINDING_REMOVED.toString(), notif.getType());
 
       ActiveMQServerControl control = ManagementControlHelper.createActiveMQServerControl(mbeanServer);
 
-      control.createQueue(testQueueName2, testQueueName2, RoutingType.MULTICAST.toString());
+      control.createQueue(new QueueConfiguration(testQueueName2).setRoutingType(RoutingType.MULTICAST).toJSON());
 
       notif = listener.getNotification();
-      System.out.println("got notif: " + notif);
       assertEquals(CoreNotificationType.BINDING_ADDED.toString(), notif.getType());
 
       control.destroyQueue(testQueueName2);
 
       notif = listener.getNotification();
-      System.out.println("got notif: " + notif);
       assertEquals(CoreNotificationType.BINDING_REMOVED.toString(), notif.getType());
    }
 
@@ -2987,7 +3221,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
 
@@ -3019,7 +3253,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
 
@@ -3060,7 +3294,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
 
@@ -3069,7 +3303,7 @@ public class QueueControlTest extends ManagementTestBase {
       consumer.setMessageHandler(new MessageHandler() {
          @Override
          public void onMessage(ClientMessage message) {
-            System.out.println(message);
+            instanceLog.debug(message);
          }
       });
       session.start();
@@ -3103,7 +3337,7 @@ public class QueueControlTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, RoutingType.MULTICAST, queue, null, durable);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
 
       QueueControl queueControl = createManagementControl(address, queue);
       Assert.assertEquals(0, queueControl.getScheduledCount());

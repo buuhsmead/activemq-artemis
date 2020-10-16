@@ -93,13 +93,17 @@ import io.netty.handler.codec.http.LastHttpContent;
 import io.netty.handler.codec.http.cookie.ClientCookieDecoder;
 import io.netty.handler.codec.http.cookie.Cookie;
 import io.netty.handler.ssl.SslContext;
+import io.netty.handler.codec.socksx.SocksVersion;
+import io.netty.handler.proxy.ProxyHandler;
+import io.netty.handler.proxy.Socks4ProxyHandler;
+import io.netty.handler.proxy.Socks5ProxyHandler;
 import io.netty.handler.ssl.SslHandler;
+import io.netty.resolver.NoopAddressResolverGroup;
 import io.netty.util.AttributeKey;
 import io.netty.util.ResourceLeakDetector;
 import io.netty.util.ResourceLeakDetector.Level;
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.GlobalEventExecutor;
-import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.core.client.ActiveMQClientLogger;
 import org.apache.activemq.artemis.core.client.ActiveMQClientMessageBundle;
@@ -118,6 +122,9 @@ import org.apache.activemq.artemis.utils.IPV6Util;
 import org.jboss.logging.Logger;
 
 import static org.apache.activemq.artemis.utils.Base64.encodeBytes;
+
+import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
+import org.apache.activemq.artemis.spi.core.remoting.ssl.SSLContextFactoryProvider;
 
 public class NettyConnector extends AbstractConnector {
 
@@ -191,6 +198,20 @@ public class NettyConnector extends AbstractConnector {
    // a HTTP GET request (+ Upgrade: activemq-remoting) that
    // will be handled by the server's http server.
    private boolean httpUpgradeEnabled;
+
+   private boolean proxyEnabled;
+
+   private String proxyHost;
+
+   private int proxyPort;
+
+   private SocksVersion proxyVersion;
+
+   private String proxyUsername;
+
+   private String proxyPassword;
+
+   private boolean proxyRemoteDNS;
 
    private boolean useServlet;
 
@@ -325,6 +346,20 @@ public class NettyConnector extends AbstractConnector {
       }
 
       httpUpgradeEnabled = ConfigurationHelper.getBooleanProperty(TransportConstants.HTTP_UPGRADE_ENABLED_PROP_NAME, TransportConstants.DEFAULT_HTTP_UPGRADE_ENABLED, configuration);
+
+      proxyEnabled = ConfigurationHelper.getBooleanProperty(TransportConstants.PROXY_ENABLED_PROP_NAME, TransportConstants.DEFAULT_PROXY_ENABLED, configuration);
+      if (proxyEnabled) {
+         proxyHost = ConfigurationHelper.getStringProperty(TransportConstants.PROXY_HOST_PROP_NAME, TransportConstants.DEFAULT_PROXY_HOST, configuration);
+         proxyPort = ConfigurationHelper.getIntProperty(TransportConstants.PROXY_PORT_PROP_NAME, TransportConstants.DEFAULT_PROXY_PORT, configuration);
+
+         int socksVersionNumber = ConfigurationHelper.getIntProperty(TransportConstants.PROXY_VERSION_PROP_NAME, TransportConstants.DEFAULT_PROXY_VERSION, configuration);
+         proxyVersion = SocksVersion.valueOf((byte) socksVersionNumber);
+
+         proxyUsername = ConfigurationHelper.getStringProperty(TransportConstants.PROXY_USERNAME_PROP_NAME, TransportConstants.DEFAULT_PROXY_USERNAME, configuration);
+         proxyPassword = ConfigurationHelper.getStringProperty(TransportConstants.PROXY_PASSWORD_PROP_NAME, TransportConstants.DEFAULT_PROXY_PASSWORD, configuration);
+
+         proxyRemoteDNS = ConfigurationHelper.getBooleanProperty(TransportConstants.PROXY_REMOTE_DNS_PROP_NAME, TransportConstants.DEFAULT_PROXY_REMOTE_DNS, configuration);
+      }
 
       remotingThreads = ConfigurationHelper.getIntProperty(TransportConstants.NIO_REMOTING_THREADS_PROPNAME, -1, configuration);
       remotingThreads = ConfigurationHelper.getIntProperty(TransportConstants.REMOTING_THREADS_PROPNAME, remotingThreads, configuration);
@@ -533,6 +568,30 @@ public class NettyConnector extends AbstractConnector {
          @Override
          public void initChannel(Channel channel) throws Exception {
             final ChannelPipeline pipeline = channel.pipeline();
+
+            if (proxyEnabled && (proxyRemoteDNS || !isTargetLocalHost())) {
+               InetSocketAddress proxyAddress = new InetSocketAddress(proxyHost, proxyPort);
+               ProxyHandler proxyHandler;
+               switch (proxyVersion) {
+                  case SOCKS5:
+                     proxyHandler = new Socks5ProxyHandler(proxyAddress, proxyUsername, proxyPassword);
+                     break;
+                  case SOCKS4a:
+                     proxyHandler = new Socks4ProxyHandler(proxyAddress, proxyUsername);
+                     break;
+                  default:
+                     throw new IllegalArgumentException("Unknown SOCKS proxy version");
+               }
+
+               channel.pipeline().addLast(proxyHandler);
+
+               logger.debug("Using a SOCKS proxy at " + proxyHost + ":" + proxyPort);
+
+               if (proxyRemoteDNS) {
+                  bootstrap.resolver(NoopAddressResolverGroup.INSTANCE);
+               }
+            }
+
             if (sslEnabled && !useServlet) {
 
                SSLEngine engine;
@@ -626,22 +685,10 @@ public class NettyConnector extends AbstractConnector {
                                       String truststoreProvider,
                                       String truststorePath,
                                       String truststorePassword) throws Exception {
-      SSLContext context;
-      if (useDefaultSslContext) {
-         context = SSLContext.getDefault();
-      } else {
-         context = new SSLSupport()
-            .setKeystoreProvider(keystoreProvider)
-            .setKeystorePath(keystorePath)
-            .setKeystorePassword(keystorePassword)
-            .setTruststoreProvider(truststoreProvider)
-            .setTruststorePath(truststorePath)
-            .setTruststorePassword(truststorePassword)
-            .setTrustAll(trustAll)
-            .setCrlPath(crlPath)
-            .setTrustManagerFactoryPlugin(trustManagerFactoryPlugin)
-            .createContext();
-      }
+      SSLContext context = SSLContextFactoryProvider.getSSLContextFactory().getSSLContext(configuration,
+              keystoreProvider, keystorePath, keystorePassword,
+           truststoreProvider, truststorePath, truststorePassword,
+           crlPath, trustManagerFactoryPlugin, trustAll);
       Subject subject = null;
       if (kerb5Config != null) {
          LoginContext loginContext = new LoginContext(kerb5Config);
@@ -762,7 +809,12 @@ public class NettyConnector extends AbstractConnector {
          return null;
       }
 
-      InetSocketAddress remoteDestination = new InetSocketAddress(IPV6Util.stripBracketsAndZoneID(host), port);
+      InetSocketAddress remoteDestination;
+      if (proxyEnabled && proxyRemoteDNS) {
+         remoteDestination = InetSocketAddress.createUnresolved(IPV6Util.stripBracketsAndZoneID(host), port);
+      } else {
+         remoteDestination = new InetSocketAddress(IPV6Util.stripBracketsAndZoneID(host), port);
+      }
 
       logger.debug("Remote destination: " + remoteDestination);
 
@@ -1226,6 +1278,16 @@ public class NettyConnector extends AbstractConnector {
       }
 
       return result;
+   }
+
+   private boolean isTargetLocalHost() {
+      try {
+         InetAddress address = InetAddress.getByName(host);
+         return address.isLoopbackAddress();
+      } catch (UnknownHostException e) {
+         ActiveMQClientLogger.LOGGER.error("Cannot resolve host", e);
+      }
+      return false;
    }
 
    @Override

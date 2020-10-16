@@ -25,6 +25,8 @@ import java.util.Map;
 public interface AddressControl {
    String ROUTED_MESSAGE_COUNT_DESCRIPTION = "number of messages routed to one or more bindings";
    String UNROUTED_MESSAGE_COUNT_DESCRIPTION = "number of messages not routed to any bindings";
+   String ADDRESS_SIZE_DESCRIPTION = "the number of estimated bytes being used by all the queue(s) bound to this address; used to control paging and blocking";
+   String NUMBER_OF_PAGES_DESCRIPTION = "number of pages used by this address";
 
    /**
     * Returns the managed address.
@@ -60,10 +62,10 @@ public interface AddressControl {
    String getRolesAsJSON() throws Exception;
 
    /**
-    * Returns the number of estimated bytes being used by the queue(s), used to control paging and blocking.
+    * Returns the number of estimated bytes being used by all the queue(s) bound to this address; used to control paging and blocking.
     */
-   @Attribute(desc = "the number of estimated bytes being used by the queue(s), used to control paging and blocking")
-   long getAddressSize() throws Exception;
+   @Attribute(desc = ADDRESS_SIZE_DESCRIPTION)
+   long getAddressSize();
 
    /**
     * Returns the sum of messages on queue(s), including messages in delivery.
@@ -72,16 +74,28 @@ public interface AddressControl {
    long getNumberOfMessages() throws Exception;
 
    /**
-    * Returns the names of the queues bound to this address.
+    * Returns the names of the remote queue(s) bound to this address.
     */
-   @Attribute(desc = "names of the queue(s) bound to this address")
+   @Attribute(desc = "names of the remote queue(s) bound to this address")
+   String[] getRemoteQueueNames() throws Exception;
+
+   /**
+    * Returns the names of the local queue(s) bound to this address.
+    */
+   @Attribute(desc = "names of the local queue(s) bound to this address")
    String[] getQueueNames() throws Exception;
+
+   /**
+    * Returns the names of both the local and remote queue(s) bound to this address.
+    */
+   @Attribute(desc = "names of both the local & remote queue(s) bound to this address")
+   String[] getAllQueueNames() throws Exception;
 
    /**
     * Returns the number of pages used by this address.
     */
-   @Attribute(desc = "number of pages used by this address")
-   int getNumberOfPages() throws Exception;
+   @Attribute(desc = NUMBER_OF_PAGES_DESCRIPTION)
+   int getNumberOfPages();
 
    /**
     * Returns whether this address is paging.
@@ -164,5 +178,11 @@ public interface AddressControl {
 
    @Attribute(desc = "whether this address is used for a retroactive address")
    boolean isRetroactiveResource();
+
+   @Attribute(desc = "the size of the duplicate ID cache for this address")
+   long getCurrentDuplicateIdCacheSize();
+
+   @Attribute(desc = "clear the duplicate ID cache for this address both from memory and from the journal")
+   boolean clearDuplicateIdCache() throws Exception;
 
 }

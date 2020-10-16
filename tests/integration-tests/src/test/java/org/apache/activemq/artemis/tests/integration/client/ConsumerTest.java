@@ -20,6 +20,8 @@ import javax.jms.BytesMessage;
 import javax.jms.Connection;
 import javax.jms.ConnectionFactory;
 import javax.jms.DeliveryMode;
+import javax.jms.JMSConsumer;
+import javax.jms.JMSContext;
 import javax.jms.JMSException;
 import javax.jms.MapMessage;
 import javax.jms.MessageConsumer;
@@ -44,6 +46,7 @@ import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ActiveMQIllegalStateException;
 import org.apache.activemq.artemis.api.core.Interceptor;
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
@@ -59,7 +62,11 @@ import org.apache.activemq.artemis.core.protocol.core.Packet;
 import org.apache.activemq.artemis.core.protocol.core.impl.PacketImpl;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.Queue;
+import org.apache.activemq.artemis.core.server.ServerConsumer;
+import org.apache.activemq.artemis.core.server.ServerSession;
 import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
+import org.apache.activemq.artemis.protocol.amqp.proton.AMQPSessionContext;
+import org.apache.activemq.artemis.protocol.amqp.proton.ProtonServerSenderContext;
 import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.tests.util.Wait;
@@ -120,7 +127,7 @@ public class ConsumerTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(false, true, true, true);
 
-      server.createQueue(QUEUE, RoutingType.ANYCAST, QUEUE, null, true, false);
+      server.createQueue(new QueueConfiguration(QUEUE).setRoutingType(RoutingType.ANYCAST));
 
       session.close();
 
@@ -185,13 +192,13 @@ public class ConsumerTest extends ActiveMQTestBase {
 
       Assert.assertNotNull(message2);
 
-      System.out.println("Id::" + message2.getMessageID());
+      instanceLog.debug("Id::" + message2.getMessageID());
 
-      System.out.println("Received " + message2);
+      instanceLog.debug("Received " + message2);
 
-      System.out.println("Clie:" + ByteUtil.bytesToHex(message2.getBuffer().array(), 4));
+      instanceLog.debug("Clie:" + ByteUtil.bytesToHex(message2.getBuffer().array(), 4));
 
-      System.out.println("String::" + message2.getReadOnlyBodyBuffer().readString());
+      instanceLog.debug("String::" + message2.getReadOnlyBodyBuffer().readString());
 
       Assert.assertEquals("elo", message2.getStringProperty("hello"));
 
@@ -312,6 +319,44 @@ public class ConsumerTest extends ActiveMQTestBase {
          Wait.waitFor(() -> server.getAddressInfo(thisQueue) == null, 1000, 10);
          assertNull(server.getAddressInfo(thisQueue));
          assertEquals(0, server.getTotalMessageCount());
+      }
+   }
+
+   @Test
+   public void testContextOnConsumerAMQP() throws Throwable {
+      if (!isNetty()) {
+         // no need to run the test, there's no AMQP support
+         return;
+      }
+
+      assertNull(server.getAddressInfo(SimpleString.toSimpleString("queue")));
+
+      ConnectionFactory factory = createFactory(2);
+      JMSContext context = factory.createContext("admin", "admin", Session.AUTO_ACKNOWLEDGE);
+
+      try {
+         javax.jms.Queue queue = context.createQueue("queue");
+
+         JMSConsumer consumer = context.createConsumer(queue);
+
+         ServerConsumer serverConsumer = null;
+         for (ServerSession session : server.getSessions()) {
+            for (ServerConsumer sessionConsumer : session.getServerConsumers()) {
+               serverConsumer = sessionConsumer;
+            }
+         }
+
+         consumer.close();
+
+         Assert.assertTrue(serverConsumer.getProtocolContext() instanceof ProtonServerSenderContext);
+
+         final AMQPSessionContext sessionContext = ((ProtonServerSenderContext)
+            serverConsumer.getProtocolContext()).getSessionContext();
+
+         Wait.assertEquals(0, () -> sessionContext.getSenderCount(), 1000, 10);
+      } finally {
+         context.stop();
+         context.close();
       }
    }
 
@@ -534,7 +579,7 @@ public class ConsumerTest extends ActiveMQTestBase {
          }
          long end = System.currentTimeMillis();
 
-         System.out.println("Time = " + (end - time));
+         instanceLog.debug("Time = " + (end - time));
 
          {
             TextMessage dummyMessage = session.createTextMessage();
@@ -896,10 +941,10 @@ public class ConsumerTest extends ActiveMQTestBase {
 
          sessions.add(session);
 
-         session.createQueue(QUEUE, QUEUE.concat("" + i), null, true);
+         session.createQueue(new QueueConfiguration(QUEUE.concat("" + i)).setAddress(QUEUE).setDurable(true));
 
          if (i == 0) {
-            session.createQueue(QUEUE_RESPONSE, QUEUE_RESPONSE);
+            session.createQueue(new QueueConfiguration(QUEUE_RESPONSE));
          }
 
          ClientConsumer consumer = session.createConsumer(QUEUE.concat("" + i));
@@ -967,7 +1012,7 @@ public class ConsumerTest extends ActiveMQTestBase {
                }
 
                if (cons.receiveImmediate() != null) {
-                  System.out.println("ERROR: Received an extra message");
+                  instanceLog.debug("ERROR: Received an extra message");
                   errors.incrementAndGet();
                }
                sessionSend.close();
@@ -1204,11 +1249,11 @@ public class ConsumerTest extends ActiveMQTestBase {
       final long messagesPerRun = (forks * messages);
       for (int r = 0; r < runs; r++) {
          onStartRun.await(TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
-         System.out.println("started run " + r);
+         instanceLog.debug("started run " + r);
          final long start = System.currentTimeMillis();
          onFinishRun.await(TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
          final long elapsedMillis = System.currentTimeMillis() - start;
-         System.out.println((messagesPerRun * 1000L) / elapsedMillis + " msg/sec");
+         instanceLog.debug((messagesPerRun * 1000L) / elapsedMillis + " msg/sec");
       }
       Stream.of(producersRunners).forEach(runner -> {
          try {

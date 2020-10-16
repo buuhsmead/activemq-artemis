@@ -25,15 +25,12 @@ import javax.jms.Message;
 import javax.jms.MessageProducer;
 import javax.jms.Session;
 import java.io.FileInputStream;
+import java.io.InputStream;
 
 import io.airlift.airline.Command;
 import io.airlift.airline.Option;
-import org.apache.activemq.artemis.api.core.ActiveMQException;
-import org.apache.activemq.artemis.api.core.client.ClientMessage;
-import org.apache.activemq.artemis.api.core.management.ManagementHelper;
 import org.apache.activemq.artemis.cli.commands.ActionContext;
 import org.apache.activemq.artemis.cli.factory.serialize.MessageSerializer;
-import org.apache.activemq.artemis.jms.client.ActiveMQMessage;
 
 @Command(name = "producer", description = "It will send messages to an instance")
 public class Producer extends DestAbstract {
@@ -62,7 +59,79 @@ public class Producer extends DestAbstract {
    String msgGroupID = null;
 
    @Option(name = "--data", description = "Messages will be read form the specified file, other message options will be ignored.")
-   String fileName = null;
+   String file = null;
+
+   public boolean isNonpersistent() {
+      return nonpersistent;
+   }
+
+   public Producer setNonpersistent(boolean nonpersistent) {
+      this.nonpersistent = nonpersistent;
+      return this;
+   }
+
+   public int getMessageSize() {
+      return messageSize;
+   }
+
+   public Producer setMessageSize(int messageSize) {
+      this.messageSize = messageSize;
+      return this;
+   }
+
+   public String getMessage() {
+      return message;
+   }
+
+   public Producer setMessage(String message) {
+      this.message = message;
+      return this;
+   }
+
+   public int getTextMessageSize() {
+      return textMessageSize;
+   }
+
+   public Producer setTextMessageSize(int textMessageSize) {
+      this.textMessageSize = textMessageSize;
+      return this;
+   }
+
+   public int getObjectSize() {
+      return objectSize;
+   }
+
+   public Producer setObjectSize(int objectSize) {
+      this.objectSize = objectSize;
+      return this;
+   }
+
+   public long getMsgTTL() {
+      return msgTTL;
+   }
+
+   public Producer setMsgTTL(long msgTTL) {
+      this.msgTTL = msgTTL;
+      return this;
+   }
+
+   public String getMsgGroupID() {
+      return msgGroupID;
+   }
+
+   public Producer setMsgGroupID(String msgGroupID) {
+      this.msgGroupID = msgGroupID;
+      return this;
+   }
+
+   public String getFile() {
+      return file;
+   }
+
+   public Producer setFile(String file) {
+      this.file = file;
+      return this;
+   }
 
    @Override
    public Object execute(ActionContext context) throws Exception {
@@ -72,16 +141,10 @@ public class Producer extends DestAbstract {
 
       try (Connection connection = factory.createConnection()) {
 
-         byte[] queueId = null;
-         boolean isFQQN = isFQQN();
-         if (isFQQN) {
-            queueId = getQueueIdFromName(getQueueFromFQQN(destination));
-         }
-
          // If we are reading from file, we process messages sequentially to guarantee ordering.  i.e. no thread creation.
-         if (fileName != null) {
+         if (file != null) {
             Session session = connection.createSession(true, Session.SESSION_TRANSACTED);
-            Destination dest = lookupDestination(session, isFQQN);
+            Destination dest = getDestination(session);
 
             MessageProducer producer = session.createProducer(dest);
             producer.setDeliveryMode(DeliveryMode.PERSISTENT);
@@ -89,13 +152,25 @@ public class Producer extends DestAbstract {
             int messageCount = 0;
             try {
                MessageSerializer serializer = getMessageSerializer();
-               serializer.setInput(new FileInputStream(fileName), session);
+               if (serializer == null) {
+                  System.err.println("Error. Unable to instantiate serializer class: " + serializer);
+                  return null;
+               }
+
+               InputStream in;
+               try {
+                  in = new FileInputStream(file);
+               } catch (Exception e) {
+                  System.err.println("Error: Unable to open file for reading\n" + e.getMessage());
+                  return null;
+               }
+
+               serializer.setInput(in, session);
                serializer.start();
 
                Message message = serializer.read();
 
                while (message != null) {
-                  if (queueId != null) ((ActiveMQMessage) message).getCoreMessage().putBytesProperty(org.apache.activemq.artemis.api.core.Message.HDR_ROUTE_TO_IDS, queueId);
                   producer.send(message);
                   message = serializer.read();
                   messageCount++;
@@ -120,13 +195,21 @@ public class Producer extends DestAbstract {
                } else {
                   session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
                }
-               Destination dest = lookupDestination(session, isFQQN);
+               Destination dest = getDestination(session);
                threadsArray[i] = new ProducerThread(session, dest, i);
 
-               threadsArray[i].setVerbose(verbose).setSleep(sleep).setPersistent(!nonpersistent).
-                  setMessageSize(messageSize).setTextMessageSize(textMessageSize).setMessage(message).setObjectSize(objectSize).
-                  setMsgTTL(msgTTL).setMsgGroupID(msgGroupID).setTransactionBatchSize(txBatchSize).
-                  setMessageCount(messageCount).setQueueId(queueId);
+               threadsArray[i]
+                  .setVerbose(verbose)
+                  .setSleep(sleep)
+                  .setPersistent(!nonpersistent)
+                  .setMessageSize(messageSize)
+                  .setTextMessageSize(textMessageSize)
+                  .setMessage(message)
+                  .setObjectSize(objectSize)
+                  .setMsgTTL(msgTTL)
+                  .setMsgGroupID(msgGroupID)
+                  .setTransactionBatchSize(txBatchSize)
+                  .setMessageCount(messageCount);
             }
 
             for (ProducerThread thread : threadsArray) {
@@ -140,35 +223,6 @@ public class Producer extends DestAbstract {
             }
             return messagesProduced;
          }
-      } finally {
-         if (factory instanceof AutoCloseable) {
-            ((AutoCloseable) factory).close();
-         }
       }
-   }
-
-   public Destination lookupDestination(Session session, boolean isFQQN) throws Exception {
-      Destination dest;
-      if (!isFQQN) {
-         dest = lookupDestination(session);
-      } else {
-         String address = getAddressFromFQQN(destination);
-         if (isFQQNAnycast(getQueueFromFQQN(destination))) {
-            String queue = getQueueFromFQQN(destination);
-            if (!queue.equals(address)) {
-               throw new ActiveMQException("FQQN support is limited to Anycast queues where the queue name equals the address.");
-            }
-            dest = session.createQueue(address);
-         } else {
-            dest = session.createTopic(address);
-         }
-      }
-      return dest;
-   }
-
-   protected boolean isFQQNAnycast(String queueName) throws Exception {
-      ClientMessage message = getQueueAttribute(queueName, "RoutingType");
-      String routingType = (String) ManagementHelper.getResult(message);
-      return routingType.equalsIgnoreCase("anycast");
    }
 }

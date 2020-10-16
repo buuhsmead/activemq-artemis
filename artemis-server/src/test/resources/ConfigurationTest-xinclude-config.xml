@@ -29,6 +29,8 @@
       <graceful-shutdown-enabled>true</graceful-shutdown-enabled>
       <graceful-shutdown-timeout>12345</graceful-shutdown-timeout>
       <security-invalidation-interval>5423</security-invalidation-interval>
+      <authentication-cache-size>333</authentication-cache-size>
+      <authorization-cache-size>444</authorization-cache-size>
       <journal-lock-acquisition-timeout>123</journal-lock-acquisition-timeout>
       <wild-card-routing-enabled>true</wild-card-routing-enabled>
       <management-address>Giraffe</management-address>
@@ -57,6 +59,7 @@
       <reject-empty-validated-user>false</reject-empty-validated-user>
       <connection-ttl-check-interval>98765</connection-ttl-check-interval>
       <configuration-file-refresh-period>1234567</configuration-file-refresh-period>
+      <temporary-queue-namespace>TEMP</temporary-queue-namespace>
       <global-max-size>1234567</global-max-size>
       <max-disk-usage>37</max-disk-usage>
       <disk-scan-period>123</disk-scan-period>
@@ -78,7 +81,7 @@
          <connector name="connector2">vm://5</connector>
       </connectors>
 
-      <xi:include href="./src/test/resources/ConfigurationTest-xinclude-config-acceptors.xml"/>
+      <xi:include href="${xincludePath}/ConfigurationTest-xinclude-config-acceptors.xml"/>
 
       <broadcast-groups>
          <broadcast-group name="bg1">
@@ -194,11 +197,16 @@
          </bridge>
       </bridges>
 
-      <metrics-plugin class-name="org.apache.activemq.artemis.core.server.metrics.plugins.SimpleMetricsPlugin">
-         <property key="foo" value="x"/>
-         <property key="bar" value="y"/>
-         <property key="baz" value="z"/>
-      </metrics-plugin>
+      <metrics>
+         <jvm-memory>false</jvm-memory>
+         <jvm-gc>true</jvm-gc>
+         <jvm-threads>true</jvm-threads>
+         <plugin class-name="org.apache.activemq.artemis.core.server.metrics.plugins.SimpleMetricsPlugin">
+            <property key="foo" value="x"/>
+            <property key="bar" value="y"/>
+            <property key="baz" value="z"/>
+         </plugin>
+      </metrics>
 
       <ha-policy>
          <!--only one of the following-->
@@ -284,9 +292,9 @@
       <network-check-ping-command>ping-four</network-check-ping-command>
       <network-check-ping6-command>ping-six</network-check-ping6-command>
 
-      <xi:include href="./src/test/resources/ConfigurationTest-xinclude-config-security-settings.xml"/>
+      <xi:include href="${xincludePath}/ConfigurationTest-xinclude-config-security-settings.xml"/>
 
-      <xi:include href="./src/test/resources/ConfigurationTest-xinclude-config-address-settings.xml"/>
+      <xi:include href="${xincludePath}/ConfigurationTest-xinclude-config-address-settings.xml"/>
 
       <resource-limit-settings>
          <resource-limit-setting match="myUser">
@@ -300,6 +308,6 @@
          </connector-service>
       </connector-services>
 
-      <xi:include href="./src/test/resources/ConfigurationTest-xinclude-config-addresses.xml"/>
+      <xi:include href="${xincludePath}/ConfigurationTest-xinclude-config-addresses.xml"/>
    </core>
 </configuration>

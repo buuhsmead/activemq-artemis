@@ -23,6 +23,7 @@ import javax.transaction.xa.Xid;
 import org.apache.activemq.artemis.api.core.ActiveMQTransactionOutcomeUnknownException;
 import org.apache.activemq.artemis.api.core.ActiveMQTransactionRolledBackException;
 import org.apache.activemq.artemis.api.core.ActiveMQUnBlockedException;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
@@ -45,6 +46,7 @@ import org.apache.activemq.artemis.utils.UUIDGenerator;
 import org.jboss.byteman.contrib.bmunit.BMRule;
 import org.jboss.byteman.contrib.bmunit.BMRules;
 import org.jboss.byteman.contrib.bmunit.BMUnitRunner;
+import org.jboss.logging.Logger;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -52,6 +54,7 @@ import org.junit.runner.RunWith;
 
 @RunWith(BMUnitRunner.class)
 public class BMFailoverTest extends FailoverTestBase {
+   private static final Logger log = Logger.getLogger(BMFailoverTest.class);
 
    private ServerLocator locator;
    private ClientSessionFactoryInternal sf;
@@ -101,7 +104,7 @@ public class BMFailoverTest extends FailoverTestBase {
 
       ClientSession session = createSession(sf, true, false, false);
 
-      session.createQueue(FailoverTestBase.ADDRESS, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);
 
@@ -175,8 +178,8 @@ public class BMFailoverTest extends FailoverTestBase {
       // closeable will take care of closing it
       try (ClientSession session = sf.createSession(false, true, true);
            ClientProducer sendInitialProducer = session.createProducer();) {
-         session.createQueue(inQueue, inQueue, null, true);
-         session.createQueue(outQueue, outQueue, null, true);
+         session.createQueue(new QueueConfiguration(inQueue));
+         session.createQueue(new QueueConfiguration(outQueue));
          sendInitialProducer.send(inQueue, createMessage(session, 0, true));
       }
 
@@ -197,7 +200,7 @@ public class BMFailoverTest extends FailoverTestBase {
 
       assertNotNull(m);
 
-      System.out.println("********************" + m.getIntProperty("counter"));
+      log.debug("********************" + m.getIntProperty("counter"));
       //the mdb would ack the message before calling onMessage()
       m.acknowledge();
 
@@ -231,7 +234,7 @@ public class BMFailoverTest extends FailoverTestBase {
       //the mdb would ack the message before calling onMessage()
       m.acknowledge();
 
-      System.out.println("********************" + m.getIntProperty("counter"));
+      log.debug("********************" + m.getIntProperty("counter"));
 
       xaSessionRec.getXAResource().end(xidRec, XAResource.TMSUCCESS);
       xaSessionRec.getXAResource().prepare(xidRec);
@@ -325,14 +328,14 @@ public class BMFailoverTest extends FailoverTestBase {
    private ClientSession createSessionAndQueue() throws Exception {
       ClientSession session = createSession(sf, false, false);
 
-      session.createQueue(FailoverTestBase.ADDRESS, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
       return session;
    }
 
    private ClientSession createXASessionAndQueue() throws Exception {
       ClientSession session = addClientSession(sf.createSession(true, true, true));
 
-      session.createQueue(FailoverTestBase.ADDRESS, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
       return session;
    }
 

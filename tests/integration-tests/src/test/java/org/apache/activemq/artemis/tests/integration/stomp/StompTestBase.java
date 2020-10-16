@@ -31,23 +31,18 @@ import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.config.CoreAddressConfiguration;
-import org.apache.activemq.artemis.core.config.CoreQueueConfiguration;
-import org.apache.activemq.artemis.core.protocol.mqtt.MQTTProtocolManagerFactory;
 import org.apache.activemq.artemis.core.protocol.stomp.Stomp;
-import org.apache.activemq.artemis.core.protocol.stomp.StompProtocolManagerFactory;
 import org.apache.activemq.artemis.core.remoting.impl.invm.InVMAcceptorFactory;
 import org.apache.activemq.artemis.core.remoting.impl.invm.InVMConnectorFactory;
-import org.apache.activemq.artemis.core.remoting.impl.netty.NettyAcceptorFactory;
 import org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants;
 import org.apache.activemq.artemis.core.security.Role;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
@@ -55,21 +50,28 @@ import org.apache.activemq.artemis.core.server.ActiveMQServers;
 import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
 import org.apache.activemq.artemis.jms.client.ActiveMQJMSConnectionFactory;
 import org.apache.activemq.artemis.spi.core.security.ActiveMQJAASSecurityManager;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.integration.stomp.util.AbstractStompClientConnection;
 import org.apache.activemq.artemis.tests.integration.stomp.util.ClientStompFrame;
 import org.apache.activemq.artemis.tests.integration.stomp.util.StompClientConnection;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.apache.activemq.artemis.utils.RetryRule;
+import org.jboss.logging.Logger;
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 @RunWith(Parameterized.class)
 public abstract class StompTestBase extends ActiveMQTestBase {
 
+   private static final Logger log = Logger.getLogger(StompTestBase.class);
+
    @Parameterized.Parameter
    public String scheme;
+
+   @Rule
+   public RetryRule retryRule = new RetryRule(2);
 
    protected URI uri;
 
@@ -176,24 +178,20 @@ public abstract class StompTestBase extends ActiveMQTestBase {
     * @throws Exception
     */
    protected ActiveMQServer createServer() throws Exception {
-      Map<String, Object> params = new HashMap<>();
-      params.put(TransportConstants.PROTOCOLS_PROP_NAME, StompProtocolManagerFactory.STOMP_PROTOCOL_NAME + ","  + MQTTProtocolManagerFactory.MQTT_PROTOCOL_NAME);
-      params.put(TransportConstants.PORT_PROP_NAME, TransportConstants.DEFAULT_STOMP_PORT);
-      params.put(TransportConstants.STOMP_CONSUMERS_CREDIT, "-1");
+      String stompAcceptorURI = "tcp://" + TransportConstants.DEFAULT_HOST + ":" + TransportConstants.DEFAULT_STOMP_PORT + "?" + TransportConstants.STOMP_CONSUMER_WINDOW_SIZE + "=-1";
       if (isEnableStompMessageId()) {
-         params.put(TransportConstants.STOMP_ENABLE_MESSAGE_ID, true);
+         stompAcceptorURI += ";" + TransportConstants.STOMP_ENABLE_MESSAGE_ID + "=true";
       }
       if (getStompMinLargeMessageSize() != null) {
-         params.put(TransportConstants.STOMP_MIN_LARGE_MESSAGE_SIZE, 2048);
+         stompAcceptorURI += ";" + TransportConstants.STOMP_MIN_LARGE_MESSAGE_SIZE + "=2048";
       }
-      TransportConfiguration stompTransport = new TransportConfiguration(NettyAcceptorFactory.class.getName(), params);
 
       Configuration config = createBasicConfig().setSecurityEnabled(isSecurityEnabled())
                                                 .setPersistenceEnabled(isPersistenceEnabled())
-                                                .addAcceptorConfiguration(stompTransport)
+                                                .addAcceptorConfiguration("stomp", stompAcceptorURI)
                                                 .addAcceptorConfiguration(new TransportConfiguration(InVMAcceptorFactory.class.getName()))
                                                 .setConnectionTtlCheckInterval(500)
-                                                .addQueueConfiguration(new CoreQueueConfiguration().setAddress(getQueueName()).setName(getQueueName()).setRoutingType(RoutingType.ANYCAST))
+                                                .addQueueConfiguration(new QueueConfiguration(getQueueName()).setRoutingType(RoutingType.ANYCAST))
                                                 .addAddressConfiguration(new CoreAddressConfiguration().setName(getTopicName()).addRoutingType(RoutingType.MULTICAST));
 
       if (getIncomingInterceptors() != null) {
@@ -393,12 +391,36 @@ public abstract class StompTestBase extends ActiveMQTestBase {
    }
 
    public static ClientStompFrame subscribe(StompClientConnection conn,
-                                     String subscriptionId,
-                                     String ack,
-                                     String durableId,
-                                     String selector,
-                                     String destination,
-                                     boolean receipt) throws IOException, InterruptedException {
+                                            String subscriptionId,
+                                            String ack,
+                                            String durableId,
+                                            String selector,
+                                            String destination,
+                                            boolean receipt) throws IOException, InterruptedException {
+      return subscribe(conn, subscriptionId, ack, durableId, selector, destination, receipt, null);
+   }
+
+   public static ClientStompFrame subscribe(StompClientConnection conn,
+                                            String subscriptionId,
+                                            String ack,
+                                            String durableId,
+                                            String selector,
+                                            String destination,
+                                            boolean receipt,
+                                            Integer consumerWindowSize) throws IOException, InterruptedException {
+      return subscribe(conn, subscriptionId, ack, durableId, selector, destination, receipt, consumerWindowSize, Stomp.Headers.Subscribe.CONSUMER_WINDOW_SIZE);
+   }
+
+   public static ClientStompFrame subscribe(StompClientConnection conn,
+                                            String subscriptionId,
+                                            String ack,
+                                            String durableId,
+                                            String selector,
+                                            String destination,
+                                            boolean receipt,
+                                            Integer consumerWindowSize,
+                                            String consumerWindowSizeHeader) throws IOException, InterruptedException {
+
       ClientStompFrame frame = conn.createFrame(Stomp.Commands.SUBSCRIBE)
                                    .addHeader(Stomp.Headers.Subscribe.SUBSCRIPTION_TYPE, RoutingType.ANYCAST.toString())
                                    .addHeader(Stomp.Headers.Subscribe.DESTINATION, destination);
@@ -413,6 +435,9 @@ public abstract class StompTestBase extends ActiveMQTestBase {
       }
       if (selector != null) {
          frame.addHeader(Stomp.Headers.Subscribe.SELECTOR, selector);
+      }
+      if (consumerWindowSize != null) {
+         frame.addHeader(consumerWindowSizeHeader, consumerWindowSize.toString());
       }
 
       String uuid = UUID.randomUUID().toString();
@@ -612,7 +637,7 @@ public abstract class StompTestBase extends ActiveMQTestBase {
          assertEquals(uuid, frame.getHeader(Stomp.Headers.Response.RECEIPT_ID));
       }
 
-      IntegrationTestLogger.LOGGER.info("Received: " + frame);
+      log.debug("Received: " + frame);
 
       return frame;
    }

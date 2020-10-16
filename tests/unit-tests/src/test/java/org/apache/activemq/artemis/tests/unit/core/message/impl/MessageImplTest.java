@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ICoreMessage;
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -40,10 +41,12 @@ import org.apache.activemq.artemis.utils.RandomUtil;
 import org.apache.activemq.artemis.utils.UUID;
 import org.apache.activemq.artemis.utils.UUIDGenerator;
 import org.apache.activemq.artemis.utils.Wait;
+import org.jboss.logging.Logger;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class MessageImplTest extends ActiveMQTestBase {
+   private static final Logger log = Logger.getLogger(MessageImplTest.class);
 
    @Test
    public void getSetAttributes() {
@@ -237,7 +240,7 @@ public class MessageImplTest extends ActiveMQTestBase {
    public void testMessageCopyIssue() throws Exception {
       for (long i = 0; i < 300; i++) {
          if (i % 10 == 0)
-            System.out.println("#test " + i);
+            log.debug("#test " + i);
          internalMessageCopy();
       }
    }
@@ -432,7 +435,7 @@ public class MessageImplTest extends ActiveMQTestBase {
 
       session = addClientSession(sf.createSession(false, false, 0));
 
-      session.createQueue(ADDRESS, ADDRESS, true);
+      session.createQueue(new QueueConfiguration(ADDRESS));
 
       ClientProducer producer = session.createProducer(ADDRESS);
 

@@ -153,7 +153,7 @@ log-delegate-factory-class-name | **deprecated** the name of the factory class t
 [message-counter-max-day-history](management.md#message-counters)| how many days to keep message counter history. | 10
 [message-counter-sample-period](management.md#message-counters) | the sample period (in ms) to use for message counters. | 10000
 [message-expiry-scan-period](message-expiry.md#configuring-the-expiry-reaper-thread) | how often (in ms) to scan for expired messages. | 30000
-[message-expiry-thread-priority](message-expiry.md#configuring-the-expiry-reaper-thread)| the priority of the thread expiring messages. | 3
+[message-expiry-thread-priority](message-expiry.md#configuring-the-expiry-reaper-thread)| **deprecated** the priority of the thread expiring messages. | 3
 [metrics-plugin](metrics.md) | [a plugin to export metrics](#metrics-plugin-type) | n/a
 [address-queue-scan-period](address-model.md#configuring-addresses-and-queues-via-address-settings) | how often (in ms) to scan for addresses & queues that should be removed. | 30000
 name | node name; used in topology notifications if set. | n/a
@@ -204,6 +204,9 @@ Name | Description | Default
 ---|---|---
 [match](address-model.md) | The filter to apply to the setting | n/a
 [dead-letter-address](undelivered-messages.md) | Dead letter address | n/a
+[auto-create-dead-letter-resources](undelivered-messages.md) | Whether or not to auto-create dead-letter address and/or queue | `false`
+[dead-letter-queue-prefix](undelivered-messages.md) | Prefix to use for auto-created dead-letter queues | `DLQ.`
+[dead-letter-queue-suffix](undelivered-messages.md) | Suffix to use for auto-created dead-letter queues | `` (empty)
 [expiry-address](message-expiry.md) | Expired messages address | n/a
 [expiry-delay](message-expiry.md) | Expiration time override; -1 don't override | -1
 [redelivery-delay](undelivered-messages.md) | Time to wait before redelivering a message | 0

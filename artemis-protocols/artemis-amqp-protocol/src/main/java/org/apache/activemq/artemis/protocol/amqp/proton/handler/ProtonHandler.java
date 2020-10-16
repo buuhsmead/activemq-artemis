@@ -20,14 +20,17 @@ import javax.security.auth.Subject;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.PooledByteBufAllocator;
 import io.netty.channel.EventLoop;
 import org.apache.activemq.artemis.api.core.ActiveMQSecurityException;
+import org.apache.activemq.artemis.logs.AuditLogger;
 import org.apache.activemq.artemis.protocol.amqp.proton.AMQPConnectionContext;
 import org.apache.activemq.artemis.protocol.amqp.proton.ProtonInitializable;
 import org.apache.activemq.artemis.protocol.amqp.sasl.ClientSASL;
@@ -88,6 +91,59 @@ public class ProtonHandler extends ProtonInitializable implements SaslListener {
 
    boolean scheduledFlush = false;
 
+   boolean flushInstantly = false;
+
+   /** afterFlush and afterFlushSet properties
+    *  are set by afterFlush methods.
+    *  This is to be called after the flush loop.
+    *  this is usually to be used by flow control events that
+    *  have to take place after the incoming bytes are settled.
+    *
+    *  There is only one afterFlush most of the time, and for that reason
+    *   as an optimization we will try to use a single place most of the time
+    *   however if more are needed we will use the list.
+    *  */
+   private Runnable afterFlush;
+   protected Set<Runnable> afterFlushSet;
+
+   public void afterFlush(Runnable runnable) {
+      requireHandler();
+      if (afterFlush == null) {
+         afterFlush = runnable;
+         return;
+      } else {
+         if (afterFlush != runnable) {
+            if (afterFlushSet == null) {
+               afterFlushSet = new HashSet<>();
+            }
+            afterFlushSet.add(runnable);
+         }
+      }
+   }
+
+   public void runAfterFlush() {
+      requireHandler();
+      if (afterFlush != null) {
+         Runnable toRun = afterFlush;
+         afterFlush = null;
+         // setting it to null to avoid recursive flushes
+         toRun.run();
+      }
+
+      if (afterFlushSet != null) {
+         // This is not really expected to happen.
+         // most of the time we will only have a single Runnable needing after flush
+         // as this was written for flow control
+         // however in extreme of caution, I'm dealing with a case where more than one is used.
+         Set<Runnable> toRun = afterFlushSet;
+         // setting it to null to avoid recursive flushes
+         afterFlushSet = null;
+         for (Runnable runnable : toRun) {
+            runnable.run();
+         }
+      }
+   }
+
    public ProtonHandler(EventLoop workerExecutor, ArtemisExecutor poolExecutor, boolean isServer) {
       this.workerExecutor = workerExecutor;
       this.poolExecutor = poolExecutor;
@@ -145,6 +201,10 @@ public class ProtonHandler extends ProtonInitializable implements SaslListener {
       return transport.capacity();
    }
 
+   public boolean isHandler() {
+      return workerExecutor.inEventLoop();
+   }
+
    public void requireHandler() {
       if (!workerExecutor.inEventLoop()) {
          throw new IllegalStateException("this method requires to be called within the handler, use the executor");
@@ -172,14 +232,28 @@ public class ProtonHandler extends ProtonInitializable implements SaslListener {
       sasl.setListener(this);
    }
 
-
+   public void instantFlush() {
+      this.flushInstantly = true;
+      // This will perform event handling, and at some point the flushBytes will be called
+      this.flush();
+   }
 
    public void flushBytes() {
       requireHandler();
 
-      if (!scheduledFlush) {
-         scheduledFlush = true;
-         workerExecutor.execute(this::actualFlush);
+      if (flushInstantly) {
+         flushInstantly = false;
+         scheduledFlush = false;
+         actualFlush();
+      } else {
+         // Under regular circunstances, it would be too costly to flush every time,
+         // so we flush only once at the end of processing.
+
+         // this decision was made after extensive performance testing.
+         if (!scheduledFlush) {
+            scheduledFlush = true;
+            workerExecutor.execute(this::actualFlush);
+         }
       }
    }
 
@@ -476,6 +550,11 @@ public class ProtonHandler extends ProtonInitializable implements SaslListener {
       }
       try {
          inDispatch = true;
+         if (AuditLogger.isAnyLoggingEnabled()) {
+            for (EventHandler h : handlers) {
+               AuditLogger.setRemoteAddress(h.getRemoteAddress());
+            }
+         }
          while ((ev = collector.peek()) != null) {
             for (EventHandler h : handlers) {
                if (log.isTraceEnabled()) {
@@ -508,6 +587,8 @@ public class ProtonHandler extends ProtonInitializable implements SaslListener {
       }
 
       flushBytes();
+
+      runAfterFlush();
    }
 
 

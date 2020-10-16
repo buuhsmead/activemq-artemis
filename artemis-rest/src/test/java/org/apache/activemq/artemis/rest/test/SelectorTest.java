@@ -33,6 +33,8 @@ import org.apache.activemq.artemis.rest.HttpHeaderProperty;
 import org.apache.activemq.artemis.rest.queue.push.xml.XmlLink;
 import org.apache.activemq.artemis.rest.topic.PushTopicRegistration;
 import org.apache.activemq.artemis.rest.topic.TopicDeployment;
+import org.apache.activemq.artemis.utils.Wait;
+import org.jboss.logging.Logger;
 import org.jboss.resteasy.client.ClientRequest;
 import org.jboss.resteasy.client.ClientResponse;
 import org.jboss.resteasy.spi.Link;
@@ -43,6 +45,7 @@ import org.junit.Test;
 import static org.jboss.resteasy.test.TestPortProvider.generateURL;
 
 public class SelectorTest extends MessageTestBase {
+   private static final Logger log = Logger.getLogger(SelectorTest.class);
 
    public static ConnectionFactory connectionFactory;
    public static String topicName = "testTopic";
@@ -51,7 +54,7 @@ public class SelectorTest extends MessageTestBase {
    @BeforeClass
    public static void setup() throws Exception {
       connectionFactory = new ActiveMQJMSConnectionFactory(manager.getQueueManager().getServerLocator());
-      System.out.println("Queue name: " + prefixedTopicName);
+      log.debug("Queue name: " + prefixedTopicName);
       TopicDeployment deployment = new TopicDeployment();
       deployment.setDuplicatesAllowed(true);
       deployment.setDurableSend(false);
@@ -120,7 +123,7 @@ public class SelectorTest extends MessageTestBase {
 
    public static Destination createDestination(String dest) {
       ActiveMQDestination destination = (ActiveMQDestination) ActiveMQDestination.fromPrefixedName(dest);
-      System.out.println("SimpleAddress: " + destination.getSimpleAddress());
+      log.debug("SimpleAddress: " + destination.getSimpleAddress());
       return destination;
    }
 
@@ -175,7 +178,7 @@ public class SelectorTest extends MessageTestBase {
       response.releaseConnection();
       Assert.assertEquals(200, response.getStatus());
       Link consumers = getLinkByTitle(manager.getQueueManager().getLinkStrategy(), response, "push-subscriptions");
-      System.out.println("push: " + consumers);
+      log.debug("push: " + consumers);
 
       PushTopicRegistration oneReg = new PushTopicRegistration();
       oneReg.setDurable(false);
@@ -205,33 +208,27 @@ public class SelectorTest extends MessageTestBase {
       order.setName("1");
       order.setAmount("$5.00");
       publish(prefixedTopicName, order, null, "1");
-      Thread.sleep(200);
-      Assert.assertEquals(order, PushReceiver.oneOrder);
+      Wait.assertEquals(order, () -> PushReceiver.oneOrder);
 
       order.setName("2");
       publish(prefixedTopicName, order, null, "2");
-      Thread.sleep(200);
-      Assert.assertEquals(order, PushReceiver.twoOrder);
+      Wait.assertEquals(order, () -> PushReceiver.twoOrder);
 
       order.setName("3");
       publish(prefixedTopicName, order, null, "2");
-      Thread.sleep(200);
-      Assert.assertEquals(order, PushReceiver.twoOrder);
+      Wait.assertEquals(order, () -> PushReceiver.twoOrder);
 
       order.setName("4");
       publish(prefixedTopicName, order, null, "1");
-      Thread.sleep(200);
-      Assert.assertEquals(order, PushReceiver.oneOrder);
+      Wait.assertEquals(order, () -> PushReceiver.oneOrder);
 
       order.setName("5");
       publish(prefixedTopicName, order, null, "1");
-      Thread.sleep(200);
-      Assert.assertEquals(order, PushReceiver.oneOrder);
+      Wait.assertEquals(order, () -> PushReceiver.oneOrder);
 
       order.setName("6");
       publish(prefixedTopicName, order, null, "1");
-      Thread.sleep(200);
-      Assert.assertEquals(order, PushReceiver.oneOrder);
+      Wait.assertEquals(order, () -> PushReceiver.oneOrder);
 
       response = oneSubscription.request().delete();
       response.releaseConnection();
@@ -247,16 +244,16 @@ public class SelectorTest extends MessageTestBase {
       response.releaseConnection();
       Assert.assertEquals(200, response.getStatus());
       Link consumers = getLinkByTitle(manager.getQueueManager().getLinkStrategy(), response, "pull-subscriptions");
-      System.out.println("pull: " + consumers);
+      log.debug("pull: " + consumers);
       response = consumers.request().formParameter("autoAck", "true").formParameter("selector", "MyTag = '1'").post();
       response.releaseConnection();
 
       Link consumeOne = getLinkByTitle(manager.getQueueManager().getLinkStrategy(), response, "consume-next");
-      System.out.println("consumeOne: " + consumeOne);
+      log.debug("consumeOne: " + consumeOne);
       response = consumers.request().formParameter("autoAck", "true").formParameter("selector", "MyTag = '2'").post();
       response.releaseConnection();
       Link consumeTwo = getLinkByTitle(manager.getQueueManager().getLinkStrategy(), response, "consume-next");
-      System.out.println("consumeTwo: " + consumeTwo);
+      log.debug("consumeTwo: " + consumeTwo);
 
       // test that Accept header is used to set content-type
       {

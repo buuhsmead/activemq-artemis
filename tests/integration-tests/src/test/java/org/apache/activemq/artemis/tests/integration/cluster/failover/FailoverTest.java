@@ -36,6 +36,7 @@ import org.apache.activemq.artemis.api.core.ActiveMQTransactionOutcomeUnknownExc
 import org.apache.activemq.artemis.api.core.ActiveMQTransactionRolledBackException;
 import org.apache.activemq.artemis.api.core.Interceptor;
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
@@ -48,7 +49,6 @@ import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.api.core.client.SessionFailureListener;
 import org.apache.activemq.artemis.core.client.impl.ClientSessionFactoryImpl;
 import org.apache.activemq.artemis.core.client.impl.ClientSessionFactoryInternal;
-import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.core.server.cluster.ha.BackupPolicy;
 import org.apache.activemq.artemis.core.server.cluster.ha.HAPolicy;
 import org.apache.activemq.artemis.core.server.cluster.ha.ReplicaPolicy;
@@ -59,19 +59,24 @@ import org.apache.activemq.artemis.core.server.files.FileMoveManager;
 import org.apache.activemq.artemis.core.server.impl.InVMNodeManager;
 import org.apache.activemq.artemis.core.transaction.impl.XidImpl;
 import org.apache.activemq.artemis.jms.client.ActiveMQTextMessage;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.integration.cluster.util.TestableServer;
 import org.apache.activemq.artemis.tests.util.CountDownSessionFailureListener;
 import org.apache.activemq.artemis.tests.util.TransportConfigurationUtils;
 import org.apache.activemq.artemis.utils.RandomUtil;
+import org.apache.activemq.artemis.utils.RetryRule;
 import org.apache.activemq.artemis.utils.Wait;
+import org.jboss.logging.Logger;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 
 public class FailoverTest extends FailoverTestBase {
 
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
+   private static final Logger log = Logger.getLogger(FailoverTest.class);
+
+   @Rule
+   public RetryRule retryRule = new RetryRule(2);
 
    protected static final int NUM_MESSAGES = 100;
 
@@ -112,7 +117,7 @@ public class FailoverTest extends FailoverTestBase {
    // https://issues.jboss.org/browse/HORNETQ-685
    @Test(timeout = 120000)
    public void testTimeoutOnFailover() throws Exception {
-      locator.setCallTimeout(1000).setBlockOnNonDurableSend(true).setBlockOnDurableSend(true).setAckBatchSize(0).setReconnectAttempts(300).setRetryInterval(100);
+      locator.setCallTimeout(1000).setBlockOnNonDurableSend(true).setBlockOnDurableSend(true).setAckBatchSize(0).setReconnectAttempts(300).setRetryInterval(10);
 
       if (nodeManager instanceof InVMNodeManager) {
          ((InVMNodeManager) nodeManager).failoverPause = 500L;
@@ -122,7 +127,7 @@ public class FailoverTest extends FailoverTestBase {
 
       final ClientSession session = createSession(sf1, true, true);
 
-      session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       final ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);
 
@@ -136,7 +141,6 @@ public class FailoverTest extends FailoverTestBase {
                ClientMessage message = session.createMessage(true);
                message.putIntProperty("counter", i);
                try {
-                  System.out.println("Sent " + i);
                   producer.send(message);
                   if (i < 10) {
                      latch.countDown();
@@ -189,7 +193,7 @@ public class FailoverTest extends FailoverTestBase {
 
       final ClientSession session = createSession(sf1, true, false);
 
-      session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       final ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);
 
@@ -212,7 +216,6 @@ public class FailoverTest extends FailoverTestBase {
          @Override
          public void onMessage(ClientMessage message) {
 
-            System.out.println("Received " + message);
             Integer counter = message.getIntProperty("counter");
             received.put(counter, message);
             try {
@@ -240,7 +243,7 @@ public class FailoverTest extends FailoverTestBase {
 
       });
       latch.await(10, TimeUnit.SECONDS);
-      log.info("crashing session");
+      log.debug("crashing session");
       crash(session);
       Assert.assertTrue(endLatch.await(60, TimeUnit.SECONDS));
 
@@ -249,17 +252,17 @@ public class FailoverTest extends FailoverTestBase {
 
    @Test(timeout = 120000)
    public void testTimeoutOnFailoverConsumeBlocked() throws Exception {
-      locator.setCallTimeout(1000).setBlockOnNonDurableSend(true).setConsumerWindowSize(0).setBlockOnDurableSend(true).setAckBatchSize(0).setBlockOnAcknowledge(true).setReconnectAttempts(-1).setAckBatchSize(0);
+      locator.setCallTimeout(1000).setBlockOnNonDurableSend(true).setConsumerWindowSize(0).setBlockOnDurableSend(true).setAckBatchSize(0).setBlockOnAcknowledge(true).setReconnectAttempts(-1).setAckBatchSize(0).setRetryInterval(10);
 
       if (nodeManager instanceof InVMNodeManager) {
-         ((InVMNodeManager) nodeManager).failoverPause = 2000L;
+         ((InVMNodeManager) nodeManager).failoverPause = 200L;
       }
 
       ClientSessionFactoryInternal sf1 = (ClientSessionFactoryInternal) createSessionFactory(locator);
 
       final ClientSession session = createSession(sf1, true, true);
 
-      session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       final ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);
 
@@ -287,7 +290,7 @@ public class FailoverTest extends FailoverTestBase {
                   Integer counter = message.getIntProperty("counter");
                   received.put(counter, message);
                   try {
-                     log.info("acking message = id = " + message.getMessageID() +
+                     log.debug("acking message = id = " + message.getMessageID() +
                                  ", counter = " +
                                  message.getIntProperty("counter"));
                      message.acknowledge();
@@ -295,7 +298,7 @@ public class FailoverTest extends FailoverTestBase {
                      e.printStackTrace();
                      continue;
                   }
-                  log.info("Acked counter = " + counter);
+                  log.debug("Acked counter = " + counter);
                   if (counter.equals(10)) {
                      latch.countDown();
                   }
@@ -318,7 +321,7 @@ public class FailoverTest extends FailoverTestBase {
                try {
                   ClientMessage msg = consumer.receive(20000);
                   if (msg == null) {
-                     log.info("Returning null message on consuming");
+                     log.debug("Returning null message on consuming");
                   }
                   return msg;
                } catch (ActiveMQObjectClosedException oce) {
@@ -332,7 +335,7 @@ public class FailoverTest extends FailoverTestBase {
       };
       t.start();
       latch.await(10, TimeUnit.SECONDS);
-      log.info("crashing session");
+      log.debug("crashing session");
       crash(session);
       endLatch.await(60, TimeUnit.SECONDS);
       t.join();
@@ -344,7 +347,7 @@ public class FailoverTest extends FailoverTestBase {
    // https://issues.jboss.org/browse/HORNETQ-685
    @Test(timeout = 120000)
    public void testTimeoutOnFailoverTransactionCommit() throws Exception {
-      locator.setCallTimeout(1000).setBlockOnNonDurableSend(true).setBlockOnDurableSend(true).setAckBatchSize(0).setReconnectAttempts(300).setRetryInterval(100);
+      locator.setCallTimeout(1000).setBlockOnNonDurableSend(true).setBlockOnDurableSend(true).setAckBatchSize(0).setReconnectAttempts(300).setRetryInterval(10);
 
       if (nodeManager instanceof InVMNodeManager) {
          ((InVMNodeManager) nodeManager).failoverPause = 2000L;
@@ -354,7 +357,7 @@ public class FailoverTest extends FailoverTestBase {
 
       final ClientSession session = createSession(sf1, true, false, false);
 
-      session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       final CountDownLatch connectionFailed = new CountDownLatch(1);
 
@@ -413,7 +416,7 @@ public class FailoverTest extends FailoverTestBase {
     */
    @Test(timeout = 120000)
    public void testTimeoutOnFailoverTransactionCommitTimeoutCommunication() throws Exception {
-      locator.setCallTimeout(1000).setBlockOnNonDurableSend(true).setBlockOnDurableSend(true).setAckBatchSize(0).setReconnectAttempts(300).setRetryInterval(500);
+      locator.setCallTimeout(1000).setBlockOnNonDurableSend(true).setBlockOnDurableSend(true).setAckBatchSize(0).setReconnectAttempts(300).setRetryInterval(50);
 
       if (nodeManager instanceof InVMNodeManager) {
          ((InVMNodeManager) nodeManager).failoverPause = 2000L;
@@ -422,7 +425,7 @@ public class FailoverTest extends FailoverTestBase {
       ClientSessionFactoryInternal sf1 = (ClientSessionFactoryInternal) createSessionFactory(locator);
       final ClientSession session = createSession(sf1, false, false, false);
 
-      session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       final CountDownLatch connectionFailed = new CountDownLatch(1);
 
@@ -491,7 +494,7 @@ public class FailoverTest extends FailoverTestBase {
    // https://issues.jboss.org/browse/HORNETQ-685
    @Test(timeout = 120000)
    public void testTimeoutOnFailoverTransactionRollback() throws Exception {
-      locator.setCallTimeout(2000).setBlockOnNonDurableSend(true).setBlockOnDurableSend(true).setAckBatchSize(0).setReconnectAttempts(300).setRetryInterval(100);
+      locator.setCallTimeout(2000).setBlockOnNonDurableSend(true).setBlockOnDurableSend(true).setAckBatchSize(0).setReconnectAttempts(300).setRetryInterval(10);
 
       if (nodeManager instanceof InVMNodeManager) {
          ((InVMNodeManager) nodeManager).failoverPause = 1000L;
@@ -501,7 +504,7 @@ public class FailoverTest extends FailoverTestBase {
 
       final ClientSession session = createSession(sf1, true, false, false);
 
-      session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       final ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);
 
@@ -546,13 +549,13 @@ public class FailoverTest extends FailoverTestBase {
     */
    @Test(timeout = 120000)
    public void testNonTransactedWithZeroConsumerWindowSize() throws Exception {
-      locator.setBlockOnNonDurableSend(true).setBlockOnDurableSend(true).setAckBatchSize(0).setReconnectAttempts(300).setRetryInterval(100);
+      locator.setBlockOnNonDurableSend(true).setBlockOnDurableSend(true).setAckBatchSize(0).setReconnectAttempts(300).setRetryInterval(10);
 
       createClientSessionFactory();
 
       ClientSession session = createSession(sf, true, true);
 
-      session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);
 
@@ -597,7 +600,7 @@ public class FailoverTest extends FailoverTestBase {
 
       ClientSession session = createSession(sf, true, true);
 
-      session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);
 
@@ -630,7 +633,7 @@ public class FailoverTest extends FailoverTestBase {
 
       ClientSession session = createSession(sf, true, true);
 
-      session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);
 
@@ -661,7 +664,7 @@ public class FailoverTest extends FailoverTestBase {
       Assert.assertEquals(0, sf.numConnections());
    }
 
-   @Test(timeout = 10000)
+   @Test
    public void testFailLiveTooSoon() throws Exception {
       ServerLocator locator = getServerLocator();
 
@@ -675,19 +678,19 @@ public class FailoverTest extends FailoverTestBase {
       TransportConfiguration initialLive = getFieldFromSF(sf, "currentConnectorConfig");
       TransportConfiguration initialBackup = getFieldFromSF(sf, "backupConfig");
 
-      System.out.println("initlive: " + initialLive);
-      System.out.println("initback: " + initialBackup);
+      instanceLog.debug("initlive: " + initialLive);
+      instanceLog.debug("initback: " + initialBackup);
 
       TransportConfiguration last = getFieldFromSF(sf, "connectorConfig");
       TransportConfiguration current = getFieldFromSF(sf, "currentConnectorConfig");
 
-      System.out.println("now last: " + last);
-      System.out.println("now current: " + current);
+      instanceLog.debug("now last: " + last);
+      instanceLog.debug("now current: " + current);
       assertTrue(current.equals(initialLive));
 
       ClientSession session = createSession(sf, true, true);
 
-      session.createQueue(FailoverTestBase.ADDRESS, FailoverTestBase.ADDRESS, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       //crash 1
       crash();
@@ -698,8 +701,8 @@ public class FailoverTest extends FailoverTestBase {
       last = getFieldFromSF(sf, "connectorConfig");
       current = getFieldFromSF(sf, "currentConnectorConfig");
 
-      System.out.println("now after live crashed last: " + last);
-      System.out.println("now current: " + current);
+      instanceLog.debug("now after live crashed last: " + last);
+      instanceLog.debug("now current: " + current);
 
       assertTrue(current.equals(initialBackup));
 
@@ -719,8 +722,8 @@ public class FailoverTest extends FailoverTestBase {
       last = getFieldFromSF(sf, "connectorConfig");
       current = getFieldFromSF(sf, "currentConnectorConfig");
 
-      System.out.println("now after live back again last: " + last);
-      System.out.println("now current: " + current);
+      instanceLog.debug("now after live back again last: " + last);
+      instanceLog.debug("now current: " + current);
 
       //cannot use equals here because the config's name (uuid) changes
       //after failover
@@ -1019,7 +1022,7 @@ public class FailoverTest extends FailoverTestBase {
    protected ClientSession createSessionAndQueue() throws Exception {
       ClientSession session = createSession(sf, false, false);
 
-      session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
       return session;
    }
 
@@ -1035,7 +1038,7 @@ public class FailoverTest extends FailoverTestBase {
 
       ClientSession session = createSession(sf);
 
-      session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);
 
@@ -1307,7 +1310,7 @@ public class FailoverTest extends FailoverTestBase {
 
       Xid xid = new XidImpl("uhuhuhu".getBytes(), 126512, "auhsduashd".getBytes());
 
-      session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);
 
@@ -1343,7 +1346,7 @@ public class FailoverTest extends FailoverTestBase {
 
       Xid xid = new XidImpl("uhuhuhu".getBytes(), 126512, "auhsduashd".getBytes());
 
-      session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);
 
@@ -1380,7 +1383,7 @@ public class FailoverTest extends FailoverTestBase {
 
       Xid xid = new XidImpl("uhuhuhu".getBytes(), 126512, "auhsduashd".getBytes());
 
-      session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       final ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);
 
@@ -1422,7 +1425,7 @@ public class FailoverTest extends FailoverTestBase {
 
       Xid xid = new XidImpl("uhuhuhu".getBytes(), 126512, "auhsduashd".getBytes());
 
-      session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);
 
@@ -1459,7 +1462,7 @@ public class FailoverTest extends FailoverTestBase {
 
       Xid xid = new XidImpl("uhuhuhu".getBytes(), 126512, "auhsduashd".getBytes());
 
-      session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);
 
@@ -1692,7 +1695,7 @@ public class FailoverTest extends FailoverTestBase {
          for (int j = 0; j < numConsumersPerSession; j++) {
             SimpleString queueName = new SimpleString("queue" + i + "-" + j);
 
-            session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, queueName, null, true);
+            session.createQueue(new QueueConfiguration(queueName).setAddress(FailoverTestBase.ADDRESS));
 
             ClientConsumer consumer = session.createConsumer(queueName);
 
@@ -1732,7 +1735,7 @@ public class FailoverTest extends FailoverTestBase {
       createSessionFactory();
       ClientSession session = createSession(sf, true, true);
 
-      session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);
 
@@ -1762,7 +1765,7 @@ public class FailoverTest extends FailoverTestBase {
 
       ClientSession session = createSession(sf, true, true);
 
-      session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);
 
@@ -1841,7 +1844,7 @@ public class FailoverTest extends FailoverTestBase {
 
       ClientSession session = createSession(sf, true, true, 0);
 
-      session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);
 
@@ -1893,11 +1896,7 @@ public class FailoverTest extends FailoverTestBase {
 
       ClientSession session = createSession(sf, true, true, 0);
 
-      if (temporary) {
-         session.createTemporaryQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null);
-      } else {
-         session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, durable);
-      }
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS).setDurable(durable && !temporary).setTemporary(temporary));
 
       ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);
 
@@ -1924,7 +1923,7 @@ public class FailoverTest extends FailoverTestBase {
 
       final ClientSession session = createSession(sf, true, true, 0);
 
-      session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       final ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);
 
@@ -1978,7 +1977,7 @@ public class FailoverTest extends FailoverTestBase {
 
       final ClientSession session = createSession(sf, false, false);
 
-      session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);
 
@@ -2109,7 +2108,7 @@ public class FailoverTest extends FailoverTestBase {
 
       final ClientSession session = createSession(sf, false, false);
 
-      session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);
       sendMessages(session, producer, NUM_MESSAGES);
@@ -2376,7 +2375,7 @@ public class FailoverTest extends FailoverTestBase {
       ClientSession session = createSession(sf1, false, true, true);
 
       if (createQueue) {
-         session.createQueue(FailoverTestBase.ADDRESS, RoutingType.MULTICAST, FailoverTestBase.ADDRESS, null, false);
+         session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS).setDurable(false));
       }
 
       ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);

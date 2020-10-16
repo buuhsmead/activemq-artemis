@@ -32,18 +32,22 @@ public abstract class AbstractProtocolManager<P, I extends BaseInterceptor<P>, C
 
    private final Map<SimpleString, RoutingType> prefixes = new HashMap<>();
 
-   protected void invokeInterceptors(final List<I> interceptors, final P message, final C connection) {
+   private String securityDomain;
+
+   protected String invokeInterceptors(final List<I> interceptors, final P message, final C connection) {
       if (interceptors != null && !interceptors.isEmpty()) {
          for (I interceptor : interceptors) {
             try {
                if (!interceptor.intercept(message, connection)) {
-                  break;
+                  return interceptor.getClass().getName();
                }
             } catch (Exception e) {
-               ActiveMQServerLogger.LOGGER.failedToInvokeAninterceptor(e);
+               ActiveMQServerLogger.LOGGER.failedToInvokeAnInterceptor(e);
             }
          }
       }
+
+      return null;
    }
 
    @Override
@@ -63,5 +67,15 @@ public abstract class AbstractProtocolManager<P, I extends BaseInterceptor<P>, C
    @Override
    public Map<SimpleString, RoutingType> getPrefixes() {
       return prefixes;
+   }
+
+   @Override
+   public String getSecurityDomain() {
+      return securityDomain;
+   }
+
+   @Override
+   public void setSecurityDomain(String securityDomain) {
+      this.securityDomain = securityDomain;
    }
 }

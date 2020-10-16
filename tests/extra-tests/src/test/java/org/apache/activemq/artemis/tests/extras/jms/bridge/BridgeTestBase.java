@@ -37,8 +37,8 @@ import java.util.Set;
 import com.arjuna.ats.arjuna.coordinator.TransactionReaper;
 import com.arjuna.ats.arjuna.coordinator.TxControl;
 import com.arjuna.ats.internal.jta.transaction.arjunacore.TransactionManagerImple;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
-import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.management.AddressControl;
 import org.apache.activemq.artemis.api.core.management.QueueControl;
@@ -58,15 +58,12 @@ import org.apache.activemq.artemis.jms.client.ActiveMQDestination;
 import org.apache.activemq.artemis.jms.client.ActiveMQJMSConnectionFactory;
 import org.apache.activemq.artemis.jms.client.ActiveMQMessage;
 import org.apache.activemq.artemis.jms.client.ActiveMQXAConnectionFactory;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 
 public abstract class BridgeTestBase extends ActiveMQTestBase {
-
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
 
    protected ConnectionFactoryFactory cff0, cff1;
 
@@ -125,7 +122,7 @@ public abstract class BridgeTestBase extends ActiveMQTestBase {
       if (index == 1) {
          server = server1;
       }
-      assertTrue("queue '/queue/" + queueName + "' created", server.createQueue(SimpleString.toSimpleString(queueName), RoutingType.ANYCAST, SimpleString.toSimpleString(queueName), null, true, false) != null);
+      assertTrue("queue '/queue/" + queueName + "' created", server.createQueue(new QueueConfiguration(queueName).setRoutingType(RoutingType.ANYCAST)) != null);
    }
 
    @Override
@@ -395,8 +392,6 @@ public abstract class BridgeTestBase extends ActiveMQTestBase {
             // No *guarantee* that any messages will be received
             // but you still might get some depending on how/where the crash occurred
          }
-
-         BridgeTestBase.log.trace("Check complete");
 
       } finally {
          if (conn != null) {

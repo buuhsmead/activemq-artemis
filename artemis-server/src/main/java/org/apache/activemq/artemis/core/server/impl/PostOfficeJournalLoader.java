@@ -27,9 +27,10 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.Pair;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.config.Configuration;
-import org.apache.activemq.artemis.core.filter.Filter;
 import org.apache.activemq.artemis.core.filter.FilterUtils;
 import org.apache.activemq.artemis.core.filter.impl.FilterImpl;
 import org.apache.activemq.artemis.core.journal.Journal;
@@ -39,9 +40,9 @@ import org.apache.activemq.artemis.core.paging.PagingStore;
 import org.apache.activemq.artemis.core.paging.cursor.PageSubscriptionCounter;
 import org.apache.activemq.artemis.core.paging.impl.Page;
 import org.apache.activemq.artemis.core.persistence.AddressBindingInfo;
+import org.apache.activemq.artemis.core.persistence.AddressQueueStatus;
 import org.apache.activemq.artemis.core.persistence.GroupingInfo;
 import org.apache.activemq.artemis.core.persistence.QueueBindingInfo;
-import org.apache.activemq.artemis.core.persistence.AddressQueueStatus;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
 import org.apache.activemq.artemis.core.persistence.impl.PageCountPending;
 import org.apache.activemq.artemis.core.persistence.impl.journal.AddMessageRecord;
@@ -55,9 +56,7 @@ import org.apache.activemq.artemis.core.server.ActiveMQServerLogger;
 import org.apache.activemq.artemis.core.server.MessageReference;
 import org.apache.activemq.artemis.core.server.NodeManager;
 import org.apache.activemq.artemis.core.server.Queue;
-import org.apache.activemq.artemis.core.server.QueueConfig;
 import org.apache.activemq.artemis.core.server.QueueFactory;
-import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.core.server.group.GroupingHandler;
 import org.apache.activemq.artemis.core.server.group.impl.GroupBinding;
 import org.apache.activemq.artemis.core.server.management.ManagementService;
@@ -121,13 +120,9 @@ public class PostOfficeJournalLoader implements JournalLoader {
       for (final QueueBindingInfo queueBindingInfo : queueBindingInfos) {
          queueBindingInfosMap.put(queueBindingInfo.getId(), queueBindingInfo);
 
-         final Filter filter = FilterImpl.createFilter(queueBindingInfo.getFilterString());
-
-         final boolean isTopicIdentification = FilterUtils.isTopicIdentification(filter);
-
          if (postOffice.getBinding(queueBindingInfo.getQueueName()) != null) {
 
-            if (isTopicIdentification) {
+            if (FilterUtils.isTopicIdentification(FilterImpl.createFilter(queueBindingInfo.getFilterString()))) {
                final long tx = storageManager.generateID();
                storageManager.deleteQueueBinding(tx, queueBindingInfo.getId());
                storageManager.commitBindings(tx);
@@ -138,35 +133,35 @@ public class PostOfficeJournalLoader implements JournalLoader {
                queueBindingInfo.replaceQueueName(newName);
             }
          }
-         final QueueConfig.Builder queueConfigBuilder;
-         if (queueBindingInfo.getAddress() == null) {
-            queueConfigBuilder = QueueConfig.builderWith(queueBindingInfo.getId(), queueBindingInfo.getQueueName());
-         } else {
-            queueConfigBuilder = QueueConfig.builderWith(queueBindingInfo.getId(), queueBindingInfo.getQueueName(), queueBindingInfo.getAddress());
-         }
-         queueConfigBuilder.filter(filter).pagingManager(pagingManager)
-            .user(queueBindingInfo.getUser())
-            .durable(true)
-            .temporary(false)
-            .autoCreated(queueBindingInfo.isAutoCreated())
-            .purgeOnNoConsumers(queueBindingInfo.isPurgeOnNoConsumers())
-            .maxConsumers(queueBindingInfo.getMaxConsumers())
-            .exclusive(queueBindingInfo.isExclusive())
-            .groupRebalance(queueBindingInfo.isGroupRebalance())
-            .groupBuckets(queueBindingInfo.getGroupBuckets())
-            .groupFirstKey(queueBindingInfo.getGroupFirstKey())
-            .lastValue(queueBindingInfo.isLastValue())
-            .lastValueKey(queueBindingInfo.getLastValueKey())
-            .nonDestructive(queueBindingInfo.isNonDestructive())
-            .consumersBeforeDispatch(queueBindingInfo.getConsumersBeforeDispatch())
-            .delayBeforeDispatch(queueBindingInfo.getDelayBeforeDispatch())
-            .autoDelete(queueBindingInfo.isAutoDelete())
-            .autoDeleteDelay(queueBindingInfo.getAutoDeleteDelay())
-            .autoDeleteMessageCount(queueBindingInfo.getAutoDeleteMessageCount())
-            .routingType(RoutingType.getType(queueBindingInfo.getRoutingType()))
-            .configurationManaged((queueBindingInfo.isConfigurationManaged()))
-            .ringSize(queueBindingInfo.getRingSize());
-         final Queue queue = queueFactory.createQueueWith(queueConfigBuilder.build());
+
+         final Queue queue = queueFactory.createQueueWith(new QueueConfiguration(queueBindingInfo.getQueueName())
+                                                             .setId(queueBindingInfo.getId())
+                                                             .setAddress(queueBindingInfo.getAddress())
+                                                             .setFilterString(queueBindingInfo.getFilterString())
+                                                             .setUser(queueBindingInfo.getUser())
+                                                             .setDurable(true)
+                                                             .setTemporary(false)
+                                                             .setAutoCreated(queueBindingInfo.isAutoCreated())
+                                                             .setPurgeOnNoConsumers(queueBindingInfo.isPurgeOnNoConsumers())
+                                                             .setEnabled(queueBindingInfo.isEnabled())
+                                                             .setMaxConsumers(queueBindingInfo.getMaxConsumers())
+                                                             .setExclusive(queueBindingInfo.isExclusive())
+                                                             .setGroupRebalance(queueBindingInfo.isGroupRebalance())
+                                                             .setGroupBuckets(queueBindingInfo.getGroupBuckets())
+                                                             .setGroupFirstKey(queueBindingInfo.getGroupFirstKey())
+                                                             .setLastValue(queueBindingInfo.isLastValue())
+                                                             .setLastValueKey(queueBindingInfo.getLastValueKey())
+                                                             .setNonDestructive(queueBindingInfo.isNonDestructive())
+                                                             .setConsumersBeforeDispatch(queueBindingInfo.getConsumersBeforeDispatch())
+                                                             .setDelayBeforeDispatch(queueBindingInfo.getDelayBeforeDispatch())
+                                                             .setAutoDelete(queueBindingInfo.isAutoDelete())
+                                                             .setAutoDeleteDelay(queueBindingInfo.getAutoDeleteDelay())
+                                                             .setAutoDeleteMessageCount(queueBindingInfo.getAutoDeleteMessageCount())
+                                                             .setRoutingType(RoutingType.getType(queueBindingInfo.getRoutingType()))
+                                                             .setConfigurationManaged(queueBindingInfo.isConfigurationManaged())
+                                                             .setRingSize(queueBindingInfo.getRingSize()),
+                                                          pagingManager);
+
          queue.setConsumersRefCount(new QueueManagerImpl(((PostOfficeImpl)postOffice).getServer(), queueBindingInfo.getQueueName()));
 
          if (queueBindingInfo.getQueueStatusEncodings() != null) {
@@ -238,7 +233,7 @@ public class PostOfficeJournalLoader implements JournalLoader {
                record.getMessage().setScheduledDeliveryTime(scheduledDeliveryTime);
             }
 
-            MessageReference ref = postOffice.reroute(record.getMessage(), queue, null);
+            MessageReference ref = postOffice.reload(record.getMessage(), queue, null);
 
             ref.setDeliveryCount(record.getDeliveryCount());
 
@@ -252,7 +247,7 @@ public class PostOfficeJournalLoader implements JournalLoader {
    @Override
    public void handleNoMessageReferences(Map<Long, Message> messages) {
       for (Message msg : messages.values()) {
-         if (msg.getRefCount() == 0) {
+         if (msg.getRefCount() == 0 && msg.getDurableCount() == 0) {
             ActiveMQServerLogger.LOGGER.journalUnreferencedMessage(msg.getMessageID());
             try {
                storageManager.deleteMessage(msg.getMessageID());
@@ -308,7 +303,7 @@ public class PostOfficeJournalLoader implements JournalLoader {
          ActiveMQServerLogger.LOGGER.journalMessageInPreparedTX(queueID);
          return;
       }
-      postOffice.reroute(message, queue, tx);
+      postOffice.reload(message, queue, tx);
    }
 
    @Override
@@ -340,7 +335,7 @@ public class PostOfficeJournalLoader implements JournalLoader {
 
       tx.setState(Transaction.State.PREPARED);
 
-      resourceManager.putTransaction(xid, tx);
+      resourceManager.putTransaction(xid, tx, null);
    }
 
    /**

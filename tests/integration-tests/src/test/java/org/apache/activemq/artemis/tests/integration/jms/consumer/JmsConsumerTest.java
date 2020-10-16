@@ -32,6 +32,7 @@ import javax.jms.QueueBrowser;
 import javax.jms.Session;
 import javax.jms.TextMessage;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
@@ -42,7 +43,6 @@ import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.server.impl.AddressInfo;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.JMSTestBase;
 import org.apache.activemq.artemis.tests.util.Wait;
 import org.apache.activemq.artemis.utils.ReusableLatch;
@@ -51,8 +51,6 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class JmsConsumerTest extends JMSTestBase {
-
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
 
    private static final String Q_NAME = "ConsumerTestQueue";
 
@@ -112,9 +110,9 @@ public class JmsConsumerTest extends JMSTestBase {
       TextMessage m3 = (TextMessage) cons.receive(2000);
       Assert.assertNull("m3 should be null", m3);
 
-      System.out.println("received m1: " + m1.getText());
-      System.out.println("received m2: " + m2.getText());
-      System.out.println("received m3: " + m3);
+      instanceLog.debug("received m1: " + m1.getText());
+      instanceLog.debug("received m2: " + m2.getText());
+      instanceLog.debug("received m3: " + m3);
       sess.commit();
    }
 
@@ -341,8 +339,6 @@ public class JmsConsumerTest extends JMSTestBase {
 
    @Test
    public void testPreCommitAcksWithMessageExpiry() throws Exception {
-      JmsConsumerTest.log.info("starting test");
-
       conn = cf.createConnection();
       Session session = conn.createSession(false, ActiveMQJMSConstants.PRE_ACKNOWLEDGE);
       jBossQueue = ActiveMQJMSClient.createQueue(JmsConsumerTest.Q_NAME);
@@ -766,11 +762,9 @@ public class JmsConsumerTest extends JMSTestBase {
 
       for (int i = 0; i < 50; i++) {
          String txt = consumer.receiveBody(String.class, 5000);
-         System.out.println("TXT:" + txt);
          Assert.assertNotNull(txt);
 
          txt = consumer.receiveBody(String.class, 5000);
-         System.out.println("TXT:" + txt);
          Assert.assertNotNull(txt);
       }
 
@@ -832,8 +826,7 @@ public class JmsConsumerTest extends JMSTestBase {
       //Create a new address along with 1 queue for it (this cases a wildcard address to get registered
       //inside the WildcardAddressManager manager when the binding is created)
       server.addAddressInfo(new AddressInfo(SimpleString.toSimpleString(queue1), RoutingType.ANYCAST));
-      server.createQueue(SimpleString.toSimpleString(queue1), RoutingType.ANYCAST,
-            SimpleString.toSimpleString(queue1), null, false, false);
+      server.createQueue(new QueueConfiguration(queue1).setRoutingType(RoutingType.ANYCAST).setDurable(false));
 
       //create addresses for both topics
       server.addAddressInfo(new AddressInfo(SimpleString.toSimpleString(topic1), RoutingType.MULTICAST));
@@ -866,8 +859,7 @@ public class JmsConsumerTest extends JMSTestBase {
       //Create a new address along with 1 queue for it (this cases a wildcard address to get registered
       //inside the WildcardAddressManager manager when the binding is created)
       server.addAddressInfo(new AddressInfo(SimpleString.toSimpleString(queue1), RoutingType.ANYCAST));
-      server.createQueue(SimpleString.toSimpleString(queue1), RoutingType.ANYCAST,
-            SimpleString.toSimpleString(queue1), null, false, false);
+      server.createQueue(new QueueConfiguration(queue1).setRoutingType(RoutingType.ANYCAST).setDurable(false));
 
       //create addresses for both topics
       server.addAddressInfo(new AddressInfo(SimpleString.toSimpleString(topic1), RoutingType.MULTICAST));

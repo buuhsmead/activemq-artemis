@@ -88,6 +88,8 @@ public class CoreProtocolManager implements ProtocolManager<Interceptor> {
 
    private final Map<SimpleString, RoutingType> prefixes = new HashMap<>();
 
+   private String securityDomain;
+
    public CoreProtocolManager(final CoreProtocolManagerFactory factory,
                               final ActiveMQServer server,
                               final List<Interceptor> incomingInterceptors,
@@ -127,7 +129,7 @@ public class CoreProtocolManager implements ProtocolManager<Interceptor> {
 
       Executor connectionExecutor = server.getExecutorFactory().getExecutor();
 
-      final CoreRemotingConnection rc = new RemotingConnectionImpl(new ServerPacketDecoder(),
+      final CoreRemotingConnection rc = new RemotingConnectionImpl(new ServerPacketDecoder(server.getStorageManager()),
                                                                    connection, incomingInterceptors, outgoingInterceptors, server.getNodeID(),
                                                                    connectionExecutor);
 
@@ -221,6 +223,16 @@ public class CoreProtocolManager implements ProtocolManager<Interceptor> {
       return prefixes;
    }
 
+   @Override
+   public void setSecurityDomain(String securityDomain) {
+      this.securityDomain = securityDomain;
+   }
+
+   @Override
+   public String getSecurityDomain() {
+      return securityDomain;
+   }
+
    private boolean isArtemis(ActiveMQBuffer buffer) {
       return buffer.getByte(0) == 'A' &&
          buffer.getByte(1) == 'R' &&
@@ -311,6 +323,7 @@ public class CoreProtocolManager implements ProtocolManager<Interceptor> {
                         }
                      });
                   } catch (RejectedExecutionException ignored) {
+                     logger.debug(ignored.getMessage(), ignored);
                      // this could happen during a shutdown and we don't care, if we lost a nodeDown during a shutdown
                      // what can we do anyways?
                   }

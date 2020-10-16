@@ -16,6 +16,7 @@
  */
 package org.apache.activemq.artemis.tests.integration.ssl;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
@@ -27,6 +28,7 @@ import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.remoting.impl.netty.NettyAcceptor;
 import org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -61,10 +63,7 @@ public class SSLProviderTwoWayTest extends SSLTestBase {
 
    @Test
    public void testProviderLoading2Way() throws Exception {
-      if (!isOpenSSLSupported()) {
-         System.out.println("*** Skip test on un-supported platform.");
-         return;
-      }
+      Assume.assumeTrue(isOpenSSLSupported());
 
       final String text = "Hello SSL!";
       StringBuilder uri = new StringBuilder("tcp://" + tc.getParams().get(TransportConstants.HOST_PROP_NAME).toString()
@@ -79,11 +78,10 @@ public class SSLProviderTwoWayTest extends SSLTestBase {
       uri.append("&").append(TransportConstants.TRUSTSTORE_PATH_PROP_NAME).append("=").append(CLIENT_SIDE_TRUSTSTORE);
       uri.append("&").append(TransportConstants.TRUSTSTORE_PASSWORD_PROP_NAME).append("=").append(PASSWORD);
 
-      System.out.println("uri: " + uri.toString());
       ServerLocator locator = addServerLocator(ActiveMQClient.createServerLocator(uri.toString()));
       ClientSessionFactory sf = addSessionFactory(createSessionFactory(locator));
       ClientSession session = addClientSession(sf.createSession(false, true, true));
-      session.createQueue(QUEUE, RoutingType.ANYCAST, QUEUE);
+      session.createQueue(new QueueConfiguration(QUEUE).setRoutingType(RoutingType.ANYCAST));
       ClientProducer producer = addClientProducer(session.createProducer(QUEUE));
 
       ClientMessage message = createTextMessage(session, text);

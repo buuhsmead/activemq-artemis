@@ -42,6 +42,7 @@ import org.apache.activemq.artemis.core.journal.impl.dataformat.JournalDeleteRec
 import org.apache.activemq.artemis.core.journal.impl.dataformat.JournalInternalRecord;
 import org.apache.activemq.artemis.core.journal.impl.dataformat.JournalRollbackRecordTX;
 import org.apache.activemq.artemis.utils.collections.ConcurrentLongHashMap;
+import org.apache.activemq.artemis.utils.collections.SparseArrayLinkedList;
 
 /**
  * Journal used at a replicating backup server during the synchronization of data with the 'live'
@@ -171,6 +172,13 @@ public final class FileWrapperJournal extends JournalBase {
       writeRecord(deleteRecord, false, -1, false, callback);
    }
 
+
+   @Override
+   public boolean tryAppendDeleteRecord(long id, boolean sync, IOCompletion callback) throws Exception {
+      appendDeleteRecord(id, sync, callback);
+      return true;
+   }
+
    @Override
    public void appendDeleteRecordTransactional(long txID, long id, EncodingSupport record) throws Exception {
       JournalInternalRecord deleteRecordTX = new JournalDeleteRecordTX(txID, id, record);
@@ -196,6 +204,18 @@ public final class FileWrapperJournal extends JournalBase {
                                   IOCompletion callback) throws Exception {
       JournalInternalRecord updateRecord = new JournalAddRecord(false, id, recordType, persister, record);
       writeRecord(updateRecord, false, -1, false, callback);
+   }
+
+   @Override
+   public boolean tryAppendUpdateRecord(long id,
+                                     byte recordType,
+                                     Persister persister,
+                                     Object record,
+                                     boolean sync,
+                                     IOCompletion callback) throws Exception {
+      JournalInternalRecord updateRecord = new JournalAddRecord(false, id, recordType, persister, record);
+      writeRecord(updateRecord, false, -1, false, callback);
+      return true;
    }
 
    @Override
@@ -268,6 +288,14 @@ public final class FileWrapperJournal extends JournalBase {
 
    @Override
    public JournalLoadInformation load(List<RecordInfo> committedRecords,
+                                      List<PreparedTransactionInfo> preparedTransactions,
+                                      TransactionFailureCallback transactionFailure,
+                                      boolean fixbadtx) throws Exception {
+      throw new ActiveMQUnsupportedPacketException();
+   }
+
+   @Override
+   public JournalLoadInformation load(SparseArrayLinkedList<RecordInfo> committedRecords,
                                       List<PreparedTransactionInfo> preparedTransactions,
                                       TransactionFailureCallback transactionFailure,
                                       boolean fixbadtx) throws Exception {

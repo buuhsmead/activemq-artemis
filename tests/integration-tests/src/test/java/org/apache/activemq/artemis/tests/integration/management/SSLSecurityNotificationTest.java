@@ -25,6 +25,7 @@ import java.util.Set;
 
 import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
@@ -85,6 +86,7 @@ public class SSLSecurityNotificationTest extends ActiveMQTestBase {
       ServerLocator locator = addServerLocator(ActiveMQClient.createServerLocatorWithoutHA(tc));
       ClientSessionFactory sf = addSessionFactory(createSessionFactory(locator));
 
+      long start = System.currentTimeMillis();
       try {
          sf.createSession();
          Assert.fail("authentication must fail and a notification of security violation must be sent");
@@ -96,6 +98,9 @@ public class SSLSecurityNotificationTest extends ActiveMQTestBase {
       Assert.assertEquals(null, notifications[0].getObjectProperty(ManagementHelper.HDR_USER));
       Assert.assertEquals("CN=Bad Client, OU=Artemis, O=ActiveMQ, L=AMQ, ST=AMQ, C=AMQ", notifications[0].getObjectProperty(ManagementHelper.HDR_CERT_SUBJECT_DN).toString());
       Assert.assertTrue(notifications[0].getObjectProperty(ManagementHelper.HDR_REMOTE_ADDRESS).toString().startsWith("/127.0.0.1"));
+      Assert.assertTrue(notifications[0].getTimestamp() >= start);
+      Assert.assertTrue((long) notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP) >= start);
+      Assert.assertEquals(notifications[0].getTimestamp(), (long) notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP));
    }
 
    @Test
@@ -121,8 +126,10 @@ public class SSLSecurityNotificationTest extends ActiveMQTestBase {
 
       ClientSession guestSession = sf.createSession("guest", "guest", false, true, true, false, 1);
 
-      guestSession.createQueue(address, RoutingType.ANYCAST, queue, true);
+      guestSession.createQueue(new QueueConfiguration(queue).setAddress(address).setRoutingType(RoutingType.ANYCAST));
       SSLSecurityNotificationTest.flush(notifConsumer);
+
+      long start = System.currentTimeMillis();
       guestSession.createConsumer(queue);
 
       ClientMessage[] notifications = SecurityNotificationTest.consumeMessages(1, notifConsumer);
@@ -131,6 +138,9 @@ public class SSLSecurityNotificationTest extends ActiveMQTestBase {
       Assert.assertEquals("first", notifications[0].getObjectProperty(ManagementHelper.HDR_VALIDATED_USER).toString());
       Assert.assertEquals(address.toString(), notifications[0].getObjectProperty(ManagementHelper.HDR_ADDRESS).toString());
       Assert.assertEquals("CN=ActiveMQ Artemis Client, OU=Artemis, O=ActiveMQ, L=AMQ, ST=AMQ, C=AMQ", notifications[0].getObjectProperty(ManagementHelper.HDR_CERT_SUBJECT_DN).toString());
+      Assert.assertTrue(notifications[0].getTimestamp() >= start);
+      Assert.assertTrue((long) notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP) >= start);
+      Assert.assertEquals(notifications[0].getTimestamp(), (long) notifications[0].getObjectProperty(ManagementHelper.HDR_NOTIFICATION_TIMESTAMP));
 
       guestSession.close();
    }
@@ -173,7 +183,7 @@ public class SSLSecurityNotificationTest extends ActiveMQTestBase {
       adminSession = sf.createSession(true, true, 1);
       adminSession.start();
 
-      adminSession.createTemporaryQueue(ActiveMQDefaultConfiguration.getDefaultManagementNotificationAddress(), notifQueue);
+      adminSession.createQueue(new QueueConfiguration(notifQueue).setAddress(ActiveMQDefaultConfiguration.getDefaultManagementNotificationAddress()).setDurable(false).setTemporary(true));
 
       notifConsumer = adminSession.createConsumer(notifQueue);
    }
@@ -195,21 +205,11 @@ public class SSLSecurityNotificationTest extends ActiveMQTestBase {
       ClientMessage m = null;
       for (int i = 0; i < expected; i++) {
          m = consumer.receive(500);
-         if (m != null) {
-            for (SimpleString key : m.getPropertyNames()) {
-               System.out.println(key + "=" + m.getObjectProperty(key));
-            }
-         }
          Assert.assertNotNull("expected to received " + expected + " messages, got only " + i, m);
          messages[i] = m;
          m.acknowledge();
       }
       m = consumer.receiveImmediate();
-      if (m != null) {
-         for (SimpleString key : m.getPropertyNames()) {
-            System.out.println(key + "=" + m.getObjectProperty(key));
-         }
-      }
       Assert.assertNull("received one more message than expected (" + expected + ")", m);
 
       return messages;
