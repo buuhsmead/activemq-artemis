@@ -90,6 +90,8 @@ public class AddressSettings implements Mergeable<AddressSettings>, Serializable
 
    public static final DeletionPolicy DEFAULT_CONFIG_DELETE_ADDRESSES = DeletionPolicy.OFF;
 
+   public static final DeletionPolicy DEFAULT_CONFIG_DELETE_DIVERTS = DeletionPolicy.OFF;
+
    public static final long DEFAULT_REDISTRIBUTION_DELAY = -1;
 
    public static final boolean DEFAULT_AUTO_CREATE_EXPIRY_RESOURCES = false;
@@ -126,6 +128,10 @@ public class AddressSettings implements Mergeable<AddressSettings>, Serializable
    public static final SimpleString DEFAULT_DEAD_LETTER_QUEUE_SUFFIX = SimpleString.toSimpleString("");
 
    public static final boolean DEFAULT_ENABLE_METRICS = true;
+
+   public static final int MANAGEMENT_MESSAGE_ATTRIBUTE_SIZE_LIMIT = 256;
+
+   public static final SlowConsumerThresholdMeasurementUnit DEFAULT_SLOW_CONSUMER_THRESHOLD_MEASUREMENT_UNIT = SlowConsumerThresholdMeasurementUnit.MESSAGES_PER_SECOND;
 
    private AddressFullMessagePolicy addressFullMessagePolicy = null;
 
@@ -181,6 +187,8 @@ public class AddressSettings implements Mergeable<AddressSettings>, Serializable
 
    private Long slowConsumerThreshold = null;
 
+   private SlowConsumerThresholdMeasurementUnit slowConsumerThresholdMeasurementUnit = DEFAULT_SLOW_CONSUMER_THRESHOLD_MEASUREMENT_UNIT;
+
    private Long slowConsumerCheckPeriod = null;
 
    private SlowConsumerPolicy slowConsumerPolicy = null;
@@ -221,6 +229,8 @@ public class AddressSettings implements Mergeable<AddressSettings>, Serializable
 
    private DeletionPolicy configDeleteAddresses = null;
 
+   private DeletionPolicy configDeleteDiverts = null;
+
    private Integer managementBrowsePageSize = AddressSettings.MANAGEMENT_BROWSE_PAGE_SIZE;
 
    private Long maxSizeBytesRejectThreshold = null;
@@ -253,7 +263,7 @@ public class AddressSettings implements Mergeable<AddressSettings>, Serializable
 
    private Boolean enableMetrics = null;
 
-   private SimpleString pageStoreName = null;
+   private Integer managementMessageAttributeSizeLimit = null;
 
    //from amq5
    //make it transient
@@ -320,7 +330,8 @@ public class AddressSettings implements Mergeable<AddressSettings>, Serializable
       this.defaultGroupFirstKey = other.defaultGroupFirstKey;
       this.defaultRingSize = other.defaultRingSize;
       this.enableMetrics = other.enableMetrics;
-      this.pageStoreName = other.pageStoreName;
+      this.managementMessageAttributeSizeLimit = other.managementMessageAttributeSizeLimit;
+      this.slowConsumerThresholdMeasurementUnit = other.slowConsumerThresholdMeasurementUnit;
    }
 
    public AddressSettings() {
@@ -460,6 +471,15 @@ public class AddressSettings implements Mergeable<AddressSettings>, Serializable
    public AddressSettings setConfigDeleteAddresses(DeletionPolicy configDeleteAddresses) {
       this.configDeleteAddresses = configDeleteAddresses;
       return this;
+   }
+
+   public AddressSettings setConfigDeleteDiverts(DeletionPolicy configDeleteDiverts) {
+      this.configDeleteDiverts = configDeleteDiverts;
+      return this;
+   }
+
+   public DeletionPolicy getConfigDeleteDiverts() {
+      return configDeleteDiverts != null ? configDeleteDiverts : AddressSettings.DEFAULT_CONFIG_DELETE_DIVERTS;
    }
 
    public int getDefaultMaxConsumers() {
@@ -770,6 +790,15 @@ public class AddressSettings implements Mergeable<AddressSettings>, Serializable
       return this;
    }
 
+   public SlowConsumerThresholdMeasurementUnit getSlowConsumerThresholdMeasurementUnit() {
+      return slowConsumerThresholdMeasurementUnit != null ? slowConsumerThresholdMeasurementUnit : AddressSettings.DEFAULT_SLOW_CONSUMER_THRESHOLD_MEASUREMENT_UNIT;
+   }
+
+   public AddressSettings setSlowConsumerThresholdMeasurementUnit(final SlowConsumerThresholdMeasurementUnit slowConsumerThresholdMeasurementUnit) {
+      this.slowConsumerThresholdMeasurementUnit = slowConsumerThresholdMeasurementUnit;
+      return this;
+   }
+
    public long getSlowConsumerCheckPeriod() {
       return slowConsumerCheckPeriod != null ? slowConsumerCheckPeriod : AddressSettings.DEFAULT_SLOW_CONSUMER_CHECK_PERIOD;
    }
@@ -917,12 +946,12 @@ public class AddressSettings implements Mergeable<AddressSettings>, Serializable
       return this;
    }
 
-   public SimpleString getPageStoreName() {
-      return pageStoreName;
+   public int getManagementMessageAttributeSizeLimit() {
+      return managementMessageAttributeSizeLimit != null ? managementMessageAttributeSizeLimit : AddressSettings.MANAGEMENT_MESSAGE_ATTRIBUTE_SIZE_LIMIT;
    }
 
-   public AddressSettings setPageStoreName(final SimpleString pageStoreName) {
-      this.pageStoreName = pageStoreName;
+   public AddressSettings setManagementMessageAttributeSizeLimit(int managementMessageAttributeSizeLimit) {
+      this.managementMessageAttributeSizeLimit = managementMessageAttributeSizeLimit;
       return this;
    }
 
@@ -946,7 +975,7 @@ public class AddressSettings implements Mergeable<AddressSettings>, Serializable
          pageMaxCache = merged.pageMaxCache;
       }
       if (pageSizeBytes == null) {
-         pageSizeBytes = merged.getPageSizeBytes();
+         pageSizeBytes = merged.pageSizeBytes;
       }
       if (messageCounterHistoryDayLimit == null) {
          messageCounterHistoryDayLimit = merged.messageCounterHistoryDayLimit;
@@ -989,6 +1018,9 @@ public class AddressSettings implements Mergeable<AddressSettings>, Serializable
       }
       if (slowConsumerThreshold == null) {
          slowConsumerThreshold = merged.slowConsumerThreshold;
+      }
+      if (slowConsumerThresholdMeasurementUnit == null) {
+         slowConsumerThresholdMeasurementUnit = merged.slowConsumerThresholdMeasurementUnit;
       }
       if (slowConsumerCheckPeriod == null) {
          slowConsumerCheckPeriod = merged.slowConsumerCheckPeriod;
@@ -1040,6 +1072,9 @@ public class AddressSettings implements Mergeable<AddressSettings>, Serializable
       }
       if (managementBrowsePageSize == null) {
          managementBrowsePageSize = merged.managementBrowsePageSize;
+      }
+      if (managementMessageAttributeSizeLimit == null) {
+         managementMessageAttributeSizeLimit = merged.managementMessageAttributeSizeLimit;
       }
       if (queuePrefetch == null) {
          queuePrefetch = merged.queuePrefetch;
@@ -1118,9 +1153,6 @@ public class AddressSettings implements Mergeable<AddressSettings>, Serializable
       }
       if (enableMetrics == null) {
          enableMetrics = merged.enableMetrics;
-      }
-      if (pageStoreName == null) {
-         pageStoreName = merged.pageStoreName;
       }
    }
 
@@ -1336,9 +1368,15 @@ public class AddressSettings implements Mergeable<AddressSettings>, Serializable
       }
 
       if (buffer.readableBytes() > 0) {
-         pageStoreName = buffer.readNullableSimpleString();
+         managementMessageAttributeSizeLimit = BufferHelper.readNullableInteger(buffer);
       }
 
+      if (buffer.readableBytes() > 0) {
+         Integer slowConsumerMeasurementUnitEnumValue = BufferHelper.readNullableInteger(buffer);
+         if (slowConsumerMeasurementUnitEnumValue != null) {
+            slowConsumerThresholdMeasurementUnit = SlowConsumerThresholdMeasurementUnit.valueOf(slowConsumerMeasurementUnitEnumValue);
+         }
+      }
    }
 
    @Override
@@ -1403,7 +1441,8 @@ public class AddressSettings implements Mergeable<AddressSettings>, Serializable
          SimpleString.sizeofNullableString(expiryQueueSuffix) +
          BufferHelper.sizeOfNullableBoolean(enableMetrics) +
          BufferHelper.sizeOfNullableBoolean(defaultGroupRebalancePauseDispatch) +
-         SimpleString.sizeofNullableString(pageStoreName);
+         BufferHelper.sizeOfNullableInteger(managementMessageAttributeSizeLimit) +
+         BufferHelper.sizeOfNullableInteger(slowConsumerThresholdMeasurementUnit.getValue());
    }
 
    @Override
@@ -1530,7 +1569,9 @@ public class AddressSettings implements Mergeable<AddressSettings>, Serializable
 
       BufferHelper.writeNullableBoolean(buffer, defaultGroupRebalancePauseDispatch);
 
-      buffer.writeNullableSimpleString(pageStoreName);
+      BufferHelper.writeNullableInteger(buffer, managementMessageAttributeSizeLimit);
+
+      BufferHelper.writeNullableInteger(buffer, slowConsumerThresholdMeasurementUnit == null ? null : slowConsumerThresholdMeasurementUnit.getValue());
    }
 
    /* (non-Javadoc)
@@ -1579,6 +1620,7 @@ public class AddressSettings implements Mergeable<AddressSettings>, Serializable
       result = prime * result + ((autoDeleteAddresses == null) ? 0 : autoDeleteAddresses.hashCode());
       result = prime * result + ((autoDeleteAddressesDelay == null) ? 0 : autoDeleteAddressesDelay.hashCode());
       result = prime * result + ((configDeleteAddresses == null) ? 0 : configDeleteAddresses.hashCode());
+      result = prime * result + ((configDeleteDiverts == null) ? 0 : configDeleteDiverts.hashCode());
       result = prime * result + ((managementBrowsePageSize == null) ? 0 : managementBrowsePageSize.hashCode());
       result = prime * result + ((queuePrefetch == null) ? 0 : queuePrefetch.hashCode());
       result = prime * result + ((maxSizeBytesRejectThreshold == null) ? 0 : maxSizeBytesRejectThreshold.hashCode());
@@ -1602,7 +1644,8 @@ public class AddressSettings implements Mergeable<AddressSettings>, Serializable
       result = prime * result + ((expiryQueuePrefix == null) ? 0 : expiryQueuePrefix.hashCode());
       result = prime * result + ((expiryQueueSuffix == null) ? 0 : expiryQueueSuffix.hashCode());
       result = prime * result + ((enableMetrics == null) ? 0 : enableMetrics.hashCode());
-      result = prime * result + ((pageStoreName == null) ? 0 : pageStoreName.hashCode());
+      result = prime * result + ((managementMessageAttributeSizeLimit == null) ? 0 : managementMessageAttributeSizeLimit.hashCode());
+      result = prime * result + ((slowConsumerThresholdMeasurementUnit == null) ? 0 : slowConsumerThresholdMeasurementUnit.hashCode());
       return result;
    }
 
@@ -1813,10 +1856,20 @@ public class AddressSettings implements Mergeable<AddressSettings>, Serializable
             return false;
       } else if (!configDeleteAddresses.equals(other.configDeleteAddresses))
          return false;
+      if (configDeleteDiverts == null) {
+         if (other.configDeleteDiverts != null)
+            return false;
+      } else if (!configDeleteDiverts.equals(other.configDeleteDiverts))
+         return false;
       if (managementBrowsePageSize == null) {
          if (other.managementBrowsePageSize != null)
             return false;
       } else if (!managementBrowsePageSize.equals(other.managementBrowsePageSize))
+         return false;
+      if (managementMessageAttributeSizeLimit == null) {
+         if (other.managementMessageAttributeSizeLimit != null)
+            return false;
+      } else if (!managementMessageAttributeSizeLimit.equals(other.managementMessageAttributeSizeLimit))
          return false;
       if (queuePrefetch == null) {
          if (other.queuePrefetch != null)
@@ -1950,10 +2003,7 @@ public class AddressSettings implements Mergeable<AddressSettings>, Serializable
       } else if (!enableMetrics.equals(other.enableMetrics))
          return false;
 
-      if (pageStoreName == null) {
-         if (other.pageStoreName != null)
-            return false;
-      } else if (!pageStoreName.equals(other.pageStoreName))
+      if (slowConsumerThresholdMeasurementUnit != other.slowConsumerThresholdMeasurementUnit)
          return false;
 
       return true;
@@ -2011,6 +2061,8 @@ public class AddressSettings implements Mergeable<AddressSettings>, Serializable
          sendToDLAOnNoRoute +
          ", slowConsumerThreshold=" +
          slowConsumerThreshold +
+         ", slowConsumerThresholdMeasurementUnit=" +
+         slowConsumerThresholdMeasurementUnit +
          ", slowConsumerCheckPeriod=" +
          slowConsumerCheckPeriod +
          ", slowConsumerPolicy=" +
@@ -2042,9 +2094,13 @@ public class AddressSettings implements Mergeable<AddressSettings>, Serializable
          ", autoDeleteAddressesDelay=" +
          autoDeleteAddressesDelay +
          ", configDeleteAddresses=" +
-         configDeleteAddresses +
+         configDeleteAddresses  +
+         ", configDeleteDiverts=" +
+         configDeleteDiverts +
          ", managementBrowsePageSize=" +
          managementBrowsePageSize +
+         ", managementMessageAttributeSizeLimit=" +
+         managementMessageAttributeSizeLimit +
          ", defaultMaxConsumers=" +
          defaultMaxConsumers +
          ", defaultPurgeOnNoConsumers=" +
@@ -2085,7 +2141,6 @@ public class AddressSettings implements Mergeable<AddressSettings>, Serializable
          expiryQueueSuffix +
          ", enableMetrics=" +
          enableMetrics +
-         ", pageAddress=" + pageStoreName +
          "]";
    }
 }

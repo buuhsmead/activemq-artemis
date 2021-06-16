@@ -73,8 +73,8 @@ public interface ICoreMessage extends Message {
    boolean isServerMessage();
 
    /**
-    * The body used for this message.
-    *
+    * The buffer to write the body.
+    * Warning: If you just want to read the content of a message, use getDataBuffer() or getReadOnlyBuffer();
     * @return
     */
    @Override
@@ -102,10 +102,11 @@ public interface ICoreMessage extends Message {
 
    /**
     * @return Returns the message in Map form, useful when encoding to JSON
+    * @param valueSizeLimit
     */
    @Override
-   default Map<String, Object> toMap() {
-      Map map = toPropertyMap();
+   default Map<String, Object> toMap(int valueSizeLimit) {
+      Map map = toPropertyMap(valueSizeLimit);
       map.put("messageID", getMessageID());
       Object userID = getUserID();
       if (getUserID() != null) {

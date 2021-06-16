@@ -35,7 +35,6 @@ import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.core.exception.ActiveMQXAException;
 import org.apache.activemq.artemis.core.io.IOCallback;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
-import org.apache.activemq.artemis.core.protocol.core.impl.CoreProtocolManager;
 import org.apache.activemq.artemis.core.protocol.core.impl.PacketImpl;
 import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.ActiveMQExceptionMessage;
 import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.ActiveMQExceptionMessage_V2;
@@ -98,6 +97,8 @@ import org.apache.activemq.artemis.core.server.ServerSession;
 import org.apache.activemq.artemis.logs.AuditLogger;
 import org.apache.activemq.artemis.spi.core.protocol.EmbedMessageUtil;
 import org.apache.activemq.artemis.spi.core.remoting.Connection;
+import org.apache.activemq.artemis.utils.pools.MpscPool;
+import org.apache.activemq.artemis.utils.pools.Pool;
 import org.apache.activemq.artemis.utils.SimpleFuture;
 import org.apache.activemq.artemis.utils.SimpleFutureImpl;
 import org.apache.activemq.artemis.utils.actors.Actor;
@@ -144,6 +145,8 @@ import static org.apache.activemq.artemis.core.protocol.core.impl.PacketImpl.SES
 
 public class ServerSessionPacketHandler implements ChannelHandler {
 
+   private static final int MAX_CACHED_NULL_RESPONSES = 32;
+
    private static final Logger logger = Logger.getLogger(ServerSessionPacketHandler.class);
 
    private final ServerSession session;
@@ -158,8 +161,6 @@ public class ServerSessionPacketHandler implements ChannelHandler {
 
    private final ArtemisExecutor callExecutor;
 
-   private final CoreProtocolManager manager;
-
    // The current currentLargeMessage being processed
    private volatile LargeServerMessage currentLargeMessage;
 
@@ -167,18 +168,18 @@ public class ServerSessionPacketHandler implements ChannelHandler {
 
    private final Object largeMessageLock = new Object();
 
-   public ServerSessionPacketHandler(final ActiveMQServer server,
-                                     final CoreProtocolManager manager,
-                                     final ServerSession session,
-                                     final StorageManager storageManager,
-                                     final Channel channel) {
-      this.manager = manager;
+   private final Pool<NullResponseMessage> poolNullResponse;
 
+   private final Pool<NullResponseMessage_V2> poolNullResponseV2;
+
+   public ServerSessionPacketHandler(final ActiveMQServer server,
+                                     final ServerSession session,
+                                     final Channel channel) {
       this.session = session;
 
       session.addCloseable((boolean failed) -> clearLargeMessage());
 
-      this.storageManager = storageManager;
+      this.storageManager = server.getStorageManager();
 
       this.channel = channel;
 
@@ -195,6 +196,11 @@ public class ServerSessionPacketHandler implements ChannelHandler {
       this.packetActor = new Actor<>(callExecutor, this::onMessagePacket);
 
       this.direct = conn.isDirectDeliver();
+
+      // no confirmation window size means no resend cache hence NullResponsePackets
+      // won't get cached on it because need confirmation
+      poolNullResponse = new MpscPool<>(this.channel.getConfirmationWindowSize() == -1 ? MAX_CACHED_NULL_RESPONSES : 0, NullResponseMessage::reset, () -> new NullResponseMessage());
+      poolNullResponseV2 = new MpscPool<>(this.channel.getConfirmationWindowSize() == -1 ? MAX_CACHED_NULL_RESPONSES : 0, NullResponseMessage_V2::reset, () -> new NullResponseMessage_V2());
    }
 
    private void clearLargeMessage() {
@@ -653,15 +659,31 @@ public class ServerSessionPacketHandler implements ChannelHandler {
       return RoutingType.MULTICAST;
    }
 
+   private boolean requireNullResponseMessage_V1(Packet packet) {
+      return !packet.isResponseAsync() || channel.getConnection().isVersionBeforeAsyncResponseChange();
+   }
+
+   private NullResponseMessage createNullResponseMessage_V1(Packet packet) {
+      assert requireNullResponseMessage_V1(packet);
+      return  poolNullResponse.borrow();
+   }
+
+   private NullResponseMessage_V2 createNullResponseMessage_V2(Packet packet) {
+      assert !requireNullResponseMessage_V1(packet);
+      NullResponseMessage_V2 response;
+      response = poolNullResponseV2.borrow();
+
+      // this should be already set by the channel too, but let's do it just in case
+      response.setCorrelationID(packet.getCorrelationID());
+
+      return response;
+   }
 
    private Packet createNullResponseMessage(Packet packet) {
-      final Packet response;
-      if (!packet.isResponseAsync() || channel.getConnection().isVersionBeforeAsyncResponseChange()) {
-         response = new NullResponseMessage();
-      } else {
-         response = new NullResponseMessage_V2(packet.getCorrelationID());
+      if (requireNullResponseMessage_V1(packet)) {
+         return createNullResponseMessage_V1(packet);
       }
-      return response;
+      return createNullResponseMessage_V2(packet);
    }
 
    private Packet createSessionXAResponseMessage(Packet packet) {
@@ -672,6 +694,19 @@ public class ServerSessionPacketHandler implements ChannelHandler {
          response = new SessionXAResponseMessage(false, XAResource.XA_OK, null);
       }
       return response;
+   }
+
+   private void releaseResponse(Packet packet) {
+      if (poolNullResponse == null || poolNullResponseV2 == null) {
+         return;
+      }
+      if (packet instanceof NullResponseMessage) {
+         poolNullResponse.release((NullResponseMessage) packet);
+         return;
+      }
+      if (packet instanceof NullResponseMessage_V2) {
+         poolNullResponseV2.release((NullResponseMessage_V2) packet);
+      }
    }
 
    private void onSessionAcknowledge(Packet packet) {
@@ -921,7 +956,11 @@ public class ServerSessionPacketHandler implements ChannelHandler {
       }
 
       if (response != null) {
-         channel.send(response);
+         try {
+            channel.send(response);
+         } finally {
+            releaseResponse(response);
+         }
       }
 
       if (closeChannel) {
@@ -965,9 +1004,6 @@ public class ServerSessionPacketHandler implements ChannelHandler {
       // before we have transferred the connection, leaving it in a started state
       session.setTransferring(true);
 
-      List<CloseListener> closeListeners = remotingConnection.removeCloseListeners();
-      List<FailureListener> failureListeners = remotingConnection.removeFailureListeners();
-
       // Note. We do not destroy the replicating connection here. In the case the live server has really crashed
       // then the connection will get cleaned up anyway when the server ping timeout kicks in.
       // In the case the live server is really still up, i.e. a split brain situation (or in tests), then closing
@@ -979,12 +1015,11 @@ public class ServerSessionPacketHandler implements ChannelHandler {
 
       newConnection.syncIDGeneratorSequence(remotingConnection.getIDGeneratorSequence());
 
+      session.transferConnection(newConnection);
+
       Connection oldTransportConnection = remotingConnection.getTransportConnection();
 
       remotingConnection = newConnection;
-
-      remotingConnection.setCloseListeners(closeListeners);
-      remotingConnection.setFailureListeners(failureListeners);
 
       int serverLastReceivedCommandID = channel.getLastConfirmedCommandID();
 
@@ -1035,7 +1070,7 @@ public class ServerSessionPacketHandler implements ChannelHandler {
          currentLargeMessage.addBytes(body);
 
          if (!continues) {
-            currentLargeMessage.releaseResources(true);
+            currentLargeMessage.releaseResources(true, true);
 
             if (messageBodySize >= 0) {
                currentLargeMessage.toMessage().putLongProperty(Message.HDR_LARGE_BODY_SIZE, messageBodySize);

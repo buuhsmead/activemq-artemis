@@ -54,7 +54,7 @@ import org.apache.activemq.artemis.core.server.impl.AddressInfo;
 import org.apache.activemq.artemis.core.server.impl.ConnectorsService;
 import org.apache.activemq.artemis.core.server.management.ManagementService;
 import org.apache.activemq.artemis.core.server.metrics.MetricsManager;
-import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerFederationPlugin;
+import org.apache.activemq.artemis.core.server.mirror.MirrorController;
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQPluginRunnable;
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerAddressPlugin;
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerBasePlugin;
@@ -63,6 +63,7 @@ import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerBridgePlugin
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerConnectionPlugin;
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerConsumerPlugin;
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerCriticalPlugin;
+import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerFederationPlugin;
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerMessagePlugin;
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerQueuePlugin;
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerResourcePlugin;
@@ -86,7 +87,6 @@ import org.apache.activemq.artemis.utils.critical.CriticalAnalyzer;
  * This is not part of our public API.
  */
 public interface ActiveMQServer extends ServiceComponent {
-
 
    enum SERVER_STATE {
       /**
@@ -133,6 +133,16 @@ public interface ActiveMQServer extends ServiceComponent {
    void addActivationParam(String key, Object val);
 
    Configuration getConfiguration();
+
+   void installMirrorController(MirrorController mirrorController);
+
+   /** This method will scan all queues and addresses.
+    * it is supposed to be called before the mirrorController is started */
+   void scanAddresses(MirrorController mirrorController) throws Exception;
+
+   MirrorController getMirrorController();
+
+   void removeMirrorControl();
 
    ServiceRegistry getServiceRegistry();
 
@@ -279,6 +289,9 @@ public interface ActiveMQServer extends ServiceComponent {
 
    void callBrokerMessagePlugins(ActiveMQPluginRunnable<ActiveMQServerMessagePlugin> pluginRun) throws ActiveMQException;
 
+   boolean callBrokerMessagePluginsCanAccept(ServerConsumer serverConsumer,
+                                             MessageReference messageReference) throws ActiveMQException;
+
    void callBrokerBridgePlugins(ActiveMQPluginRunnable<ActiveMQServerBridgePlugin> pluginRun) throws ActiveMQException;
 
    void callBrokerCriticalPlugins(ActiveMQPluginRunnable<ActiveMQServerCriticalPlugin> pluginRun) throws ActiveMQException;
@@ -316,6 +329,21 @@ public interface ActiveMQServer extends ServiceComponent {
    ServerSession createSession(String name,
                                String username,
                                String password,
+                               int minLargeMessageSize,
+                               RemotingConnection remotingConnection,
+                               boolean autoCommitSends,
+                               boolean autoCommitAcks,
+                               boolean preAcknowledge,
+                               boolean xa,
+                               String defaultAddress,
+                               SessionCallback callback,
+                               boolean autoCreateQueues,
+                               OperationContext context,
+                               Map<SimpleString, RoutingType> prefixes,
+                               String securityDomain) throws Exception;
+
+   /** This is to be used in places where security is bypassed, like internal sessions, broker connections, etc... */
+   ServerSession createInternalSession(String name,
                                int minLargeMessageSize,
                                RemotingConnection remotingConnection,
                                boolean autoCommitSends,
@@ -691,6 +719,14 @@ public interface ActiveMQServer extends ServiceComponent {
 
    void threadDump();
 
+   void registerBrokerConnection(BrokerConnection brokerConnection);
+
+   void startBrokerConnection(String name) throws Exception;
+
+   void stopBrokerConnection(String name) throws Exception;
+
+   Collection<BrokerConnection> getBrokerConnections();
+
    /**
     * return true if there is a binding for this address (i.e. if there is a created queue)
     *
@@ -833,6 +869,10 @@ public interface ActiveMQServer extends ServiceComponent {
 
    void setMBeanServer(MBeanServer mBeanServer);
 
+   MBeanServer getMBeanServer();
+
+   void setSecurityManager(ActiveMQSecurityManager securityManager);
+
    /**
     * Adding external components is allowed only if the state
     * isn't {@link SERVER_STATE#STOPPED} or {@link SERVER_STATE#STOPPING}.<br>
@@ -840,7 +880,7 @@ public interface ActiveMQServer extends ServiceComponent {
     * This atomicity is necessary to prevent {@link #stop()} to stop the component right after adding it, but before
     * starting it.
     *
-    * @throw IllegalStateException if the state is {@link SERVER_STATE#STOPPED} or {@link SERVER_STATE#STOPPING}
+    * @throws IllegalStateException if the state is {@link SERVER_STATE#STOPPED} or {@link SERVER_STATE#STOPPING}
     */
    void addExternalComponent(ActiveMQComponent externalComponent, boolean start) throws Exception;
 
@@ -907,4 +947,6 @@ public interface ActiveMQServer extends ServiceComponent {
    String getInternalNamingPrefix();
 
    double getDiskStoreUsage();
+
+   void reloadConfigurationFile() throws Exception;
 }

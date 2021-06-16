@@ -12,6 +12,7 @@
 * [Address Model](address-model.md)
 * [Protocols and Interoperability](protocols-interoperability.md)
 * [AMQP](amqp.md)
+    * [Broker Connections](amqp-broker-connections.md)
 * [MQTT](mqtt.md)
 * [STOMP](stomp.md)
 * [OpenWire](openwire.md)
@@ -80,3 +81,4 @@
 * [Unit Testing](unit-testing.md)
 * [Troubleshooting and Performance Tuning](perf-tuning.md)
 * [Configuration Reference](configuration-index.md)
+* [Restart Sequence](restart-sequence.md)

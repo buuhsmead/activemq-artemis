@@ -140,18 +140,11 @@ scm.tag=1.4.0
 ```
 
 
-## Removing additional files
+## Closing the staging repository
 
-The last step before closing the staging repository is removing the `artemis-pom-&lt;version>-source-release.zip` file.  At 
-the moment this artifact is uploaded automatically by the Apache release plugin. In future versions the ActiveMQ Artemis
-pom will be updated to take this into account.
-
-The file will be located under ./artemis-pom/&lt;version>/
-
-Remove these files manually under Nexus (https://repository.apache.org/#stagingRepositories) while the repository is still open.
-
-Once the file is removed close the staging repo using the "Close" button on Nexus website.
-
+Give the staging repository contents a quick inspection using the content navigation area, then proceed to close the
+staging repo using the "Close" button on Nexus website, locking it from further modification and exposing its contents
+at a staging URL to allow testing. Set a description such as "ActiveMQ Artemis <version> (RC1)" while closing.
 
 ## Stage the release to the dist dev area
 
@@ -178,15 +171,20 @@ Old staged releases can be cleaned out periodically.
 
 Please, include the git-commit-report as part of the release process. To generate it, follow these steps:
 
-- Download [git-release-report](https://github.com/clebertsuconic/git-release-report/releases)
+- Download [jira-git-report](https://github.com/rh-messaging/jira-git-report)
 - Execute the following command:
 ```bash
-$ java -jar git-release-report.jar <checkoutDirectory>/activemq-artemis <checkoutDirectory>/artemis-website commit-report-<version>.html <previous-version> <version> true
+$ git clone https://github.com/rh-messaging/jira-git-report.git
+$ cd jira-git-report
+$ mvn compile assembly:single
+$ cd target
+$ java -jar jira-git-0.1.SNAPSHOT-jar-with-dependencies.jar artemis <checkoutDirectory>/activemq-artemis <checkoutDirectory>/artemis-website commit-report-<version>.html <previous-version> <version> true
 ```
 
 real example used on [2.6.1](http://activemq.apache.org/artemis/commit-report-2.6.1.html):
 ```bash
-$ java -jar git-release-report.jar /work/apache-checkout/activemq-artemis commit-report-2.6.1.html 2.6.0 2.6.1 true
+$ java -jar 
+java -jar jira-git-0.1.SNAPSHOT-jar-with-dependencies.jar artemis release-work/activemq-artemis release-work/activemq-website/src/components/artemis/download/commit-report-2.16.0.html 2.15.0 2.16.0 true
 ```
 - This will parse all the git commits between the previous release, and current release tags while looking at current JIRA status.
 
@@ -230,7 +228,7 @@ The release notes can be found here:
 https://issues.apache.org/jira/secure/ReleaseNote.jspa?version=<releaseNotesVersionID>&projectId=12315920
 
 Ths git commit report is here:
-http://activemq.apache.org/artemis/commit-report-<version>.html
+https://activemq.apache.org/components/artemis/download/commit-report-<version>
 
 Source and binary distributions can be found here:
 https://dist.apache.org/repos/dist/dev/activemq/activemq-artemis/<version>/
@@ -239,7 +237,7 @@ The Maven repository is here:
 https://repository.apache.org/content/repositories/orgapacheactivemq-<repoID>
 
 In case you want to give it a try with the maven repo on examples:
-http://activemq.apache.org/artemis/docs/latest/hacking-guide/validating-releases.html
+https://activemq.apache.org/components/artemis/documentation/hacking-guide/validating-releases.html
 
 The source tag:
 https://gitbox.apache.org/repos/asf/activemq-artemis.git;a=tag;h=refs/tags/<version>
@@ -324,10 +322,8 @@ Once the mirrors are up-to-date then update the following:
 1. Copy `src/components/artemis/download/release-notes-<old-version>.md` to `src/components/artemis/download/release-notes-<new-version>.md`
    and update it deleting the existing list of bugs, features, improvements, etc. and replacing it
    with the HTML from the bottom of the release notes url you sent out with your VOTE email (appending `&styleName=Text`).
-2. Update `src/components/artemis/download/past-releases.md`. Copy the block of HTML dealing with the 2nd-to-last release, paste it above the original, 
-   and modify the version numbers for the last release.
-3. Update `src/components/artemis/download/index.md`. Modify the block of HTML dealing with the last release so that the version numbers are for
-   the new release.
+2. Copy `src/_artemis_releases/artemis-<old-version>-release.md` to `src/_artemis_releases/artemis-<new-version>-release.md`. Update the versions and dates.
+3. Update _current_artemis_releases_ within the Jekyll `_config.yml` file (in the repo root) if needed.
 4. Copy `src/components/artemis/documentation/latest` to `src/components/artemis/documentation/<old-version>`.
 5. Create `src/components/artemis/documentation/latest` and copy these files into it:
     1. the contents of user-manual from `apache-artemis-<new-version>/web/user-manual`
@@ -339,11 +335,9 @@ Once the mirrors are up-to-date then update the following:
     2. book.pdf version of hacking-guide (generated with `gitbook pdf`)        
 7. Copy `src/components/artemis/documentation/javadocs/javadoc-latest` to `src/components/artemis/documentation/javadocs/javadoc-<old-version>`.
 8. Create `src/components/artemis/documentation/javadocs/javadoc-latest` and copy the contents of `apache-artemis-<new-version>/web/api` into it.
-9. Update `src/components/artemis/documentation/previous-docs.md`. Copy the block of HTML dealing with the 2nd-to-last release, paste it above the original, 
-   and modify the version numbers for the last release.
    
-Run `svn add` for all the added directories & files and then `svn commit -m "updates for <version> release"`.
-The changes should be published automatically by the `jekyll_websites` builder of the [apache buildbot](https://ci2.apache.org/#/builders). 
+Run `git add` for all the added directories & files and then `git commit -m "updates for <version> release"`.
+Once pushed, the changes should be published automatically by the `jekyll_websites` builder of the [apache buildbot](https://ci2.apache.org/#/builders).
 
 Note: Generating PDFs, etc. with gitbook requires the installation of [Calibre](https://calibre-ebook.com).
 You can install this manually, but it is recommended you use your platform's package management to install
@@ -359,10 +353,10 @@ Once the website is updated then send an email with a subject like `[ANNOUNCE] A
 I'm pleased to announce the release of ActiveMQ Artemis <version>.
 
 Downloads are now available at:
-http://activemq.apache.org/artemis/download.html
+https://activemq.apache.org/components/artemis/download/
 
 For a complete list of updates:
-http://activemq.apache.org/artemis/release-notes-<version>.html
+https://activemq.apache.org/components/artemis/download/release-notes-<version>
 
 I would like to highlight these improvements:
 

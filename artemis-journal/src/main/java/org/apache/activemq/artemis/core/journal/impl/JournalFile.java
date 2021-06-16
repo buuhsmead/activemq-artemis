@@ -20,6 +20,13 @@ import org.apache.activemq.artemis.core.io.SequentialFile;
 
 public interface JournalFile {
 
+   default boolean isReclaimable() {
+      return true;
+   }
+
+   default void setReclaimable(boolean reclaimable) {
+   }
+
    int getNegCount(JournalFile file);
 
    void incNegCount(JournalFile file);
@@ -31,6 +38,14 @@ public interface JournalFile {
    void incPosCount();
 
    void decPosCount();
+
+   int getReplaceableCount();
+
+   void incReplaceableCount();
+
+   void incAddRecord();
+
+   int getAddRecord();
 
    void addSize(int bytes);
 

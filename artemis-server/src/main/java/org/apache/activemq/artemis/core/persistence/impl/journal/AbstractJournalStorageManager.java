@@ -75,7 +75,9 @@ import org.apache.activemq.artemis.core.persistence.AddressQueueStatus;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
 import org.apache.activemq.artemis.core.persistence.config.PersistedAddressSetting;
 import org.apache.activemq.artemis.core.persistence.config.PersistedDivertConfiguration;
-import org.apache.activemq.artemis.core.persistence.config.PersistedRoles;
+import org.apache.activemq.artemis.core.persistence.config.PersistedRole;
+import org.apache.activemq.artemis.core.persistence.config.PersistedSecuritySetting;
+import org.apache.activemq.artemis.core.persistence.config.PersistedUser;
 import org.apache.activemq.artemis.core.persistence.impl.PageCountPending;
 import org.apache.activemq.artemis.core.persistence.impl.journal.codec.AddressStatusEncoding;
 import org.apache.activemq.artemis.core.persistence.impl.journal.codec.CursorAckRecordEncoding;
@@ -114,12 +116,15 @@ import org.apache.activemq.artemis.core.transaction.Transaction;
 import org.apache.activemq.artemis.core.transaction.TransactionPropertyIndexes;
 import org.apache.activemq.artemis.core.transaction.impl.TransactionImpl;
 import org.apache.activemq.artemis.spi.core.protocol.MessagePersister;
+import org.apache.activemq.artemis.utils.ArtemisCloseable;
 import org.apache.activemq.artemis.utils.ExecutorFactory;
 import org.apache.activemq.artemis.utils.IDGenerator;
 import org.apache.activemq.artemis.utils.collections.ConcurrentLongHashMap;
 import org.apache.activemq.artemis.utils.collections.SparseArrayLinkedList;
 import org.apache.activemq.artemis.utils.critical.CriticalAnalyzer;
+import org.apache.activemq.artemis.utils.critical.CriticalCloseable;
 import org.apache.activemq.artemis.utils.critical.CriticalComponentImpl;
+import org.apache.activemq.artemis.utils.critical.CriticalMeasure;
 import org.jboss.logging.Logger;
 
 /**
@@ -169,6 +174,11 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
 
    protected final ReentrantReadWriteLock storageManagerLock = new ReentrantReadWriteLock(true);
 
+   // I would rather cache the Closeable instance here..
+   // I never know when the JRE decides to create a new instance on every call.
+   // So I'm playing safe here. That's all
+   protected final ArtemisCloseable unlockCloseable = storageManagerLock.readLock()::unlock;
+
    protected Journal messageJournal;
 
    protected Journal bindingsJournal;
@@ -194,12 +204,20 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
 
    protected final Configuration config;
 
+   public Configuration getConfig() {
+      return config;
+   }
+
    // Persisted core configuration
-   protected final Map<SimpleString, PersistedRoles> mapPersistedRoles = new ConcurrentHashMap<>();
+   protected final Map<SimpleString, PersistedSecuritySetting> mapPersistedSecuritySettings = new ConcurrentHashMap<>();
 
    protected final Map<SimpleString, PersistedAddressSetting> mapPersistedAddressSettings = new ConcurrentHashMap<>();
 
    protected final Map<String, PersistedDivertConfiguration> mapPersistedDivertConfigurations = new ConcurrentHashMap<>();
+
+   protected final Map<String, PersistedUser> mapPersistedUsers = new ConcurrentHashMap<>();
+
+   protected final Map<String, PersistedRole> mapPersistedRoles = new ConcurrentHashMap<>();
 
    protected final ConcurrentLongHashMap<LargeServerMessage> largeMessagesToDelete = new ConcurrentLongHashMap<>();
 
@@ -330,12 +348,9 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
 
    @Override
    public void confirmPendingLargeMessageTX(final Transaction tx, long messageID, long recordID) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          installLargeMessageConfirmationOnTX(tx, recordID);
          messageJournal.appendDeleteRecordTransactional(tx.getID(), recordID, new DeleteEncoding(JournalRecordIds.ADD_LARGE_MESSAGE_PENDING, messageID));
-      } finally {
-         readUnLock();
       }
    }
 
@@ -344,11 +359,8 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
     */
    @Override
    public void confirmPendingLargeMessage(long recordID) throws Exception {
-      readLock();
-      try {
-         messageJournal.appendDeleteRecord(recordID, true, getContext());
-      } finally {
-         readUnLock();
+      try (ArtemisCloseable lock = closeableReadLock()) {
+         messageJournal.tryAppendDeleteRecord(recordID, true, this::messageUpdateCallback, getContext());
       }
    }
 
@@ -359,9 +371,7 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
          throw ActiveMQMessageBundle.BUNDLE.messageIdNotAssigned();
       }
 
-      readLock();
-      try {
-         // Note that we don't sync, the add reference that comes immediately after will sync if
+      try (ArtemisCloseable lock = closeableReadLock()) {         // Note that we don't sync, the add reference that comes immediately after will sync if
          // appropriate
 
          if (message.isLargeMessage() && message instanceof LargeServerMessageImpl) {
@@ -369,109 +379,114 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
          } else {
             messageJournal.appendAddRecord(message.getMessageID(), JournalRecordIds.ADD_MESSAGE_PROTOCOL, message.getPersister(), message, false, getContext(false));
          }
-      } finally {
-         readUnLock();
       }
    }
 
    @Override
    public void storeReference(final long queueID, final long messageID, final boolean last) throws Exception {
-      readLock();
-      try {
-         messageJournal.appendUpdateRecord(messageID, JournalRecordIds.ADD_REF, new RefEncoding(queueID), last && syncNonTransactional, getContext(last && syncNonTransactional));
-      } finally {
-         readUnLock();
+      try (ArtemisCloseable lock = closeableReadLock()) {
+         messageJournal.tryAppendUpdateRecord(messageID, JournalRecordIds.ADD_REF, new RefEncoding(queueID), last && syncNonTransactional, false, this::messageUpdateCallback, getContext(last && syncNonTransactional));
       }
    }
 
    @Override
-   public void readLock() {
-      enterCritical(CRITICAL_STORE);
+   public ArtemisCloseable closeableReadLock() {
+      CriticalCloseable measure = measureCritical(CRITICAL_STORE);
       storageManagerLock.readLock().lock();
+
+      if (CriticalMeasure.isDummy(measure)) {
+         // The next statement could have been called like this:
+         // return storageManagerLock.readLock()::unlock;
+         // However I wasn't 100% sure the JDK would take good care
+         // of caching for me.
+         // Since this is important to me here, I decided to play safe and
+         // cache it myself
+         return unlockCloseable;
+      } else {
+         // Same applies to the next statement here
+         // measure.beforeClose(storageManagerLock.readLock()::unlock);
+         // I'm just playing safe and caching it myself
+         measure.beforeClose(unlockCloseable);
+         return measure;
+      }
    }
 
-   @Override
-   public void readUnLock() {
-      storageManagerLock.readLock().unlock();
-      leaveCritical(CRITICAL_STORE);
-   }
-
-   /** for internal use and testsuite, don't use it outside of tests */
+   /**
+    * for internal use and testsuite, don't use it outside of tests
+    */
    public void writeLock() {
       storageManagerLock.writeLock().lock();
    }
 
-   /** for internal use and testsuite, don't use it outside of tests */
+   /**
+    * for internal use and testsuite, don't use it outside of tests
+    */
    public void writeUnlock() {
       storageManagerLock.writeLock().unlock();
    }
 
    @Override
    public void storeAcknowledge(final long queueID, final long messageID) throws Exception {
-      readLock();
-      try {
-         messageJournal.appendUpdateRecord(messageID, JournalRecordIds.ACKNOWLEDGE_REF, new RefEncoding(queueID), syncNonTransactional, getContext(syncNonTransactional));
-      } finally {
-         readUnLock();
+      try (ArtemisCloseable lock = closeableReadLock()) {
+         messageJournal.tryAppendUpdateRecord(messageID, JournalRecordIds.ACKNOWLEDGE_REF, new RefEncoding(queueID), syncNonTransactional, false, this::messageUpdateCallback, getContext(syncNonTransactional));
       }
    }
 
    @Override
    public void storeCursorAcknowledge(long queueID, PagePosition position) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          long ackID = idGenerator.generateID();
          position.setRecordID(ackID);
          messageJournal.appendAddRecord(ackID, JournalRecordIds.ACKNOWLEDGE_CURSOR, new CursorAckRecordEncoding(queueID, position), syncNonTransactional, getContext(syncNonTransactional));
-      } finally {
-         readUnLock();
       }
    }
 
    @Override
-   public boolean deleteMessage(final long messageID) throws Exception {
-      readLock();
-      try {
+   public void deleteMessage(final long messageID) throws Exception {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          // Messages are deleted on postACK, one after another.
          // If these deletes are synchronized, we would build up messages on the Executor
          // increasing chances of losing deletes.
          // The StorageManager should verify messages without references
-         return messageJournal.tryAppendDeleteRecord(messageID, false, getContext(false));
-      } finally {
-         readUnLock();
+         messageJournal.tryAppendDeleteRecord(messageID, false, this::messageUpdateCallback, getContext(false));
+      }
+   }
+
+   private void messageUpdateCallback(long id, boolean found) {
+      if (!found) {
+         ActiveMQServerLogger.LOGGER.cannotFindMessageOnJournal(new Exception(), id);
+      }
+   }
+
+   private void recordNotFoundCallback(long id, boolean found) {
+      if (!found) {
+         if (logger.isDebugEnabled()) {
+            logger.debug("Record " + id + " not found");
+         }
       }
    }
 
    @Override
-   public boolean updateScheduledDeliveryTime(final MessageReference ref) throws Exception {
+   public void updateScheduledDeliveryTime(final MessageReference ref) throws Exception {
       ScheduledDeliveryEncoding encoding = new ScheduledDeliveryEncoding(ref.getScheduledDeliveryTime(), ref.getQueue().getID());
-      readLock();
-      try {
-         return messageJournal.tryAppendUpdateRecord(ref.getMessage().getMessageID(), JournalRecordIds.SET_SCHEDULED_DELIVERY_TIME, encoding, syncNonTransactional, getContext(syncNonTransactional));
-      } finally {
-         readUnLock();
+      try (ArtemisCloseable lock = closeableReadLock()) {
+         messageJournal.tryAppendUpdateRecord(ref.getMessage().getMessageID(), JournalRecordIds.SET_SCHEDULED_DELIVERY_TIME, encoding, syncNonTransactional, true, this::recordNotFoundCallback, getContext(syncNonTransactional));
       }
    }
 
    @Override
    public void storeDuplicateID(final SimpleString address, final byte[] duplID, final long recordID) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          DuplicateIDEncoding encoding = new DuplicateIDEncoding(address, duplID);
 
          messageJournal.appendAddRecord(recordID, JournalRecordIds.DUPLICATE_ID, encoding, syncNonTransactional, getContext(syncNonTransactional));
-      } finally {
-         readUnLock();
       }
    }
 
    @Override
    public void deleteDuplicateID(final long recordID) throws Exception {
-      readLock();
-      try {
-         messageJournal.appendDeleteRecord(recordID, syncNonTransactional, getContext(syncNonTransactional));
-      } finally {
-         readUnLock();
+      try (ArtemisCloseable lock = closeableReadLock()) {
+         messageJournal.tryAppendDeleteRecord(recordID, syncNonTransactional, this::recordNotFoundCallback, getContext(syncNonTransactional));
       }
    }
 
@@ -483,8 +498,7 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
          throw ActiveMQMessageBundle.BUNDLE.messageIdNotAssigned();
       }
 
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          if (message.isLargeMessage() && message instanceof LargeServerMessageImpl) {
             // this is a core large message
             messageJournal.appendAddRecordTransactional(txID, message.getMessageID(), JournalRecordIds.ADD_LARGE_MESSAGE, LargeMessagePersister.getInstance(), message);
@@ -492,19 +506,14 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
             messageJournal.appendAddRecordTransactional(txID, message.getMessageID(), JournalRecordIds.ADD_MESSAGE_PROTOCOL, message.getPersister(), message);
          }
 
-      } finally {
-         readUnLock();
       }
    }
 
    @Override
    public void storePageTransaction(final long txID, final PageTransactionInfo pageTransaction) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          pageTransaction.setRecordID(generateID());
          messageJournal.appendAddRecordTransactional(txID, pageTransaction.getRecordID(), JournalRecordIds.PAGE_TRANSACTION, pageTransaction);
-      } finally {
-         readUnLock();
       }
    }
 
@@ -512,21 +521,15 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
    public void updatePageTransaction(final long txID,
                                      final PageTransactionInfo pageTransaction,
                                      final int depages) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          messageJournal.appendUpdateRecordTransactional(txID, pageTransaction.getRecordID(), JournalRecordIds.PAGE_TRANSACTION, new PageUpdateTXEncoding(pageTransaction.getTransactionID(), depages));
-      } finally {
-         readUnLock();
       }
    }
 
    @Override
    public void storeReferenceTransactional(final long txID, final long queueID, final long messageID) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          messageJournal.appendUpdateRecordTransactional(txID, messageID, JournalRecordIds.ADD_REF, new RefEncoding(queueID));
-      } finally {
-         readUnLock();
       }
    }
 
@@ -534,23 +537,17 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
    public void storeAcknowledgeTransactional(final long txID,
                                              final long queueID,
                                              final long messageID) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          messageJournal.appendUpdateRecordTransactional(txID, messageID, JournalRecordIds.ACKNOWLEDGE_REF, new RefEncoding(queueID));
-      } finally {
-         readUnLock();
       }
    }
 
    @Override
    public void storeCursorAcknowledgeTransactional(long txID, long queueID, PagePosition position) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          long ackID = idGenerator.generateID();
          position.setRecordID(ackID);
          messageJournal.appendAddRecordTransactional(txID, ackID, JournalRecordIds.ACKNOWLEDGE_CURSOR, new CursorAckRecordEncoding(queueID, position));
-      } finally {
-         readUnLock();
       }
    }
 
@@ -563,77 +560,57 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
 
    @Override
    public void deletePageComplete(long ackID) throws Exception {
-      messageJournal.appendDeleteRecord(ackID, false);
+      messageJournal.tryAppendDeleteRecord(ackID, this::recordNotFoundCallback, false);
    }
 
    @Override
    public void deleteCursorAcknowledgeTransactional(long txID, long ackID) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          messageJournal.appendDeleteRecordTransactional(txID, ackID);
-      } finally {
-         readUnLock();
       }
    }
 
    @Override
    public void deleteCursorAcknowledge(long ackID) throws Exception {
-      messageJournal.appendDeleteRecord(ackID, false);
+      messageJournal.tryAppendDeleteRecord(ackID, this::recordNotFoundCallback, false);
    }
 
    @Override
    public long storeHeuristicCompletion(final Xid xid, final boolean isCommit) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          long id = generateID();
 
          messageJournal.appendAddRecord(id, JournalRecordIds.HEURISTIC_COMPLETION, new HeuristicCompletionEncoding(xid, isCommit), true, getContext(true));
          return id;
-      } finally {
-         readUnLock();
       }
    }
 
    @Override
    public void deleteHeuristicCompletion(final long id) throws Exception {
-      readLock();
-      try {
-
-         messageJournal.appendDeleteRecord(id, true, getContext(true));
-      } finally {
-         readUnLock();
+      try (ArtemisCloseable lock = closeableReadLock()) {
+         messageJournal.tryAppendDeleteRecord(id, true, this::recordNotFoundCallback, getContext(true));
       }
    }
 
    @Override
    public void deletePageTransactional(final long recordID) throws Exception {
-      readLock();
-      try {
-         messageJournal.appendDeleteRecord(recordID, false);
-      } finally {
-         readUnLock();
+      try (ArtemisCloseable lock = closeableReadLock()) {
+         messageJournal.tryAppendDeleteRecord(recordID, this::recordNotFoundCallback, false);
       }
    }
 
    @Override
    public void updateScheduledDeliveryTimeTransactional(final long txID, final MessageReference ref) throws Exception {
       ScheduledDeliveryEncoding encoding = new ScheduledDeliveryEncoding(ref.getScheduledDeliveryTime(), ref.getQueue().getID());
-      readLock();
-      try {
-
+      try (ArtemisCloseable lock = closeableReadLock()) {
          messageJournal.appendUpdateRecordTransactional(txID, ref.getMessage().getMessageID(), JournalRecordIds.SET_SCHEDULED_DELIVERY_TIME, encoding);
-      } finally {
-         readUnLock();
       }
    }
 
    @Override
    public void prepare(final long txID, final Xid xid) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          messageJournal.appendPrepareRecord(txID, new XidEncoding(xid), syncTransactional, getContext(syncTransactional));
-      } finally {
-         readUnLock();
       }
    }
 
@@ -644,7 +621,7 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
 
    @Override
    public void commitBindings(final long txID) throws Exception {
-      bindingsJournal.appendCommitRecord(txID, true);
+      bindingsJournal.appendCommitRecord(txID, true, getContext(true), true);
    }
 
    @Override
@@ -655,8 +632,7 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
 
    @Override
    public void commit(final long txID, final boolean lineUpContext) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          messageJournal.appendCommitRecord(txID, syncTransactional, getContext(syncTransactional), lineUpContext);
          if (!lineUpContext && !syncTransactional) {
             if (logger.isTraceEnabled()) {
@@ -671,18 +647,13 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
              */
             getContext(true).done();
          }
-      } finally {
-         readUnLock();
       }
    }
 
    @Override
    public void rollback(final long txID) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          messageJournal.appendRollbackRecord(txID, syncTransactional, getContext(syncTransactional));
-      } finally {
-         readUnLock();
       }
    }
 
@@ -693,11 +664,8 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
                                              final long recordID) throws Exception {
       DuplicateIDEncoding encoding = new DuplicateIDEncoding(address, duplID);
 
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          messageJournal.appendAddRecordTransactional(txID, recordID, JournalRecordIds.DUPLICATE_ID, encoding);
-      } finally {
-         readUnLock();
       }
    }
 
@@ -708,56 +676,44 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
                                               final long recordID) throws Exception {
       DuplicateIDEncoding encoding = new DuplicateIDEncoding(address, duplID);
 
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          messageJournal.appendUpdateRecordTransactional(txID, recordID, JournalRecordIds.DUPLICATE_ID, encoding);
-      } finally {
-         readUnLock();
       }
    }
 
    @Override
    public void deleteDuplicateIDTransactional(final long txID, final long recordID) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          messageJournal.appendDeleteRecordTransactional(txID, recordID);
-      } finally {
-         readUnLock();
       }
    }
 
    // Other operations
 
    @Override
-   public boolean updateDeliveryCount(final MessageReference ref) throws Exception {
+   public void updateDeliveryCount(final MessageReference ref) throws Exception {
       // no need to store if it's the same value
       // otherwise the journal will get OME in case of lots of redeliveries
       if (ref.getDeliveryCount() == ref.getPersistedCount()) {
-         return true;
+         return;
       }
 
       ref.setPersistedCount(ref.getDeliveryCount());
       DeliveryCountUpdateEncoding updateInfo = new DeliveryCountUpdateEncoding(ref.getQueue().getID(), ref.getDeliveryCount());
 
-      readLock();
-      try {
-         return messageJournal.tryAppendUpdateRecord(ref.getMessage().getMessageID(), JournalRecordIds.UPDATE_DELIVERY_COUNT, updateInfo, syncNonTransactional, getContext(syncNonTransactional));
-      } finally {
-         readUnLock();
+      try (ArtemisCloseable lock = closeableReadLock()) {
+         messageJournal.tryAppendUpdateRecord(ref.getMessage().getMessageID(), JournalRecordIds.UPDATE_DELIVERY_COUNT, updateInfo, syncNonTransactional, true, this::messageUpdateCallback, getContext(syncNonTransactional));
       }
    }
 
    @Override
    public void storeAddressSetting(PersistedAddressSetting addressSetting) throws Exception {
       deleteAddressSetting(addressSetting.getAddressMatch());
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          long id = idGenerator.generateID();
          addressSetting.setStoreId(id);
          bindingsJournal.appendAddRecord(id, JournalRecordIds.ADDRESS_SETTING_RECORD, addressSetting, true);
          mapPersistedAddressSettings.put(addressSetting.getAddressMatch(), addressSetting);
-      } finally {
-         readUnLock();
       }
    }
 
@@ -767,36 +723,30 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
    }
 
    @Override
-   public List<PersistedRoles> recoverPersistedRoles() throws Exception {
-      return new ArrayList<>(mapPersistedRoles.values());
+   public List<PersistedSecuritySetting> recoverSecuritySettings() throws Exception {
+      return new ArrayList<>(mapPersistedSecuritySettings.values());
    }
 
    @Override
-   public void storeSecurityRoles(PersistedRoles persistedRoles) throws Exception {
+   public void storeSecuritySetting(PersistedSecuritySetting persistedRoles) throws Exception {
 
-      deleteSecurityRoles(persistedRoles.getAddressMatch());
-      readLock();
-      try {
+      deleteSecuritySetting(persistedRoles.getAddressMatch());
+      try (ArtemisCloseable lock = closeableReadLock()) {
          final long id = idGenerator.generateID();
          persistedRoles.setStoreId(id);
-         bindingsJournal.appendAddRecord(id, JournalRecordIds.SECURITY_RECORD, persistedRoles, true);
-         mapPersistedRoles.put(persistedRoles.getAddressMatch(), persistedRoles);
-      } finally {
-         readUnLock();
+         bindingsJournal.appendAddRecord(id, JournalRecordIds.SECURITY_SETTING_RECORD, persistedRoles, true);
+         mapPersistedSecuritySettings.put(persistedRoles.getAddressMatch(), persistedRoles);
       }
    }
 
    @Override
    public void storeDivertConfiguration(PersistedDivertConfiguration persistedDivertConfiguration) throws Exception {
       deleteDivertConfiguration(persistedDivertConfiguration.getName());
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          final long id = idGenerator.generateID();
          persistedDivertConfiguration.setStoreId(id);
          bindingsJournal.appendAddRecord(id, JournalRecordIds.DIVERT_RECORD, persistedDivertConfiguration, true);
          mapPersistedDivertConfigurations.put(persistedDivertConfiguration.getName(), persistedDivertConfiguration);
-      } finally {
-         readUnLock();
       }
    }
 
@@ -804,11 +754,8 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
    public void deleteDivertConfiguration(String divertName) throws Exception {
       PersistedDivertConfiguration oldDivert = mapPersistedDivertConfigurations.remove(divertName);
       if (oldDivert != null) {
-         readLock();
-         try {
-            bindingsJournal.appendDeleteRecord(oldDivert.getStoreId(), false);
-         } finally {
-            readUnLock();
+         try (ArtemisCloseable lock = closeableReadLock()) {
+            bindingsJournal.tryAppendDeleteRecord(oldDivert.getStoreId(), this::recordNotFoundCallback, false);
          }
       }
    }
@@ -819,22 +766,68 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
    }
 
    @Override
+   public void storeUser(PersistedUser persistedUser) throws Exception {
+      deleteUser(persistedUser.getUsername());
+      try (ArtemisCloseable lock = closeableReadLock()) {
+         final long id = idGenerator.generateID();
+         persistedUser.setStoreId(id);
+         bindingsJournal.appendAddRecord(id, JournalRecordIds.USER_RECORD, persistedUser, true);
+         mapPersistedUsers.put(persistedUser.getUsername(), persistedUser);
+      }
+   }
+
+   @Override
+   public void deleteUser(String username) throws Exception {
+      PersistedUser oldUser = mapPersistedUsers.remove(username);
+      if (oldUser != null) {
+         try (ArtemisCloseable lock = closeableReadLock()) {
+            bindingsJournal.tryAppendDeleteRecord(oldUser.getStoreId(), this::recordNotFoundCallback, false);
+         }
+      }
+   }
+
+   @Override
+   public Map<String, PersistedUser> getPersistedUsers() {
+      return new HashMap<>(mapPersistedUsers);
+   }
+
+   @Override
+   public void storeRole(PersistedRole persistedRole) throws Exception {
+      deleteRole(persistedRole.getUsername());
+      try (ArtemisCloseable lock = closeableReadLock()) {
+         final long id = idGenerator.generateID();
+         persistedRole.setStoreId(id);
+         bindingsJournal.appendAddRecord(id, JournalRecordIds.ROLE_RECORD, persistedRole, true);
+         mapPersistedRoles.put(persistedRole.getUsername(), persistedRole);
+      }
+   }
+
+   @Override
+   public void deleteRole(String username) throws Exception {
+      PersistedRole oldRole = mapPersistedRoles.remove(username);
+      if (oldRole != null) {
+         try (ArtemisCloseable lock = closeableReadLock()) {
+            bindingsJournal.tryAppendDeleteRecord(oldRole.getStoreId(), this::recordNotFoundCallback, false);
+         }
+      }
+   }
+
+   @Override
+   public Map<String, PersistedRole> getPersistedRoles() {
+      return new HashMap<>(mapPersistedRoles);
+   }
+
+   @Override
    public void storeID(final long journalID, final long id) throws Exception {
-      readLock();
-      try {
-         bindingsJournal.appendAddRecord(journalID, JournalRecordIds.ID_COUNTER_RECORD, BatchingIDGenerator.createIDEncodingSupport(id), true);
-      } finally {
-         readUnLock();
+      try (ArtemisCloseable lock = closeableReadLock()) {
+         bindingsJournal.appendAddRecord(journalID, JournalRecordIds.ID_COUNTER_RECORD, BatchingIDGenerator.createIDEncodingSupport(id), true, getContext(true));
       }
    }
 
    @Override
    public void deleteID(long journalD) throws Exception {
-      readLock();
-      try {
-         bindingsJournal.appendDeleteRecord(journalD, false);
-      } finally {
-         readUnLock();
+      try (ArtemisCloseable lock = closeableReadLock()) {
+         bindingsJournal.tryAppendDeleteRecord(journalD, this::recordNotFoundCallback, false);
       }
    }
 
@@ -842,24 +835,18 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
    public void deleteAddressSetting(SimpleString addressMatch) throws Exception {
       PersistedAddressSetting oldSetting = mapPersistedAddressSettings.remove(addressMatch);
       if (oldSetting != null) {
-         readLock();
-         try {
-            bindingsJournal.appendDeleteRecord(oldSetting.getStoreId(), false);
-         } finally {
-            readUnLock();
+         try (ArtemisCloseable lock = closeableReadLock()) {
+            bindingsJournal.tryAppendDeleteRecord(oldSetting.getStoreId(), this::recordNotFoundCallback, false);
          }
       }
    }
 
    @Override
-   public void deleteSecurityRoles(SimpleString addressMatch) throws Exception {
-      PersistedRoles oldRoles = mapPersistedRoles.remove(addressMatch);
+   public void deleteSecuritySetting(SimpleString addressMatch) throws Exception {
+      PersistedSecuritySetting oldRoles = mapPersistedSecuritySettings.remove(addressMatch);
       if (oldRoles != null) {
-         readLock();
-         try {
-            bindingsJournal.appendDeleteRecord(oldRoles.getStoreId(), false);
-         } finally {
-            readUnLock();
+         try (ArtemisCloseable lock = closeableReadLock()) {
+            bindingsJournal.tryAppendDeleteRecord(oldRoles.getStoreId(), this::recordNotFoundCallback, false);
          }
       }
    }
@@ -880,9 +867,8 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
       Set<PageTransactionInfo> invalidPageTransactions = new HashSet<>();
 
       Map<Long, Message> messages = new HashMap<>();
-      readLock();
-      try {
-
+      try (ArtemisCloseable lock = closeableReadLock()) {
+         messageJournal.setRemoveExtraFilesOnLoad(true);
          JournalLoadInformation info = messageJournal.load(records, preparedTransactions, new LargeMessageTXFailureCallback(this));
 
          ArrayList<LargeServerMessage> largeMessages = new ArrayList<>();
@@ -901,13 +887,7 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
          final MutableLong recordNumber = new MutableLong();
          final CoreMessageObjectPools pools;
          if (totalSize > 0) {
-            final int addresses = (int)Math.max(
-               DEFAULT_POOL_CAPACITY,
-               queueInfos == null ? 0 :
-                  queueInfos.values().stream()
-                     .map(QueueBindingInfo::getAddress)
-                     .filter(addr -> addr.length() <= DEFAULT_MAX_LENGTH)
-                     .count() * 2);
+            final int addresses = (int) Math.max(DEFAULT_POOL_CAPACITY, queueInfos == null ? 0 : queueInfos.values().stream().map(QueueBindingInfo::getAddress).filter(addr -> addr.length() <= DEFAULT_MAX_LENGTH).count() * 2);
             pools = new CoreMessageObjectPools(addresses, DEFAULT_POOL_CAPACITY, 128, 128);
          } else {
             pools = null;
@@ -1128,7 +1108,7 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
                         sub.reloadACK(encoding.position);
                      } else {
                         ActiveMQServerLogger.LOGGER.journalCannotFindQueueReloading(encoding.queueID);
-                        messageJournal.appendDeleteRecord(record.id, false);
+                        messageJournal.tryAppendDeleteRecord(record.id, this::recordNotFoundCallback, false);
 
                      }
 
@@ -1145,7 +1125,7 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
                         sub.getCounter().loadValue(record.id, encoding.getValue(), encoding.getPersistentSize());
                      } else {
                         ActiveMQServerLogger.LOGGER.journalCannotFindQueueReloadingPage(encoding.getQueueID());
-                        messageJournal.appendDeleteRecord(record.id, false);
+                        messageJournal.tryAppendDeleteRecord(record.id, this::recordNotFoundCallback, false);
                      }
 
                      break;
@@ -1162,7 +1142,7 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
                         sub.getCounter().loadInc(record.id, encoding.getValue(), encoding.getPersistentSize());
                      } else {
                         ActiveMQServerLogger.LOGGER.journalCannotFindQueueReloadingPageCursor(encoding.getQueueID());
-                        messageJournal.appendDeleteRecord(record.id, false);
+                        messageJournal.tryAppendDeleteRecord(record.id, this::recordNotFoundCallback, false);
                      }
 
                      break;
@@ -1181,11 +1161,11 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
                            if (logger.isDebugEnabled()) {
                               logger.debug("Complete page " + encoding.position.getPageNr() + " doesn't exist on page manager " + sub.getPagingStore().getAddress());
                            }
-                           messageJournal.appendDeleteRecord(record.id, false);
+                           messageJournal.tryAppendDeleteRecord(record.id, this::recordNotFoundCallback, false);
                         }
                      } else {
                         ActiveMQServerLogger.LOGGER.cantFindQueueOnPageComplete(encoding.queueID);
-                        messageJournal.appendDeleteRecord(record.id, false);
+                        messageJournal.tryAppendDeleteRecord(record.id, this::recordNotFoundCallback, false);
                      }
 
                      break;
@@ -1253,8 +1233,6 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
 
          journalLoaded = true;
          return info;
-      } finally {
-         readUnLock();
       }
    }
 
@@ -1305,21 +1283,15 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
    @Override
    public void addGrouping(final GroupBinding groupBinding) throws Exception {
       GroupingEncoding groupingEncoding = new GroupingEncoding(groupBinding.getId(), groupBinding.getGroupId(), groupBinding.getClusterName());
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          bindingsJournal.appendAddRecord(groupBinding.getId(), JournalRecordIds.GROUP_RECORD, groupingEncoding, true);
-      } finally {
-         readUnLock();
       }
    }
 
    @Override
    public void deleteGrouping(long tx, final GroupBinding groupBinding) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          bindingsJournal.appendDeleteRecordTransactional(tx, groupBinding.getId());
-      } finally {
-         readUnLock();
       }
    }
 
@@ -1344,25 +1316,19 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
 
       PersistentQueueBindingEncoding bindingEncoding = new PersistentQueueBindingEncoding(queue.getName(), binding.getAddress(), filterString, queue.getUser(), queue.isAutoCreated(), queue.getMaxConsumers(), queue.isPurgeOnNoConsumers(), queue.isEnabled(), queue.isExclusive(), queue.isGroupRebalance(), queue.isGroupRebalancePauseDispatch(), queue.getGroupBuckets(), queue.getGroupFirstKey(), queue.isLastValue(), queue.getLastValueKey(), queue.isNonDestructive(), queue.getConsumersBeforeDispatch(), queue.getDelayBeforeDispatch(), queue.isAutoDelete(), queue.getAutoDeleteDelay(), queue.getAutoDeleteMessageCount(), queue.getRoutingType().getType(), queue.isConfigurationManaged(), queue.getRingSize());
 
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          if (update) {
             bindingsJournal.appendUpdateRecordTransactional(tx, binding.getID(), JournalRecordIds.QUEUE_BINDING_RECORD, bindingEncoding);
          } else {
             bindingsJournal.appendAddRecordTransactional(tx, binding.getID(), JournalRecordIds.QUEUE_BINDING_RECORD, bindingEncoding);
          }
-      } finally {
-         readUnLock();
       }
    }
 
    @Override
    public void deleteQueueBinding(long tx, final long queueBindingID) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          bindingsJournal.appendDeleteRecordTransactional(tx, queueBindingID);
-      } finally {
-         readUnLock();
       }
    }
 
@@ -1370,24 +1336,17 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
    public long storeQueueStatus(long queueID, AddressQueueStatus status) throws Exception {
       long recordID = idGenerator.generateID();
 
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          bindingsJournal.appendAddRecord(recordID, JournalRecordIds.QUEUE_STATUS_RECORD, new QueueStatusEncoding(queueID, status), true);
-      } finally {
-         readUnLock();
       }
-
 
       return recordID;
    }
 
    @Override
    public void deleteQueueStatus(long recordID) throws Exception {
-      readLock();
-      try {
-         bindingsJournal.appendDeleteRecord(recordID, true);
-      } finally {
-         readUnLock();
+      try (ArtemisCloseable lock = closeableReadLock()) {
+         bindingsJournal.tryAppendDeleteRecord(recordID, this::recordNotFoundCallback, true);
       }
    }
 
@@ -1395,132 +1354,96 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
    public long storeAddressStatus(long addressID, AddressQueueStatus status) throws Exception {
       long recordID = idGenerator.generateID();
 
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          bindingsJournal.appendAddRecord(recordID, JournalRecordIds.ADDRESS_STATUS_RECORD, new AddressStatusEncoding(addressID, status), true);
-      } finally {
-         readUnLock();
       }
-
 
       return recordID;
    }
 
    @Override
    public void deleteAddressStatus(long recordID) throws Exception {
-      readLock();
-      try {
-         bindingsJournal.appendDeleteRecord(recordID, true);
-      } finally {
-         readUnLock();
+      try (ArtemisCloseable lock = closeableReadLock()) {
+         bindingsJournal.tryAppendDeleteRecord(recordID, this::recordNotFoundCallback, true);
       }
    }
 
    @Override
    public void addAddressBinding(final long tx, final AddressInfo addressInfo) throws Exception {
-      PersistentAddressBindingEncoding bindingEncoding = new PersistentAddressBindingEncoding(addressInfo.getName(),
-                                                                                              addressInfo.getRoutingTypes(),
-                                                                                              addressInfo.isAutoCreated());
+      PersistentAddressBindingEncoding bindingEncoding = new PersistentAddressBindingEncoding(addressInfo.getName(), addressInfo.getRoutingTypes(), addressInfo.isAutoCreated());
 
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          long recordID = idGenerator.generateID();
          bindingEncoding.setId(recordID);
          addressInfo.setId(recordID);
          bindingsJournal.appendAddRecordTransactional(tx, recordID, JournalRecordIds.ADDRESS_BINDING_RECORD, bindingEncoding);
-      } finally {
-         readUnLock();
       }
    }
 
    @Override
    public void deleteAddressBinding(long tx, final long addressBindingID) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          bindingsJournal.appendDeleteRecordTransactional(tx, addressBindingID);
-      } finally {
-         readUnLock();
       }
    }
 
    @Override
    public long storePageCounterInc(long txID, long queueID, int value, long persistentSize) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          long recordID = idGenerator.generateID();
          messageJournal.appendAddRecordTransactional(txID, recordID, JournalRecordIds.PAGE_CURSOR_COUNTER_INC, new PageCountRecordInc(queueID, value, persistentSize));
          return recordID;
-      } finally {
-         readUnLock();
       }
    }
 
    @Override
    public long storePageCounterInc(long queueID, int value, long persistentSize) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          final long recordID = idGenerator.generateID();
          messageJournal.appendAddRecord(recordID, JournalRecordIds.PAGE_CURSOR_COUNTER_INC, new PageCountRecordInc(queueID, value, persistentSize), true, getContext());
          return recordID;
-      } finally {
-         readUnLock();
       }
    }
 
    @Override
    public long storePageCounter(long txID, long queueID, long value, long persistentSize) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          final long recordID = idGenerator.generateID();
          messageJournal.appendAddRecordTransactional(txID, recordID, JournalRecordIds.PAGE_CURSOR_COUNTER_VALUE, new PageCountRecord(queueID, value, persistentSize));
          return recordID;
-      } finally {
-         readUnLock();
       }
    }
 
    @Override
    public long storePendingCounter(final long queueID, final long pageID) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          final long recordID = idGenerator.generateID();
          PageCountPendingImpl pendingInc = new PageCountPendingImpl(queueID, pageID);
          // We must guarantee the record sync before we actually write on the page otherwise we may get out of sync
          // on the counter
          messageJournal.appendAddRecord(recordID, JournalRecordIds.PAGE_CURSOR_PENDING_COUNTER, pendingInc, true);
          return recordID;
-      } finally {
-         readUnLock();
       }
    }
 
    @Override
    public void deleteIncrementRecord(long txID, long recordID) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          messageJournal.appendDeleteRecordTransactional(txID, recordID);
-      } finally {
-         readUnLock();
       }
    }
 
    @Override
    public void deletePageCounter(long txID, long recordID) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          messageJournal.appendDeleteRecordTransactional(txID, recordID);
-      } finally {
-         readUnLock();
       }
    }
 
    @Override
    public void deletePendingPageCounter(long txID, long recordID) throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          messageJournal.appendDeleteRecordTransactional(txID, recordID);
-      } finally {
-         readUnLock();
       }
    }
 
@@ -1531,6 +1454,8 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
       SparseArrayLinkedList<RecordInfo> records = new SparseArrayLinkedList<>();
 
       List<PreparedTransactionInfo> preparedTransactions = new ArrayList<>();
+
+      bindingsJournal.setRemoveExtraFilesOnLoad(true);
 
       JournalLoadInformation bindingsInfo = bindingsJournal.load(records, preparedTransactions, null);
 
@@ -1560,9 +1485,9 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
             } else if (rec == JournalRecordIds.ADDRESS_SETTING_RECORD) {
                PersistedAddressSetting setting = newAddressEncoding(id, buffer);
                mapPersistedAddressSettings.put(setting.getAddressMatch(), setting);
-            } else if (rec == JournalRecordIds.SECURITY_RECORD) {
-               PersistedRoles roles = newSecurityRecord(id, buffer);
-               mapPersistedRoles.put(roles.getAddressMatch(), roles);
+            } else if (rec == JournalRecordIds.SECURITY_SETTING_RECORD) {
+               PersistedSecuritySetting roles = newSecurityRecord(id, buffer);
+               mapPersistedSecuritySettings.put(roles.getAddressMatch(), roles);
             } else if (rec == JournalRecordIds.QUEUE_STATUS_RECORD) {
                QueueStatusEncoding statusEncoding = newQueueStatusEncoding(id, buffer);
                PersistentQueueBindingEncoding queueBindingEncoding = mapBindings.get(statusEncoding.queueID);
@@ -1586,6 +1511,12 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
             } else if (rec == JournalRecordIds.DIVERT_RECORD) {
                PersistedDivertConfiguration divertConfiguration = newDivertEncoding(id, buffer);
                mapPersistedDivertConfigurations.put(divertConfiguration.getName(), divertConfiguration);
+            } else if (rec == JournalRecordIds.USER_RECORD) {
+               PersistedUser user = newUserEncoding(id, buffer);
+               mapPersistedUsers.put(user.getUsername(), user);
+            } else if (rec == JournalRecordIds.ROLE_RECORD) {
+               PersistedRole role = newRoleEncoding(id, buffer);
+               mapPersistedRoles.put(role.getUsername(), role);
             } else {
                // unlikely to happen
                ActiveMQServerLogger.LOGGER.invalidRecordType(rec, new Exception("invalid record type " + rec));
@@ -1611,11 +1542,8 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
 
    @Override
    public void lineUpContext() {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          messageJournal.lineUpContext(getContext());
-      } finally {
-         readUnLock();
       }
    }
 
@@ -1636,6 +1564,10 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
 
       bindingsJournal.start();
 
+
+      if (config.getJournalRetentionLocation() != null) {
+         messageJournal.setHistoryFolder(config.getJournalRetentionLocation(), config.getJournalRetentionMaxBytes(), config.getJournalRetentionPeriod());
+      }
       messageJournal.start();
 
       started = true;
@@ -1704,15 +1636,12 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
     * TODO: Is this still being used ?
     */
    public JournalLoadInformation[] loadInternalOnly() throws Exception {
-      readLock();
-      try {
+      try (ArtemisCloseable lock = closeableReadLock()) {
          JournalLoadInformation[] info = new JournalLoadInformation[2];
          info[0] = bindingsJournal.loadInternalOnly();
          info[1] = messageJournal.loadInternalOnly();
 
          return info;
-      } finally {
-         readUnLock();
       }
    }
 
@@ -2042,8 +1971,8 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
     * @param buffer
     * @return
     */
-   protected static PersistedRoles newSecurityRecord(long id, ActiveMQBuffer buffer) {
-      PersistedRoles roles = new PersistedRoles();
+   protected static PersistedSecuritySetting newSecurityRecord(long id, ActiveMQBuffer buffer) {
+      PersistedSecuritySetting roles = new PersistedSecuritySetting();
       roles.decode(buffer);
       roles.setStoreId(id);
       return roles;
@@ -2074,6 +2003,21 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
       persistedDivertConfiguration.setStoreId(id);
       return persistedDivertConfiguration;
    }
+
+   static PersistedUser newUserEncoding(long id, ActiveMQBuffer buffer) {
+      PersistedUser persistedUser = new PersistedUser();
+      persistedUser.decode(buffer);
+      persistedUser.setStoreId(id);
+      return persistedUser;
+   }
+
+   static PersistedRole newRoleEncoding(long id, ActiveMQBuffer buffer) {
+      PersistedRole persistedRole = new PersistedRole();
+      persistedRole.decode(buffer);
+      persistedRole.setStoreId(id);
+      return persistedRole;
+   }
+
    /**
     * @param id
     * @param buffer
@@ -2124,10 +2068,7 @@ public abstract class AbstractJournalStorageManager extends CriticalComponentImp
    }
 
    @Override
-   public boolean addToPage(PagingStore store,
-                            Message msg,
-                            Transaction tx,
-                            RouteContextList listCtx) throws Exception {
+   public boolean addToPage(PagingStore store, Message msg, Transaction tx, RouteContextList listCtx) throws Exception {
       /**
        * Exposing the read-lock here is an encapsulation violation done in order to keep the code
        * simpler. The alternative would be to add a second method, say 'verifyPaging', to

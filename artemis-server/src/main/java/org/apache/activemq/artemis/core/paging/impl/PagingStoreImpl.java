@@ -400,6 +400,16 @@ public class PagingStoreImpl implements PagingStore {
       }
    }
 
+   public int getNumberOfFiles() throws Exception {
+      final SequentialFileFactory fileFactory = this.fileFactory;
+      if (fileFactory != null) {
+         List<String> files = fileFactory.listFiles("page");
+         return files.size();
+      }
+
+      return 0;
+   }
+
    @Override
    public void start() throws Exception {
       lock.writeLock().lock();
@@ -468,16 +478,11 @@ public class PagingStoreImpl implements PagingStore {
       Page page = createPage(pageId);
       page.open();
 
-      List<PagedMessage> messages = page.read(storageManager);
+      final List<PagedMessage> messages = page.read(storageManager);
 
-      LivePageCache pageCache = new LivePageCacheImpl(pageId);
+      final PagedMessage[] initialMessages = messages.toArray(new PagedMessage[messages.size()]);
 
-      for (PagedMessage msg : messages) {
-         pageCache.addLiveMessage(msg);
-         // As we add back to the live page,
-         // we have to discount one when we read the page
-         msg.getMessage().usageDown();
-      }
+      final LivePageCache pageCache = new LivePageCacheImpl(pageId, initialMessages);
 
       page.setLiveCache(pageCache);
 
@@ -485,7 +490,7 @@ public class PagingStoreImpl implements PagingStore {
 
       currentPage = page;
 
-      cursorProvider.addPageCache(pageCache);
+      cursorProvider.addLivePageCache(pageCache);
 
       /**
        * The page file might be incomplete in the cases: 1) last message incomplete 2) disk damaged.
@@ -565,11 +570,14 @@ public class PagingStoreImpl implements PagingStore {
       SequentialFileFactory factory = null;
       try {
          factory = checkFileFactory();
+         SequentialFile file = factory.createSequentialFile(fileName);
+         return file.exists() && file.size() > 0;
       } catch (Exception ignored) {
+         // never supposed to happen, but just in case
+         logger.warn("PagingStoreFactory::checkPageFileExists never-throws assumption failed.", ignored);
+         return true; // returning false would make the acks to the page to go missing.
+                      // since we are not sure on the result for this case, we just return true
       }
-
-      SequentialFile file = factory.createSequentialFile(fileName);
-      return file.exists();
    }
 
    @Override
@@ -587,7 +595,7 @@ public class PagingStoreImpl implements PagingStore {
 
       file.position(0);
 
-      file.close(false);
+      file.close(false, false);
 
       return page;
    }
@@ -1115,7 +1123,7 @@ public class PagingStoreImpl implements PagingStore {
 
          newPage.setLiveCache(pageCache);
 
-         cursorProvider.addPageCache(pageCache);
+         cursorProvider.addLivePageCache(pageCache);
 
          currentPageSize = 0;
 
@@ -1135,7 +1143,7 @@ public class PagingStoreImpl implements PagingStore {
     * @param pageID
     * @return
     */
-   private String createFileName(final int pageID) {
+   public String createFileName(final int pageID) {
       /** {@link DecimalFormat} is not thread safe. */
       synchronized (format) {
          return format.format(pageID) + ".page";

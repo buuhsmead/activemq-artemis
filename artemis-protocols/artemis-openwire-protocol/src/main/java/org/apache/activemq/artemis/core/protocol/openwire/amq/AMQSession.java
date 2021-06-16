@@ -38,6 +38,7 @@ import org.apache.activemq.artemis.core.paging.PagingStore;
 import org.apache.activemq.artemis.core.protocol.openwire.OpenWireConnection;
 import org.apache.activemq.artemis.core.protocol.openwire.OpenWireMessageConverter;
 import org.apache.activemq.artemis.core.protocol.openwire.OpenWireProtocolManager;
+import org.apache.activemq.artemis.core.protocol.openwire.util.OpenWireUtil;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ActiveMQServerLogger;
 import org.apache.activemq.artemis.core.server.BindingQueryResult;
@@ -90,7 +91,7 @@ public class AMQSession implements SessionCallback {
 
    private final Runnable enableAutoReadAndTtl;
 
-   private final CoreMessageObjectPools coreMessageObjectPools = new CoreMessageObjectPools();
+   private final CoreMessageObjectPools coreMessageObjectPools;
 
    private String[] existingQueuesCache;
 
@@ -100,7 +101,7 @@ public class AMQSession implements SessionCallback {
                      SessionInfo sessInfo,
                      ActiveMQServer server,
                      OpenWireConnection connection,
-                     OpenWireProtocolManager protocolManager) {
+                     OpenWireProtocolManager protocolManager, CoreMessageObjectPools coreMessageObjectPools) {
       this.connInfo = connInfo;
       this.sessInfo = sessInfo;
       this.clientId = SimpleString.toSimpleString(connInfo.getClientId());
@@ -111,6 +112,7 @@ public class AMQSession implements SessionCallback {
       this.protocolManagerWireFormat = protocolManager.wireFormat().copy();
       this.enableAutoReadAndTtl = this::enableAutoReadAndTtl;
       this.existingQueuesCache = null;
+      this.coreMessageObjectPools = coreMessageObjectPools;
    }
 
    public boolean isClosed() {
@@ -132,11 +134,6 @@ public class AMQSession implements SessionCallback {
 
       try {
          coreSession = server.createSession(name, username, password, minLargeMessageSize, connection, true, false, false, false, null, this, true, connection.getOperationContext(), protocolManager.getPrefixes(), protocolManager.getSecurityDomain());
-
-         long sessionId = sessInfo.getSessionId().getValue();
-         if (sessionId == -1) {
-            this.connection.setAdvisorySession(this);
-         }
       } catch (Exception e) {
          ActiveMQServerLogger.LOGGER.error("error init session", e);
       }
@@ -185,7 +182,7 @@ public class AMQSession implements SessionCallback {
             openWireDest = protocolManager.virtualTopicConsumerToFQQN(openWireDest);
             SimpleString queueName = new SimpleString(convertWildcard(openWireDest));
 
-            if (!checkAutoCreateQueue(queueName, openWireDest.isTemporary())) {
+            if (!checkAutoCreateQueue(queueName, openWireDest.isTemporary(), OpenWireUtil.extractFilterStringOrNull(info, openWireDest))) {
                throw new InvalidDestinationException("Destination doesn't exist: " + queueName);
             }
          }
@@ -227,6 +224,10 @@ public class AMQSession implements SessionCallback {
    }
 
    private boolean checkAutoCreateQueue(SimpleString queueName, boolean isTemporary) throws Exception {
+      return checkAutoCreateQueue(queueName, isTemporary, null);
+   }
+
+   private boolean checkAutoCreateQueue(SimpleString queueName, boolean isTemporary, String filter) throws Exception {
       boolean hasQueue = true;
       if (!connection.containsKnownDestination(queueName)) {
 
@@ -249,7 +250,7 @@ public class AMQSession implements SessionCallback {
                         routingTypeToUse = as.getDefaultAddressRoutingType();
                      }
                   }
-                  coreSession.createQueue(new QueueConfiguration(queueNameToUse).setAddress(addressToUse).setRoutingType(routingTypeToUse).setTemporary(isTemporary).setAutoCreated(true));
+                  coreSession.createQueue(new QueueConfiguration(queueNameToUse).setAddress(addressToUse).setRoutingType(routingTypeToUse).setTemporary(isTemporary).setAutoCreated(true).setFilterString(filter));
                   connection.addKnownDestination(queueName);
                } else {
                   hasQueue = false;
@@ -310,7 +311,7 @@ public class AMQSession implements SessionCallback {
       AMQConsumer theConsumer = (AMQConsumer) consumer.getProtocolData();
       //clear up possible rolledback ids.
       theConsumer.removeRolledback(reference);
-      return theConsumer.handleDeliver(reference, message.toCore(), deliveryCount);
+      return theConsumer.handleDeliver(reference, message.toCore());
    }
 
    @Override
@@ -453,7 +454,7 @@ public class AMQSession implements SessionCallback {
          try {
             getCoreSession().send(coreMsg, false, dest.isTemporary());
          } catch (Exception e) {
-            logger.warn(e.getMessage(), e);
+            logger.debug("Sending exception to the client", e);
             exceptionToSend = e;
          }
          connection.enableTtl();

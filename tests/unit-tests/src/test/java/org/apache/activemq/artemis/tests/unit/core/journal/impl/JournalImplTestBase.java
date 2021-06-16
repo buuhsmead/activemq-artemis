@@ -27,6 +27,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.activemq.artemis.cli.commands.tools.journal.DecodeJournal;
 import org.apache.activemq.artemis.cli.commands.tools.journal.EncodeJournal;
@@ -38,8 +39,10 @@ import org.apache.activemq.artemis.core.journal.TestableJournal;
 import org.apache.activemq.artemis.core.journal.impl.JournalFile;
 import org.apache.activemq.artemis.core.journal.impl.JournalImpl;
 import org.apache.activemq.artemis.core.journal.impl.JournalReaderCallback;
+import org.apache.activemq.artemis.logs.AssertionLoggerHandler;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.utils.ReusableLatch;
+import org.apache.activemq.artemis.utils.SimpleFutureImpl;
 import org.apache.activemq.artemis.utils.collections.SparseArrayLinkedList;
 import org.jboss.logging.Logger;
 import org.junit.After;
@@ -47,6 +50,20 @@ import org.junit.Assert;
 import org.junit.Before;
 
 public abstract class JournalImplTestBase extends ActiveMQTestBase {
+
+   @Before
+   public void startLogger() {
+      AssertionLoggerHandler.startCapture();
+   }
+
+   @After
+   public void stopLogger() {
+      try {
+         Assert.assertFalse(AssertionLoggerHandler.findText("AMQ144009"));
+      } finally {
+         AssertionLoggerHandler.stopCapture();
+      }
+   }
 
    private static final Logger log = Logger.getLogger(JournalImplTestBase.class);
 
@@ -159,6 +176,10 @@ public abstract class JournalImplTestBase extends ActiveMQTestBase {
       maxAIO = 50;
    }
 
+   protected boolean suportsRetention() {
+      return true;
+   }
+
    public void createJournal() throws Exception {
       journal = new JournalImpl(fileSize, minFiles, poolSize, 0, 0, fileFactory, filePrefix, fileExtension, maxAIO) {
          @Override
@@ -171,6 +192,13 @@ public abstract class JournalImplTestBase extends ActiveMQTestBase {
             }
          }
       };
+
+      if (suportsRetention()) {
+         // FakeSequentialFile won't support retention
+         File fileBackup = new File(getTestDir(), "backupFoler");
+         fileBackup.mkdirs();
+         ((JournalImpl) journal).setHistoryFolder(fileBackup, -1, -1);
+      }
 
       journal.setAutoReclaim(false);
       addActiveMQComponent(journal);
@@ -211,6 +239,8 @@ public abstract class JournalImplTestBase extends ActiveMQTestBase {
    }
 
    protected void stopJournal(final boolean reclaim) throws Exception {
+      journal.flush();
+
       // We do a reclaim in here
       if (reclaim) {
          checkAndReclaimFiles();
@@ -379,7 +409,7 @@ public abstract class JournalImplTestBase extends ActiveMQTestBase {
 
          journal.appendAddRecord(element, (byte) 0, record, sync);
 
-         records.add(new RecordInfo(element, (byte) 0, record, false, (short) 0));
+         records.add(new RecordInfo(element, (byte) 0, record, false, false, (short) 0));
       }
 
       journal.debugWait();
@@ -390,13 +420,16 @@ public abstract class JournalImplTestBase extends ActiveMQTestBase {
 
       beforeJournalOperation();
 
-      boolean result = journal.tryAppendUpdateRecord(argument, (byte) 0, updateRecord, sync);
+      SimpleFutureImpl<Boolean> future = new SimpleFutureImpl();
 
-      if (result) {
-         records.add(new RecordInfo(argument, (byte) 0, updateRecord, true, (short) 0));
+      journal.tryAppendUpdateRecord(argument, (byte) 0, updateRecord, (r, b) -> future.set(b), sync, false);
+
+      if (future.get()) {
+         Assert.fail();
+         records.add(new RecordInfo(argument, (byte) 0, updateRecord, true, false, (short) 0));
       }
 
-      return result;
+      return future.get();
    }
 
    protected void update(final long... arguments) throws Exception {
@@ -407,7 +440,7 @@ public abstract class JournalImplTestBase extends ActiveMQTestBase {
 
          journal.appendUpdateRecord(element, (byte) 0, updateRecord, sync);
 
-         records.add(new RecordInfo(element, (byte) 0, updateRecord, true, (short) 0));
+         records.add(new RecordInfo(element, (byte) 0, updateRecord, true, false, (short) 0));
       }
 
       journal.debugWait();
@@ -428,15 +461,16 @@ public abstract class JournalImplTestBase extends ActiveMQTestBase {
    protected boolean tryDelete(final long argument) throws Exception {
       beforeJournalOperation();
 
-      boolean result = journal.tryAppendDeleteRecord(argument, sync);
+      AtomicBoolean result = new AtomicBoolean(true);
+      journal.tryAppendDeleteRecord(argument, (t, b) -> result.set(b), sync);
 
-      if (result) {
+      if (result.get()) {
          removeRecordsForID(argument);
       }
 
       journal.debugWait();
 
-      return result;
+      return result.get();
    }
 
    protected void addTx(final long txID, final long... arguments) throws Exception {
@@ -451,7 +485,7 @@ public abstract class JournalImplTestBase extends ActiveMQTestBase {
 
          journal.appendAddRecordTransactional(txID, element, (byte) 0, record);
 
-         tx.records.add(new RecordInfo(element, (byte) 0, record, false, (short) 0));
+         tx.records.add(new RecordInfo(element, (byte) 0, record, false, false, (short) 0));
 
       }
 
@@ -468,7 +502,7 @@ public abstract class JournalImplTestBase extends ActiveMQTestBase {
 
          journal.appendUpdateRecordTransactional(txID, element, (byte) 0, updateRecord);
 
-         tx.records.add(new RecordInfo(element, (byte) 0, updateRecord, true, (short) 0));
+         tx.records.add(new RecordInfo(element, (byte) 0, updateRecord, true, false, (short) 0));
       }
       journal.debugWait();
    }
@@ -481,7 +515,7 @@ public abstract class JournalImplTestBase extends ActiveMQTestBase {
 
          journal.appendDeleteRecordTransactional(txID, element);
 
-         tx.deletes.add(new RecordInfo(element, (byte) 0, null, true, (short) 0));
+         tx.deletes.add(new RecordInfo(element, (byte) 0, null, true, false, (short) 0));
       }
 
       journal.debugWait();

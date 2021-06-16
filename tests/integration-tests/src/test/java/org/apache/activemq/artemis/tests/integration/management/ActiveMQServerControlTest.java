@@ -28,6 +28,7 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -60,15 +61,18 @@ import org.apache.activemq.artemis.api.jms.ActiveMQJMSClient;
 import org.apache.activemq.artemis.api.jms.JMSFactoryType;
 import org.apache.activemq.artemis.core.client.impl.ClientSessionFactoryImpl;
 import org.apache.activemq.artemis.core.client.impl.ClientSessionImpl;
+import org.apache.activemq.artemis.core.config.BridgeConfiguration;
 import org.apache.activemq.artemis.core.config.ClusterConnectionConfiguration;
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.config.impl.SecurityConfiguration;
 import org.apache.activemq.artemis.core.messagecounter.impl.MessageCounterManagerImpl;
+import org.apache.activemq.artemis.core.persistence.config.PersistedDivertConfiguration;
 import org.apache.activemq.artemis.core.remoting.impl.invm.InVMAcceptorFactory;
 import org.apache.activemq.artemis.core.remoting.impl.invm.TransportConstants;
 import org.apache.activemq.artemis.core.security.Role;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ActiveMQServers;
+import org.apache.activemq.artemis.core.server.BrokerConnection;
 import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.server.ServerConsumer;
 import org.apache.activemq.artemis.core.server.ServerSession;
@@ -194,6 +198,7 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       Assert.assertEquals(conf.getJournalCompactMinFiles(), serverControl.getJournalCompactMinFiles());
       Assert.assertEquals(conf.getJournalCompactPercentage(), serverControl.getJournalCompactPercentage());
       Assert.assertEquals(conf.isPersistenceEnabled(), serverControl.isPersistenceEnabled());
+      Assert.assertEquals(conf.getJournalPoolFiles(), serverControl.getJournalPoolFiles());
       Assert.assertTrue(serverControl.isActive());
    }
 
@@ -661,6 +666,32 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
    }
 
    @Test
+   public void testGetQueueCount() throws Exception {
+      SimpleString address = RandomUtil.randomSimpleString();
+      SimpleString name = RandomUtil.randomSimpleString();
+
+      ActiveMQServerControl serverControl = createManagementControl();
+
+      // due to replication, there can be another queue created for replicating
+      // management operations
+      Assert.assertFalse(ActiveMQServerControlTest.contains(name.toString(), serverControl.getQueueNames()));
+
+      int countBeforeCreate = serverControl.getQueueCount();
+
+      serverControl.createAddress(address.toString(), "ANYCAST");
+      if (legacyCreateQueue) {
+         serverControl.createQueue(address.toString(), "ANYCAST", name.toString(), null, true, -1, false, false);
+      } else {
+         serverControl.createQueue(new QueueConfiguration(name).setAddress(address).setRoutingType(RoutingType.ANYCAST).setDurable(true).setAutoCreateAddress(false).toJSON());
+      }
+
+      Assert.assertTrue(countBeforeCreate < serverControl.getQueueCount());
+
+      serverControl.destroyQueue(name.toString());
+      Assert.assertFalse(ActiveMQServerControlTest.contains(name.toString(), serverControl.getQueueNames()));
+   }
+
+   @Test
    public void testGetQueueNames() throws Exception {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString name = RandomUtil.randomSimpleString();
@@ -738,6 +769,31 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
 
       Assert.assertTrue(ActiveMQServerControlTest.contains(clusterConnection1, serverControl.getClusterConnectionNames()));
       Assert.assertTrue(ActiveMQServerControlTest.contains(clusterConnection2, serverControl.getClusterConnectionNames()));
+   }
+
+   @Test
+   public void testGetAddressCount() throws Exception {
+      SimpleString address = RandomUtil.randomSimpleString();
+      SimpleString name = RandomUtil.randomSimpleString();
+
+      ActiveMQServerControl serverControl = createManagementControl();
+
+      // due to replication, there can be another queue created for replicating
+      // management operations
+      Assert.assertFalse(ActiveMQServerControlTest.contains(address.toString(), serverControl.getAddressNames()));
+
+      int countBeforeCreate = serverControl.getAddressCount();
+
+      if (legacyCreateQueue) {
+         serverControl.createQueue(address.toString(), "ANYCAST", name.toString(), null, true, -1, false, true);
+      } else {
+         serverControl.createQueue(new QueueConfiguration(name).setAddress(address).setRoutingType(RoutingType.ANYCAST).toJSON());
+      }
+
+      Assert.assertTrue(countBeforeCreate < serverControl.getAddressCount());
+
+      serverControl.destroyQueue(name.toString(), true, true);
+      Assert.assertFalse(ActiveMQServerControlTest.contains(address.toString(), serverControl.getAddressNames()));
    }
 
    @Test
@@ -852,7 +908,7 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       String exactAddress = "test.whatever";
 
       assertEquals(1, serverControl.getRoles(addressMatch).length);
-      serverControl.addSecuritySettings(addressMatch, "foo", "foo, bar", "foo", "bar", "foo, bar", "", "", "bar", "foo", "foo");
+      serverControl.addSecuritySettings(addressMatch, "foo", "foo, bar", null, "bar", "foo, bar", "", "", "bar", "foo", "foo");
 
       // Restart the server. Those settings should be persisted
 
@@ -874,7 +930,7 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       }
       assertTrue(fooRole.isSend());
       assertTrue(fooRole.isConsume());
-      assertTrue(fooRole.isCreateDurableQueue());
+      assertFalse(fooRole.isCreateDurableQueue());
       assertFalse(fooRole.isDeleteDurableQueue());
       assertTrue(fooRole.isCreateNonDurableQueue());
       assertFalse(fooRole.isDeleteNonDurableQueue());
@@ -1715,6 +1771,9 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       divertNames = serverControl.getDivertNames();
       assertEquals(1, divertNames.length);
       assertEquals(name, divertNames[0]);
+      //now check its been persisted
+      PersistedDivertConfiguration pdc = server.getStorageManager().recoverDivertConfigurations().get(0);
+      assertEquals(pdc.getDivertConfiguration().getForwardingAddress(), updatedForwardingAddress);
 
       // check that a message is no longer exclusively diverted
       message = session.createMessage(false);
@@ -1772,6 +1831,96 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
                                  -1, // producerWindowSize
                                  ActiveMQClient.DEFAULT_CLIENT_FAILURE_CHECK_PERIOD, connectorConfig.getName(), // liveConnector
                                  false, false, null, null);
+
+      checkResource(ObjectNameBuilder.DEFAULT.getBridgeObjectName(name));
+      String[] bridgeNames = serverControl.getBridgeNames();
+      assertEquals(1, bridgeNames.length);
+      assertEquals(name, bridgeNames[0]);
+
+      BridgeControl bridgeControl = ManagementControlHelper.createBridgeControl(name, mbeanServer);
+      assertEquals(name, bridgeControl.getName());
+      assertTrue(bridgeControl.isStarted());
+
+      // check that a message sent to the sourceAddress is put in the tagetQueue
+      ClientProducer producer = session.createProducer(sourceAddress);
+      ClientMessage message = session.createMessage(false);
+      String text = RandomUtil.randomString();
+      message.putStringProperty("prop", text);
+      producer.send(message);
+
+      session.start();
+
+      ClientConsumer targetConsumer = session.createConsumer(targetQueue);
+      message = targetConsumer.receive(5000);
+      assertNotNull(message);
+      assertEquals(text, message.getStringProperty("prop"));
+
+      ClientConsumer sourceConsumer = session.createConsumer(sourceQueue);
+      assertNull(sourceConsumer.receiveImmediate());
+
+      serverControl.destroyBridge(name);
+
+      checkNoResource(ObjectNameBuilder.DEFAULT.getBridgeObjectName(name));
+      assertEquals(0, serverControl.getBridgeNames().length);
+
+      // check that a message is no longer diverted
+      message = session.createMessage(false);
+      String text2 = RandomUtil.randomString();
+      message.putStringProperty("prop", text2);
+      producer.send(message);
+
+      assertNull(targetConsumer.receiveImmediate());
+      message = sourceConsumer.receive(5000);
+      assertNotNull(message);
+      assertEquals(text2, message.getStringProperty("prop"));
+
+      sourceConsumer.close();
+      targetConsumer.close();
+
+      session.deleteQueue(sourceQueue);
+      session.deleteQueue(targetQueue);
+
+      session.close();
+
+      locator.close();
+   }
+
+   @Test
+   public void testCreateAndDestroyBridgeFromJson() throws Exception {
+      String name = RandomUtil.randomString();
+      String sourceAddress = RandomUtil.randomString();
+      String sourceQueue = RandomUtil.randomString();
+      String targetAddress = RandomUtil.randomString();
+      String targetQueue = RandomUtil.randomString();
+
+      ActiveMQServerControl serverControl = createManagementControl();
+
+      checkNoResource(ObjectNameBuilder.DEFAULT.getBridgeObjectName(name));
+      assertEquals(0, serverControl.getBridgeNames().length);
+
+      ServerLocator locator = createInVMNonHALocator();
+      ClientSessionFactory csf = createSessionFactory(locator);
+      ClientSession session = csf.createSession();
+
+      if (legacyCreateQueue) {
+         session.createQueue(sourceAddress, RoutingType.ANYCAST, sourceQueue);
+         session.createQueue(targetAddress, RoutingType.ANYCAST, targetQueue);
+      } else {
+         session.createQueue(new QueueConfiguration(sourceQueue).setAddress(sourceAddress).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+         session.createQueue(new QueueConfiguration(targetQueue).setAddress(targetAddress).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      }
+
+      BridgeConfiguration bridgeConfiguration = new BridgeConfiguration(name)
+         .setQueueName(sourceQueue)
+         .setForwardingAddress(targetAddress)
+         .setUseDuplicateDetection(false)
+         .setConfirmationWindowSize(1)
+         .setProducerWindowSize(-1)
+         .setStaticConnectors(Collections.singletonList(connectorConfig.getName()))
+         .setHA(false)
+         .setUser(null)
+         .setPassword(null);
+      serverControl.createBridge(bridgeConfiguration.toJSON());
 
       checkResource(ObjectNameBuilder.DEFAULT.getBridgeObjectName(name));
       String[] bridgeNames = serverControl.getBridgeNames();
@@ -2691,11 +2840,6 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       Assert.assertEquals("messagesAcked", "0", array.getJsonObject(0).getString("messagesAcked"));
       Assert.assertEquals("deliveringCount", "0", array.getJsonObject(0).getString("deliveringCount"));
       Assert.assertEquals("messagesKilled", "0", array.getJsonObject(0).getString("messagesKilled"));
-      String resultDirectDeliver = array.getJsonObject(0).getString("deliverDeliver");
-      // if there is a core consumer, the result here would be true (if directDeliver is supported).
-      // as for what we expect it's either true or false through management, we are not testing for directDeliver here, just
-      // if management works.
-      Assert.assertTrue(resultDirectDeliver.equals("true") || resultDirectDeliver.equals("false"));
       Assert.assertEquals("exclusive", "false", array.getJsonObject(0).getString("exclusive"));
       Assert.assertEquals("lastValue", "false", array.getJsonObject(0).getString("lastValue"));
       Assert.assertEquals("scheduledCount", "0", array.getJsonObject(0).getString("scheduledCount"));
@@ -3903,6 +4047,57 @@ public class ActiveMQServerControlTest extends ManagementTestBase {
       try {
          serverControl.resetUser("x","x","x");
          fail();
+      } catch (Exception expected) {
+      }
+   }
+
+
+   @Test
+   public void testBrokerConnections() throws Exception {
+      class Fake implements BrokerConnection {
+         String name;
+         boolean started = false;
+
+         Fake(String name) {
+            this.name = name;
+         }
+         @Override
+         public String getName() {
+            return name;
+         }
+
+         @Override
+         public String getProtocol() {
+            return "fake";
+         }
+
+         @Override
+         public void start() throws Exception {
+            started = true;
+         }
+
+         @Override
+         public void stop() throws Exception {
+            started = false;
+
+         }
+
+         @Override
+         public boolean isStarted() {
+            return started;
+         }
+      }
+      Fake fake = new Fake("fake" + UUIDGenerator.getInstance().generateStringUUID());
+      server.registerBrokerConnection(fake);
+
+      ActiveMQServerControl serverControl = createManagementControl();
+      try {
+         String result = serverControl.listBrokerConnections();
+         Assert.assertTrue(result.contains(fake.getName()));
+         serverControl.startBrokerConnection(fake.getName());
+         Assert.assertTrue(fake.isStarted());
+         serverControl.stopBrokerConnection(fake.getName());
+         Assert.assertFalse(fake.isStarted());
       } catch (Exception expected) {
       }
    }

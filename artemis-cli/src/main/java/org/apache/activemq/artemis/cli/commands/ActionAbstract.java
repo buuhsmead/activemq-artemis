@@ -17,9 +17,18 @@
 package org.apache.activemq.artemis.cli.commands;
 
 import java.io.File;
+import java.net.InetAddress;
 import java.net.URI;
+import java.util.Map;
 
 import io.airlift.airline.Option;
+import org.apache.activemq.artemis.api.core.TransportConfiguration;
+import org.apache.activemq.artemis.core.config.Configuration;
+import org.apache.activemq.artemis.core.config.FileDeploymentManager;
+import org.apache.activemq.artemis.core.config.impl.FileConfiguration;
+import org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants;
+import org.apache.activemq.artemis.utils.ConfigurationHelper;
+import org.apache.activemq.artemis.utils.uri.SchemaConstants;
 
 public abstract class ActionAbstract implements Action {
 
@@ -66,6 +75,47 @@ public abstract class ActionAbstract implements Action {
       }
       return brokerInstance;
    }
+
+
+   protected String getBrokerURLInstance() {
+      if (getBrokerInstance() != null) {
+         try {
+            Configuration brokerConfiguration = getBrokerConfiguration();
+            for (TransportConfiguration acceptorConfiguration: brokerConfiguration.getAcceptorConfigurations()) {
+               if (acceptorConfiguration.getName().equals("artemis")) {
+                  Map<String, Object> acceptorParams = acceptorConfiguration.getParams();
+                  String scheme = ConfigurationHelper.getStringProperty(TransportConstants.SCHEME_PROP_NAME, SchemaConstants.TCP, acceptorParams);
+                  String host = ConfigurationHelper.getStringProperty(TransportConstants.HOST_PROP_NAME, "localhost", acceptorParams);
+                  int port = ConfigurationHelper.getIntProperty(TransportConstants.PORT_PROP_NAME, 61616, acceptorParams);
+
+                  if (InetAddress.getByName(host).isAnyLocalAddress()) {
+                     host = "localhost";
+                  }
+
+                  return new URI(scheme, null, host, port, null, null, null).toString();
+               }
+            }
+         } catch (Exception e) {
+            if (isVerbose()) {
+               System.out.print("Can not get the broker url instance: " + e.toString());
+            }
+         }
+      }
+
+      return null;
+   }
+
+
+   protected Configuration getBrokerConfiguration() throws Exception {
+      FileConfiguration fileConfiguration = new FileConfiguration();
+      String brokerConfiguration = new File(new File(getBrokerEtc()), "broker.xml").toURI().toASCIIString();
+      FileDeploymentManager fileDeploymentManager = new FileDeploymentManager(brokerConfiguration);
+      fileDeploymentManager.addDeployable(fileConfiguration);
+      fileDeploymentManager.readConfiguration();
+
+      return fileConfiguration;
+   }
+
 
    public String getBrokerEtc() {
       if (brokerEtc == null) {

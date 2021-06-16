@@ -23,12 +23,18 @@ import javax.jms.MessageConsumer;
 import javax.jms.MessageProducer;
 import javax.jms.Session;
 import javax.jms.TextMessage;
+import java.util.HashMap;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.activemq.artemis.api.core.SimpleString;
+import org.apache.activemq.artemis.core.server.MessageReference;
 import org.apache.activemq.artemis.core.server.Queue;
+import org.apache.activemq.artemis.core.settings.impl.AddressFullMessagePolicy;
+import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.tests.util.CFUtil;
 import org.apache.activemq.artemis.tests.util.Wait;
+import org.apache.activemq.artemis.utils.collections.LinkedListIterator;
 import org.apache.activemq.transport.amqp.client.AmqpClient;
 import org.apache.activemq.transport.amqp.client.AmqpConnection;
 import org.apache.activemq.transport.amqp.client.AmqpMessage;
@@ -126,6 +132,52 @@ public class AmqpExpiredMessageTest extends AmqpClientTestSupport {
       assertEquals("Value1", received.getApplicationProperty("key1"));
 
       connection.close();
+   }
+
+   @Test(timeout = 60000)
+   public void testRetryExpiry() throws Exception {
+      AmqpClient client = createAmqpClient();
+      AmqpConnection connection = addConnection(client.connect());
+      AmqpSession session = connection.createSession();
+
+      AmqpSender sender = session.createSender(getQueueName());
+
+      // Get the Queue View early to avoid racing the delivery.
+      final Queue queueView = getProxyToQueue(getQueueName());
+      assertNotNull(queueView);
+
+      AmqpMessage message = new AmqpMessage();
+      message.setTimeToLive(1);
+      message.setText("Test-Message");
+      message.setDurable(true);
+      message.setApplicationProperty("key1", "Value1");
+      sender.send(message);
+
+      message = new AmqpMessage();
+      message.setTimeToLive(1);
+      message.setBytes(new byte[500 * 1024]);
+      sender.send(message);
+      sender.close();
+
+      final Queue dlqView = getProxyToQueue(getDeadLetterAddress());
+
+      Wait.assertEquals(2, dlqView::getMessageCount);
+      Assert.assertEquals(2, dlqView.retryMessages(null));
+      Wait.assertEquals(0, dlqView::getMessageCount);
+      Wait.assertEquals(2, queueView::getMessageCount);
+
+
+      AmqpReceiver receiver = session.createReceiver(getQueueName());
+      // Now try and get the message
+      receiver.flow(2);
+      for (int i = 0; i < 2; i++) {
+         AmqpMessage received = receiver.receive(5, TimeUnit.SECONDS);
+         assertNotNull(received);
+         received.accept();
+      }
+      connection.close();
+      Wait.assertEquals(0, queueView::getMessageCount);
+      Wait.assertEquals(0, dlqView::getMessageCount);
    }
 
    /** This test is validating a broker feature where the message copy through the DLQ will receive an annotation.
@@ -355,9 +407,7 @@ public class AmqpExpiredMessageTest extends AmqpClientTestSupport {
       sender.send(message);
       sender.close();
 
-      Thread.sleep(50);
-
-      assertEquals(1, queueView.getMessageCount());
+      Wait.assertEquals(1, queueView::getMessageCount);
 
       // Now try and get the message
       AmqpReceiver receiver = session.createReceiver(getQueueName());
@@ -365,7 +415,7 @@ public class AmqpExpiredMessageTest extends AmqpClientTestSupport {
       AmqpMessage received = receiver.receive(5, TimeUnit.SECONDS);
       assertNotNull(received);
 
-      assertEquals(0, queueView.getMessagesExpired());
+      Wait.assertEquals(0, queueView::getMessagesExpired);
 
       connection.close();
    }
@@ -538,4 +588,148 @@ public class AmqpExpiredMessageTest extends AmqpClientTestSupport {
          connection.close();
       }
    }
+
+   @Test(timeout = 60000)
+   public void testExpireThorughAddressSettings() throws Exception {
+      testExpireThorughAddressSettings(false);
+   }
+
+   @Test(timeout = 60000)
+   public void testExpireThorughAddressSettingsRebootServer() throws Exception {
+      testExpireThorughAddressSettings(true);
+   }
+
+   private void testExpireThorughAddressSettings(boolean reboot) throws Exception {
+
+      // Address configuration
+      AddressSettings addressSettings = new AddressSettings();
+
+      addressSettings.setAddressFullMessagePolicy(AddressFullMessagePolicy.PAGE);
+      addressSettings.setAutoCreateQueues(isAutoCreateQueues());
+      addressSettings.setAutoCreateAddresses(isAutoCreateAddresses());
+      addressSettings.setDeadLetterAddress(SimpleString.toSimpleString(getDeadLetterAddress()));
+      addressSettings.setExpiryAddress(SimpleString.toSimpleString(getDeadLetterAddress()));
+      addressSettings.setExpiryDelay(1000L);
+
+      server.getAddressSettingsRepository().clear();
+      server.getAddressSettingsRepository().addMatch("#", addressSettings);
+
+      AmqpClient client = createAmqpClient();
+      AmqpConnection connection = addConnection(client.connect());
+      AmqpSession session = connection.createSession();
+
+      AmqpSender sender = session.createSender(getQueueName());
+
+      // Get the Queue View early to avoid racing the delivery.
+      final Queue queueView = getProxyToQueue(getQueueName());
+      assertNotNull(queueView);
+
+      AmqpMessage message = new AmqpMessage();
+      message.setText("Test-Message");
+      message.setDurable(true);
+      message.setApplicationProperty("key1", "Value1");
+      sender.send(message);
+
+      message = new AmqpMessage();
+      message.setBytes(new byte[500 * 1024]);
+      message.setDurable(true);
+      sender.send(message);
+      sender.close();
+      connection.close();
+
+      if (reboot) {
+         server.stop();
+         server.getConfiguration().setMessageExpiryScanPeriod(100);
+         server.start();
+      }
+
+      final Queue dlqView = getProxyToQueue(getDeadLetterAddress());
+
+      Wait.assertEquals(2, dlqView::getMessageCount);
+   }
+
+   @Test
+   public void testPreserveExpirationOnTTL() throws Exception {
+
+      // Address configuration
+      AddressSettings addressSettings = new AddressSettings();
+
+      addressSettings.setAddressFullMessagePolicy(AddressFullMessagePolicy.PAGE);
+      addressSettings.setAutoCreateQueues(isAutoCreateQueues());
+      addressSettings.setAutoCreateAddresses(isAutoCreateAddresses());
+      addressSettings.setDeadLetterAddress(SimpleString.toSimpleString(getDeadLetterAddress()));
+      addressSettings.setExpiryAddress(SimpleString.toSimpleString(getDeadLetterAddress()));
+      addressSettings.setExpiryDelay(1000L);
+
+      server.getAddressSettingsRepository().clear();
+      server.getAddressSettingsRepository().addMatch("#", addressSettings);
+
+      AmqpClient client = createAmqpClient();
+      AmqpConnection connection = addConnection(client.connect());
+      AmqpSession session = connection.createSession();
+
+      AmqpSender sender = session.createSender(getQueueName());
+
+      // Get the Queue View early to avoid racing the delivery.
+      final Queue queueView = getProxyToQueue(getQueueName());
+      assertNotNull(queueView);
+
+      AmqpMessage message = new AmqpMessage();
+      message.setText("Test-Message");
+      message.setDurable(true);
+      message.setTimeToLive(3600 * 1000);
+      message.setApplicationProperty("id", "0");
+      sender.send(message);
+
+      message = new AmqpMessage();
+      message.setBytes(new byte[500 * 1024]);
+      message.setDurable(true);
+      message.setTimeToLive(3600 * 1000);
+      message.setApplicationProperty("id", "1");
+      sender.send(message);
+
+      Wait.assertEquals(2, queueView::getMessageCount);
+      LinkedListIterator<MessageReference> linkedListIterator = queueView.iterator();
+      HashMap<String, Long> dataSet = new HashMap<>();
+      int count = 0;
+      while (linkedListIterator.hasNext()) {
+         count++;
+         MessageReference ref = linkedListIterator.next();
+         String idUsed = ref.getMessage().getStringProperty("id");
+         dataSet.put(idUsed, ref.getMessage().getExpiration());
+      }
+
+      Assert.assertEquals(2, count);
+      linkedListIterator.close();
+
+      server.stop();
+
+      Thread.sleep(500); // we need some time passing, as the TTL can't be recalculated here
+      server.getConfiguration().setMessageExpiryScanPeriod(100);
+      server.start();
+
+      final Queue queueViewAfterRestart = getProxyToQueue(getQueueName());
+
+      Wait.assertEquals(2, queueViewAfterRestart::getMessageCount);
+      Wait.assertTrue(server::isActive);
+
+      linkedListIterator = queueViewAfterRestart.iterator();
+      count = 0;
+      while (linkedListIterator.hasNext()) {
+         count++;
+         MessageReference ref = linkedListIterator.next();
+         String idUsed = ref.getMessage().getStringProperty("id");
+         long originalExpiration = dataSet.get(idUsed);
+         System.out.println("original Expiration = " + originalExpiration + " while this expiration = " + ref.getMessage().getExpiration());
+         Assert.assertEquals(originalExpiration, ref.getMessage().getExpiration());
+      }
+      Assert.assertEquals(2, count);
+      linkedListIterator.close();
+
+
+   }
+
+
+
+
 }

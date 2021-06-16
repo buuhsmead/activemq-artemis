@@ -21,6 +21,7 @@ import javax.transaction.xa.Xid;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -109,15 +110,20 @@ public class SessionFailureXATest extends ActiveMQTestBase {
 
    @Test
    public void testFailureWithXAEnd() throws Exception {
-      testFailure(true);
+      testFailure(true, false);
    }
 
    @Test
    public void testFailureWithoutXAEnd() throws Exception {
-      testFailure(false);
+      testFailure(false, false);
    }
 
-   public void testFailure(boolean xaEnd) throws Exception {
+   @Test
+   public void testFailureWithXAPrepare() throws Exception {
+      testFailure(true, true);
+   }
+
+   public void testFailure(boolean xaEnd, boolean xaPrepare) throws Exception {
 
       ClientSession clientSession2 = sessionFactory.createSession(false, true, true);
       try {
@@ -159,6 +165,10 @@ public class SessionFailureXATest extends ActiveMQTestBase {
          // We are validating both cases, where xaEnd succeeded and didn't succeed
          // so this tests is parameterized to validate both cases.
          clientSession.end(xid, XAResource.TMSUCCESS);
+
+         if (xaPrepare) {
+            clientSession.prepare(xid);
+         }
       }
 
       Wait.assertEquals(1, () -> messagingService.getSessions().size());
@@ -170,7 +180,11 @@ public class SessionFailureXATest extends ActiveMQTestBase {
 
       Wait.assertEquals(0, () -> messagingService.getSessions().size());
 
-      Wait.assertEquals(0, messagingService.getResourceManager()::size);
+      if (xaPrepare) {
+         Wait.assertEquals(1, messagingService.getResourceManager()::size);
+      } else {
+         Wait.assertEquals(0, messagingService.getResourceManager()::size);
+      }
 
       locator = createInVMNonHALocator();
       sessionFactory = createSessionFactory(locator);
@@ -184,22 +198,41 @@ public class SessionFailureXATest extends ActiveMQTestBase {
       clientSession.setTransactionTimeout((int) TimeUnit.MINUTES.toMillis(10));
       clientSession.start();
       clientConsumer = clientSession.createConsumer(atestq);
-      m = clientConsumer.receive(1000);
-      Assert.assertNotNull(m);
-      m.acknowledge();
-      Assert.assertEquals(m.getBodyBuffer().readString(), "m1");
-      m = clientConsumer.receive(1000);
-      Assert.assertNotNull(m);
-      m.acknowledge();
-      Assert.assertEquals(m.getBodyBuffer().readString(), "m2");
-      m = clientConsumer.receive(1000);
-      Assert.assertNotNull(m);
-      m.acknowledge();
-      Assert.assertEquals(m.getBodyBuffer().readString(), "m3");
-      m = clientConsumer.receive(1000);
-      Assert.assertNotNull(m);
-      m.acknowledge();
-      Assert.assertEquals(m.getBodyBuffer().readString(), "m4");
 
+      HashSet<String> bodies = new HashSet<>();
+      m = clientConsumer.receive(1000);
+      if (xaPrepare) {
+         Assert.assertNull(m);
+      } else {
+         Assert.assertNotNull(m);
+         m.acknowledge();
+         assertOrTrack(xaEnd, m, bodies, "m1");
+         m = clientConsumer.receive(1000);
+         Assert.assertNotNull(m);
+         m.acknowledge();
+         assertOrTrack(xaEnd, m, bodies, "m2");
+         m = clientConsumer.receive(1000);
+         Assert.assertNotNull(m);
+         m.acknowledge();
+         assertOrTrack(xaEnd, m, bodies, "m3");
+         m = clientConsumer.receive(1000);
+         Assert.assertNotNull(m);
+         m.acknowledge();
+         assertOrTrack(xaEnd, m, bodies, "m4");
+
+         if (!xaEnd) {
+            // order is not guaranteed b/c the m4 async ack may not have been processed when there is no sync end call
+            assertEquals("got all bodies", 4, bodies.size());
+         }
+      }
+   }
+
+   private void assertOrTrack(boolean xaEnd, ClientMessage m, HashSet<String> bodies, String expected) {
+      final String body = m.getBodyBuffer().readString();
+      if (xaEnd) {
+         Assert.assertEquals(expected, body);
+      } else {
+         bodies.add(body);
+      }
    }
 }

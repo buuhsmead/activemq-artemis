@@ -38,9 +38,9 @@ import org.apache.activemq.artemis.core.postoffice.Bindings;
 import org.apache.activemq.artemis.core.postoffice.BindingsFactory;
 import org.apache.activemq.artemis.core.postoffice.QueueBinding;
 import org.apache.activemq.artemis.core.server.ActiveMQMessageBundle;
-import org.apache.activemq.artemis.core.server.cluster.impl.MessageLoadBalancingType;
 import org.apache.activemq.artemis.core.server.impl.AddressInfo;
 import org.apache.activemq.artemis.core.server.metrics.MetricsManager;
+import org.apache.activemq.artemis.core.server.mirror.MirrorController;
 import org.apache.activemq.artemis.core.transaction.Transaction;
 import org.apache.activemq.artemis.utils.CompositeAddress;
 import org.jboss.logging.Logger;
@@ -109,6 +109,11 @@ public class SimpleAddressManager implements AddressManager {
       removeBindingInternal(binding.getA().getAddress(), uniqueName);
 
       return binding.getA();
+   }
+
+   @Override
+   public Bindings getExistingBindingsForRoutingAddress(final SimpleString address) throws Exception {
+      return mappings.get(CompositeAddress.extractAddressName(address));
    }
 
    @Override
@@ -207,52 +212,64 @@ public class SimpleAddressManager implements AddressManager {
       Bindings bindings = mappings.get(realAddress);
 
       if (bindings != null) {
-         removeMapping(bindableName, bindings);
-
+         final SimpleString bindableQueueName = CompositeAddress.extractQueueName(bindableName);
+         final Binding binding = bindings.removeBindingByUniqueName(bindableQueueName);
+         if (binding == null) {
+            throw new IllegalStateException("Cannot find binding " + bindableName);
+         }
          if (bindings.getBindings().isEmpty()) {
             mappings.remove(realAddress);
+            bindingsEmpty(realAddress, bindings);
          }
       }
    }
 
-   protected Binding removeMapping(final SimpleString bindableName, final Bindings bindings) {
-      Binding theBinding = null;
-
-      for (Binding binding : bindings.getBindings()) {
-         if (binding.getUniqueName().equals(CompositeAddress.extractQueueName(bindableName))) {
-            theBinding = binding;
-            break;
-         }
-      }
-
-      if (theBinding == null) {
-         throw new IllegalStateException("Cannot find binding " + bindableName);
-      }
-
-      bindings.removeBinding(theBinding);
-
-      return theBinding;
+   protected void bindingsEmpty(SimpleString realAddress, Bindings bindings) {
    }
 
-   protected boolean addMappingInternal(final SimpleString address, final Binding binding) throws Exception {
+   protected Bindings addMappingsInternal(final SimpleString address,
+                                      final Collection<Binding> newBindings) throws Exception {
+      if (newBindings.isEmpty()) {
+         return null;
+      }
       SimpleString realAddress = CompositeAddress.extractAddressName(address);
       Bindings bindings = mappings.get(realAddress);
-
-      Bindings prevBindings = null;
 
       if (bindings == null) {
          bindings = bindingsFactory.createBindings(realAddress);
 
-         prevBindings = mappings.putIfAbsent(realAddress, bindings);
+         final Bindings prevBindings = mappings.putIfAbsent(realAddress, bindings);
 
          if (prevBindings != null) {
             bindings = prevBindings;
          }
       }
+      for (Binding binding : newBindings) {
+         bindings.addBinding(binding);
+      }
+      return bindings;
+   }
+
+   protected boolean addMappingInternal(final SimpleString address, final Binding binding) throws Exception {
+      boolean addedNewBindings = false;
+      SimpleString realAddress = CompositeAddress.extractAddressName(address);
+      Bindings bindings = mappings.get(realAddress);
+
+      if (bindings == null) {
+         bindings = bindingsFactory.createBindings(realAddress);
+
+         final Bindings prevBindings = mappings.putIfAbsent(realAddress, bindings);
+
+         if (prevBindings != null) {
+            bindings = prevBindings;
+         } else {
+            addedNewBindings = true;
+         }
+      }
 
       bindings.addBinding(binding);
 
-      return prevBindings != null;
+      return addedNewBindings;
    }
 
    @Override
@@ -358,7 +375,20 @@ public class SimpleAddressManager implements AddressManager {
    }
 
    @Override
-   public void updateMessageLoadBalancingTypeForAddress(SimpleString  address, MessageLoadBalancingType messageLoadBalancingType) throws Exception {
-      getBindingsForRoutingAddress(CompositeAddress.extractAddressName(address)).setMessageLoadBalancingType(messageLoadBalancingType);
+   public void scanAddresses(MirrorController mirrorController) throws Exception {
+      mirrorController.startAddressScan();
+      for (AddressInfo info : addressInfoMap.values()) {
+         mirrorController.addAddress(info);
+         Bindings bindings = mappings.get(info.getName());
+         if (bindings != null) {
+            for (Binding binding : bindings.getBindings()) {
+               if (binding instanceof LocalQueueBinding) {
+                  LocalQueueBinding localQueueBinding = (LocalQueueBinding)binding;
+                  mirrorController.createQueue(localQueueBinding.getQueue().getQueueConfiguration());
+               }
+            }
+         }
+      }
+      mirrorController.endAddressScan();
    }
 }

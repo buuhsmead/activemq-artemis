@@ -17,23 +17,87 @@
 package org.apache.activemq.artemis.protocol.amqp.broker;
 
 import java.nio.ByteBuffer;
+import java.util.Map;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.PooledByteBufAllocator;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.persistence.CoreMessageObjectPools;
 import org.apache.activemq.artemis.core.persistence.Persister;
 import org.apache.activemq.artemis.protocol.amqp.util.NettyWritable;
 import org.apache.activemq.artemis.protocol.amqp.util.TLSEncode;
 import org.apache.activemq.artemis.utils.DataConstants;
 import org.apache.activemq.artemis.utils.collections.TypedProperties;
+import org.apache.qpid.proton.amqp.Symbol;
+import org.apache.qpid.proton.amqp.messaging.AmqpValue;
+import org.apache.qpid.proton.amqp.messaging.ApplicationProperties;
+import org.apache.qpid.proton.amqp.messaging.DeliveryAnnotations;
+import org.apache.qpid.proton.amqp.messaging.Footer;
+import org.apache.qpid.proton.amqp.messaging.Header;
+import org.apache.qpid.proton.amqp.messaging.MessageAnnotations;
+import org.apache.qpid.proton.amqp.messaging.Properties;
+import org.apache.qpid.proton.amqp.messaging.Section;
 import org.apache.qpid.proton.codec.EncoderImpl;
 import org.apache.qpid.proton.codec.ReadableBuffer;
 import org.apache.qpid.proton.codec.WritableBuffer;
 
 // see https://docs.oasis-open.org/amqp/core/v1.0/os/amqp-core-messaging-v1.0-os.html#section-message-format
 public class AMQPStandardMessage extends AMQPMessage {
+
+
+   public static AMQPStandardMessage createMessage(long messageID,
+                                                   long messageFormat,
+                                                   SimpleString replyTo,
+                                                   Header header,
+                                                   Properties properties,
+                                                   Map<Symbol, Object> daMap,
+                                                   Map<Symbol, Object> maMap,
+                                                   Map<String, Object> apMap,
+                                                   Map<Symbol, Object> footerMap,
+                                                   Section body) {
+      ByteBuf buffer = PooledByteBufAllocator.DEFAULT.heapBuffer(1024);
+
+      try {
+         EncoderImpl encoder = TLSEncode.getEncoder();
+         encoder.setByteBuffer(new NettyWritable(buffer));
+
+         if (header != null) {
+            encoder.writeObject(header);
+         }
+         if (daMap != null) {
+            encoder.writeObject(new DeliveryAnnotations(daMap));
+         }
+         if (maMap != null) {
+            encoder.writeObject(new MessageAnnotations(maMap));
+         }
+         if (properties != null) {
+            encoder.writeObject(properties);
+         }
+         if (apMap != null) {
+            encoder.writeObject(new ApplicationProperties(apMap));
+         }
+         if (body != null) {
+            encoder.writeObject(body);
+         }
+         if (footerMap != null) {
+            encoder.writeObject(new Footer(footerMap));
+         }
+
+         byte[] data = new byte[buffer.writerIndex()];
+         buffer.readBytes(data);
+
+         AMQPStandardMessage amqpMessage = new AMQPStandardMessage(messageFormat, data, null);
+         amqpMessage.setMessageID(messageID);
+         amqpMessage.setReplyTo(replyTo);
+         return amqpMessage;
+
+      } finally {
+         TLSEncode.getEncoder().setByteBuffer((WritableBuffer) null);
+         buffer.release();
+      }
+   }
 
    // Buffer and state for the data backing this message.
    protected ReadableBuffer data;
@@ -124,11 +188,12 @@ public class AMQPStandardMessage extends AMQPMessage {
    @Override
    public int getMemoryEstimate() {
       if (memoryEstimate == -1) {
-         memoryEstimate = memoryOffset + (data != null ? data.capacity() : 0);
+         memoryEstimate = memoryOffset + (data != null ? data.capacity() + unmarshalledApplicationPropertiesMemoryEstimateFromData(data) : 0);
       }
 
       return memoryEstimate;
    }
+
 
    @Override
    public void persist(ActiveMQBuffer targetRecord) {
@@ -172,7 +237,7 @@ public class AMQPStandardMessage extends AMQPMessage {
 
    @Override
    public Persister<org.apache.activemq.artemis.api.core.Message> getPersister() {
-      return AMQPMessagePersisterV2.getInstance();
+      return AMQPMessagePersisterV3.getInstance();
    }
 
    @Override
@@ -202,7 +267,7 @@ public class AMQPStandardMessage extends AMQPMessage {
       this.modified = false;
       this.messageDataScanned = MessageDataScanningStatus.NOT_SCANNED.code;
       int estimated = Math.max(1500, data != null ? data.capacity() + 1000 : 0);
-      ByteBuf buffer = PooledByteBufAllocator.DEFAULT.heapBuffer(estimated);
+      ByteBuf buffer = PooledByteBufAllocator.DEFAULT.directBuffer(estimated);
       EncoderImpl encoder = TLSEncode.getEncoder();
 
       try {
@@ -249,6 +314,24 @@ public class AMQPStandardMessage extends AMQPMessage {
       } finally {
          encoder.setByteBuffer((WritableBuffer) null);
          buffer.release();
+      }
+   }
+
+   @Override
+   public String toString() {
+      // toString will only call ensureScanning on regular messages
+      // as large messages might need to do extra work to parse it
+      ensureScanning();
+      return super.toString();
+   }
+
+   @Override
+   public String getStringBody() {
+      final Section body = getBody();
+      if (body instanceof AmqpValue && ((AmqpValue) body).getValue() instanceof String) {
+         return (String) ((AmqpValue) body).getValue();
+      } else {
+         return null;
       }
    }
 }

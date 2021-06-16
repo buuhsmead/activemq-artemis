@@ -17,6 +17,7 @@
 package org.apache.activemq.artemis.utils;
 
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
 
 import org.junit.Assert;
 
@@ -65,9 +66,16 @@ public class Wait {
    }
 
    public static void assertEquals(Long size, LongCondition condition, long timeout, long sleepMillis) throws Exception {
-      boolean result = waitFor(() -> condition.getCount() == size, timeout, sleepMillis);
+      assertEquals(size, condition, timeout, sleepMillis, true);
+   }
+
+   public static void assertEquals(Long size, LongCondition condition, long timeout, long sleepMillis, boolean printThreadDump) throws Exception {
+      boolean result = waitFor(() -> condition.getCount() == size, timeout, sleepMillis, printThreadDump);
 
       if (!result) {
+         if (printThreadDump) {
+            System.out.println(ThreadDumpUtil.threadDump("thread dump"));
+         }
          Assert.fail(size + " != " + condition.getCount());
       }
    }
@@ -86,6 +94,7 @@ public class Wait {
       boolean result = waitFor(() -> (obj == condition || obj.equals(condition.getObject())), timeout, sleepMillis);
 
       if (!result) {
+         System.out.println(ThreadDumpUtil.threadDump("thread dump"));
          Assert.assertEquals(obj, condition.getObject());
       }
    }
@@ -94,6 +103,7 @@ public class Wait {
       boolean result = waitFor(() -> condition.getCount() == size, timeout, sleepMillis);
 
       if (!result) {
+         System.out.println(ThreadDumpUtil.threadDump("thread dump"));
          Assert.fail(size + " != " + condition.getCount());
       }
    }
@@ -140,6 +150,7 @@ public class Wait {
       boolean result = waitFor(condition, duration, sleep);
 
       if (!result) {
+         System.out.println(ThreadDumpUtil.threadDump("thread dump"));
          Assert.fail(failureMessage);
       }
    }
@@ -151,23 +162,32 @@ public class Wait {
    public static boolean waitFor(final Condition condition,
                                  final long durationMillis,
                                  final long sleepMillis) {
+      return waitFor(condition, durationMillis, sleepMillis, true);
+   }
+
+   public static boolean waitFor(final Condition condition,
+                                 final long durationMillis,
+                                 final long sleepMillis,
+                                 final boolean printThreadDump) {
 
       try {
-         final long expiry = System.currentTimeMillis() + durationMillis;
+         final long expiry = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(durationMillis);
          boolean conditionSatisified = condition.isSatisfied();
-         while (!conditionSatisified && System.currentTimeMillis() < expiry) {
+         while (!conditionSatisified && System.nanoTime() - expiry < 0) {
             if (sleepMillis == 0) {
                Thread.yield();
             } else {
-               TimeUnit.MILLISECONDS.sleep(sleepMillis);
+               LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(sleepMillis));
             }
             conditionSatisified = condition.isSatisfied();
+         }
+         if (!conditionSatisified && printThreadDump) {
+            System.out.println(ThreadDumpUtil.threadDump("thread dump"));
          }
          return conditionSatisified;
       } catch (Exception e) {
          throw new IllegalStateException(e);
       }
    }
-
 
 }

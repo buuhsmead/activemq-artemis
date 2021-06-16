@@ -2,9 +2,7 @@
 
 Apache ActiveMQ Artemis ships with two persistence options.  The file journal which is 
 highly optimized for the messaging use case and gives great performance, and also the
-JDBC Store, which uses JDBC to connect to a database of your choice.  The JDBC Store is 
-still under development, but it is possible to use its journal features, (essentially
-everything except for paging and large messages).
+JDBC Store, which uses JDBC to connect to a database of your choice.
 
 ## File Journal (Default)
 
@@ -42,6 +40,46 @@ supporting both local and XA transactions.
 The majority of the journal is written in Java, however we abstract out
 the interaction with the actual file system to allow different pluggable
 implementations. Apache ActiveMQ Artemis ships with two implementations:
+
+### Journal Retention
+
+If you enable ``journal-retention`` on broker.xml, ActiveMQ Artemis will keep copy of every data that has passed through the broker on this folder.
+
+```xml
+    ...
+      <journal-retention unit="DAYS" directory="history" period="365" storage-limit="10G"/>
+    ...
+      
+```
+
+ActiveMQ Artemis will keep a copy of each generated journal file, up to the configured retention period, at the unit chose. On the example above the system would keep all the journal files up to 365 days.
+
+It is also possible to limit the number of files kept on the retention directory. You can keep a storage-limit, and the system will start removing older files when you have more files than the configured storage limit.
+
+Notice the storage limit is optional however you need to be careful to not run out of disk space at the retention folder or the broker might be shutdown because of a critical IO failure.
+
+
+You can use the CLI tools to inspect and recover data from the history, by just passing the journal folder being the retention directory.
+
+Example:
+
+```shell
+./artemis data print --journal ../data/history
+```
+
+To recover the messages from the history:
+
+```shell
+./artemis data recovery --journal ../data/history --target ../data/recovered --large-messages ../data/large-messages
+```
+
+It is important that you don't call recover into a the journal while the broker is alive. As a matter of fact the current recommendations is to do that on a new journal directory. Perhaps on a new broker so you can inspect and transfer these messages.
+
+The retention feature is in its current form very simple and intended for emergency situations. If you think it is useful new options to recover the data could be added, perhaps thorugh the admin console and other possibilities. Please share your feedback on this area, and as always Pull Requests are welcomed!
+
+Also the recovery CLI tool will recover every data on the selected folder. It is important that you do some maintenance and copy the files and interval you need to a new location before you call recover.
+
+
 
 ### Java [NIO](https://en.wikipedia.org/wiki/New_I/O)
 
@@ -302,7 +340,7 @@ The message journal is configured using the following attributes in
 
 - `journal-compact-percentage`
 
-  The threshold to start compacting. When less than this percentage is
+  The threshold to start compacting. When less than this percentage of journal space is
   considered live data, we start compacting. Note also that compacting
   won't kick in until you have at least `journal-compact-min-files`
   data files on the journal
@@ -394,15 +432,14 @@ apt-get install libaio
 
 ## JDBC Persistence
 
-WARNING: The Apache ActiveMQ Artemis JDBC persistence store is under development and is included for evaluation purposes.
+The Apache ActiveMQ Artemis JDBC persistence layer offers the ability to store broker state (messages, address & queue 
+definitions, etc.) using a database.
 
-The Apache ActiveMQ Artemis JDBC persistence layer offers the ability to store broker state (Messages, Addresses and other
-application state) using a database.  N.B. Address full policy Paging (See: [The section on Paging](paging.md)) is currently not
-supported with the JDBC persistence layer.
-
-Using the ActiveMQ Artemis File Journal is the recommended configuration as it offers higher levels of performance and is
-more mature.  The JDBC persistence layer is targeted to those users who must use a database e.g. due to internal company
-policy.
+> **Note:**
+> 
+> Using the ActiveMQ Artemis File Journal is the **recommended** configuration as it offers higher levels of performance
+> and is more mature. Performance for both paging and large messages is especially diminished with JDBC. The JDBC 
+> persistence layer is targeted to those users who _must_ use a database e.g. due to internal company policy.
 
 ActiveMQ Artemis currently has support for a limited number of database vendors (older versions may work but mileage may
 vary):
@@ -426,13 +463,13 @@ To configure Apache ActiveMQ Artemis to use a database for persisting messages a
 ```xml
 <store>
    <database-store>
+      <jdbc-driver-class-name>org.apache.derby.jdbc.EmbeddedDriver</jdbc-driver-class-name>
       <jdbc-connection-url>jdbc:derby:data/derby/database-store;create=true</jdbc-connection-url>
       <bindings-table-name>BINDINGS_TABLE</bindings-table-name>
       <message-table-name>MESSAGE_TABLE</message-table-name>
       <page-store-table-name>MESSAGE_TABLE</page-store-table-name>
       <large-message-table-name>LARGE_MESSAGES_TABLE</large-message-table-name>
       <node-manager-store-table-name>NODE_MANAGER_TABLE</node-manager-store-table-name>
-      <jdbc-driver-class-name>org.apache.derby.jdbc.EmbeddedDriver</jdbc-driver-class-name>
    </database-store>
 </store>
 ```
@@ -493,6 +530,7 @@ It is also possible to explicitly add the user and password rather than in the J
 ```xml
 <store>
    <database-store>
+      <jdbc-driver-class-name>org.apache.derby.jdbc.EmbeddedDriver</jdbc-driver-class-name>
       <jdbc-connection-url>jdbc:derby:data/derby/database-store;create=true</jdbc-connection-url>
       <jdbc-user>ENC(dasfn353cewc)</jdbc-user>
       <jdbc-password>ENC(ucwiurfjtew345)</jdbc-password>
@@ -501,10 +539,39 @@ It is also possible to explicitly add the user and password rather than in the J
       <page-store-table-name>MESSAGE_TABLE</page-store-table-name>
       <large-message-table-name>LARGE_MESSAGES_TABLE</large-message-table-name>
       <node-manager-store-table-name>NODE_MANAGER_TABLE</node-manager-store-table-name>
-      <jdbc-driver-class-name>org.apache.derby.jdbc.EmbeddedDriver</jdbc-driver-class-name>
    </database-store>
 </store>
 ```
+
+### Configuring JDBC connection pooling
+
+To configure Apache ActiveMQ Artemis to use a database with a JDBC connection pool
+you need to set the data source properties, for example:
+```xml
+<store>
+    <database-store>
+        <data-source-properties>
+            <data-source-property key="driverClassName" value="com.mysql.jdbc.Driver" />
+            <data-source-property key="url" value="jdbc:mysql://localhost:3306/artemis" />
+            <data-source-property key="username" value="artemis" />
+            <data-source-property key="password" value="artemis" />
+            <data-source-property key="poolPreparedStatements" value="true" />
+        </data-source-properties>
+        <bindings-table-name>BINDINGS</bindings-table-name>
+        <message-table-name>MESSAGES</message-table-name>
+        <large-message-table-name>LARGE_MESSAGES</large-message-table-name>
+        <page-store-table-name>PAGE_STORE</page-store-table-name>
+        <node-manager-store-table-name>NODE_MANAGER_STORE</node-manager-store-table-name>
+    </database-store>
+</store>
+```
+You can find the documentation of the data source properties at https://commons.apache.org/proper/commons-dbcp/configuration.html.
+
+To mask the value of a property you can use the same procedure used to [mask passwords](masking-passwords.md).
+
+Please note that the reconnection works only if there is no client sending messages. Instead, if there is an attempt
+to write to the journal's tables during the reconnection, then the broker will fail fast and shutdown.
+
 ## Zero Persistence
 
 In some situations, zero persistence is sometimes required for a

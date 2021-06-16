@@ -686,6 +686,64 @@ public class LargeMessageTest extends LargeMessageTestBase {
 
    }
 
+
+   @Test
+   public void testDLQAlmostLarge() throws Exception {
+      SimpleString addressName = SimpleString.toSimpleString("SomewhatHugeNameToBeUsedxxxxxxxxxxxxxxxxxxxiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiixxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+      SimpleString dlqName = SimpleString.toSimpleString("DLQ" + addressName.toString());
+
+
+      ClientSession session = null;
+
+      ActiveMQServer server = createServer(true, isNetty(), storeType);
+      server.getConfiguration().setJournalFileSize(1024 * 1024);
+      server.getConfiguration().setJournalBufferSize_AIO(100 * 1024);
+      server.start();
+
+      server.getAddressSettingsRepository().clear();
+      AddressSettings settings = new AddressSettings().setDeadLetterAddress(dlqName).setMaxDeliveryAttempts(1);
+      server.getAddressSettingsRepository().addMatch("#", settings);
+
+      createAnycastPair(server, dlqName.toString());
+      createAnycastPair(server, addressName.toString());
+
+      locator.setMinLargeMessageSize(1024 * 1024);
+      ClientSessionFactory sf = addSessionFactory(createSessionFactory(locator));
+
+      session = sf.createSession(false, false, false);
+
+      ClientProducer producer = session.createProducer(addressName);
+
+      ClientMessage clientMessage = session.createMessage(true);
+      clientMessage.getBodyBuffer().writeBytes(new byte[100 * 1024 - 900]);
+      producer.send(clientMessage);
+
+      session.commit();
+
+      session.start();
+
+      ClientConsumer consumer = session.createConsumer(addressName);
+
+      for (int i = 0; i < 2; i++) {
+         if (i == 0) {
+            ClientMessage msg = consumer.receive(10000);
+            Assert.assertNotNull(msg);
+            msg.acknowledge();
+            session.rollback();
+         } else {
+            ClientMessage msg = consumer.receiveImmediate();
+            Assert.assertNull(msg);
+         }
+      }
+
+      consumer.close();
+
+      consumer = session.createConsumer(dlqName);
+      ClientMessage msg = consumer.receive(1000);
+      Assert.assertNotNull(msg);
+
+   }
+
    @Test
    public void testDLAOnExpiryNonDurableMessage() throws Exception {
       final int messageSize = (int) (3.5 * ActiveMQClient.DEFAULT_MIN_LARGE_MESSAGE_SIZE);
@@ -2437,7 +2495,7 @@ public class LargeMessageTest extends LargeMessageTestBase {
       // The server would be doing this
       fileMessage.putLongProperty(Message.HDR_LARGE_BODY_SIZE, largeMessageSize);
 
-      fileMessage.releaseResources(false);
+      fileMessage.releaseResources(false, false);
 
       Assert.assertEquals(largeMessageSize, fileMessage.getBodyBufferSize());
    }
@@ -2464,7 +2522,7 @@ public class LargeMessageTest extends LargeMessageTestBase {
       // The server would be doing this
       fileMessage.putLongProperty(Message.HDR_LARGE_BODY_SIZE, largeMessageSize);
 
-      fileMessage.releaseResources(false);
+      fileMessage.releaseResources(false, false);
 
       session.createQueue(new QueueConfiguration(ADDRESS));
 
@@ -2629,7 +2687,7 @@ public class LargeMessageTest extends LargeMessageTestBase {
          fileMessage.addBytes(new byte[]{ActiveMQTestBase.getSamplebyte(i)});
       }
 
-      fileMessage.releaseResources(false);
+      fileMessage.releaseResources(false, false);
 
       session.createQueue(new QueueConfiguration(ADDRESS));
 

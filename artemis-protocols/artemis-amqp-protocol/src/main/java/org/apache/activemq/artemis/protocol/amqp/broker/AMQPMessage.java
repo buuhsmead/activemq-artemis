@@ -31,11 +31,14 @@ import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ActiveMQPropertyConversionException;
 import org.apache.activemq.artemis.api.core.ICoreMessage;
+import org.apache.activemq.artemis.api.core.JsonUtil;
 import org.apache.activemq.artemis.api.core.RefCountMessage;
 import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
+import org.apache.activemq.artemis.core.paging.PagingStore;
 import org.apache.activemq.artemis.core.persistence.CoreMessageObjectPools;
 import org.apache.activemq.artemis.core.persistence.Persister;
+import org.apache.activemq.artemis.core.server.MessageReference;
 import org.apache.activemq.artemis.protocol.amqp.converter.AMQPMessageIdHelper;
 import org.apache.activemq.artemis.protocol.amqp.converter.AMQPMessageSupport;
 import org.apache.activemq.artemis.protocol.amqp.converter.AmqpCoreConverter;
@@ -191,6 +194,7 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
    protected SimpleString address;
    protected volatile int memoryEstimate = -1;
    protected long expiration;
+   protected boolean expirationReload = false;
    protected long scheduledTime = -1;
 
    // The Proton based AMQP message section that are retained in memory, these are the
@@ -206,9 +210,12 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
    protected final CoreMessageObjectPools coreMessageObjectPools;
    protected Set<Object> rejectedConsumers;
    protected DeliveryAnnotations deliveryAnnotationsForSendBuffer;
+   protected DeliveryAnnotations deliveryAnnotations;
 
    // These are properties set at the broker level and carried only internally by broker storage.
    protected volatile TypedProperties extraProperties;
+
+   private volatile Object owner;
 
    /**
     * Creates a new {@link AMQPMessage} instance from binary encoded message data.
@@ -226,6 +233,17 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
 
    protected AMQPMessage(AMQPMessage copy) {
       this(copy.messageFormat, copy.extraProperties, copy.coreMessageObjectPools);
+
+      this.headerPosition = copy.headerPosition;
+      this.encodedHeaderSize = copy.encodedHeaderSize;
+      this.deliveryAnnotationsPosition = copy.deliveryAnnotationsPosition;
+      this.encodedDeliveryAnnotationsSize = copy.encodedDeliveryAnnotationsSize;
+      this.messageAnnotationsPosition = copy.messageAnnotationsPosition;
+      this.propertiesPosition = copy.propertiesPosition;
+      this.applicationPropertiesPosition = copy.applicationPropertiesPosition;
+      this.remainingBodyPosition = copy.remainingBodyPosition;
+      this.applicationProperties = copy.applicationProperties;
+      this.messageDataScanned = copy.messageDataScanned;
    }
 
    protected AMQPMessage(long messageFormat) {
@@ -233,19 +251,14 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
       this.coreMessageObjectPools = null;
    }
 
-   /**
-    * Similarly to {@link MessageDataScanningStatus}, this method is made available only for testing
-    * purposes to check the message data scanning status.<br>
-    * Its access is not thread-safe and it shouldn't return {@code null}.
-    */
-   public final MessageDataScanningStatus messageDataScanned() {
+   public final MessageDataScanningStatus getDataScanningStatus() {
       return MessageDataScanningStatus.valueOf(messageDataScanned);
    }
 
    /** This will return application properties without attempting to decode it.
     * That means, if applicationProperties were never parsed before, this will return null, even if there is application properties.
     *  This was created as an internal method for testing, as we need to validate if the application properties are not decoded until needed. */
-   public ApplicationProperties getDecodedApplicationProperties() {
+   protected ApplicationProperties getDecodedApplicationProperties() {
       return applicationProperties;
    }
 
@@ -307,9 +320,32 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
       return scanForMessageSection(headerPosition, Header.class);
    }
 
+
+   /** Returns the current already scanned header. */
+   final Header getCurrentHeader() {
+      return header;
+   }
+
+   /** Return the current already scanned properties.*/
+   final Properties getCurrentProperties() {
+      return properties;
+   }
+
    protected void ensureScanning() {
       ensureDataIsValid();
       ensureMessageDataScanned();
+   }
+
+   Object getDeliveryAnnotationProperty(Symbol symbol) {
+      DeliveryAnnotations daToUse = deliveryAnnotations;
+      if (daToUse == null) {
+         daToUse = getDeliveryAnnotations();
+      }
+      if (daToUse == null) {
+         return null;
+      } else {
+         return daToUse.getValue().get(symbol);
+      }
    }
 
    /**
@@ -332,8 +368,10 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
     *
     *     http://docs.oasis-open.org/amqp/core/v1.0/os/amqp-core-messaging-v1.0-os.html#type-annotations
     *
+    * @deprecated use MessageReference.setProtocolData(deliveryAnnotations)
     * @param deliveryAnnotations delivery annotations used in the sendBuffer() method
     */
+   @Deprecated
    public final void setDeliveryAnnotationsForSendBuffer(DeliveryAnnotations deliveryAnnotations) {
       this.deliveryAnnotationsForSendBuffer = deliveryAnnotations;
    }
@@ -405,8 +443,12 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
       return scanForMessageSection(Math.max(0, remainingBodyPosition), Footer.class);
    }
 
-   @SuppressWarnings({ "unchecked", "rawtypes" })
    protected <T> T scanForMessageSection(int scanStartPosition, Class...targetTypes) {
+      return scanForMessageSection(getData().duplicate().position(0), scanStartPosition, targetTypes);
+   }
+
+   @SuppressWarnings({ "unchecked", "rawtypes" })
+   protected <T> T scanForMessageSection(ReadableBuffer buffer, int scanStartPosition, Class...targetTypes) {
       ensureMessageDataScanned();
 
       // In cases where we parsed out enough to know the value is not encoded in the message
@@ -415,7 +457,6 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
          return null;
       }
 
-      ReadableBuffer buffer = getData().duplicate().position(0);
       final DecoderImpl decoder = TLSEncode.getDecoder();
 
       buffer.position(scanStartPosition);
@@ -443,11 +484,38 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
    }
 
    protected ApplicationProperties lazyDecodeApplicationProperties() {
+      ensureMessageDataScanned();
+      if (applicationProperties != null || applicationPropertiesPosition == VALUE_NOT_PRESENT) {
+         return applicationProperties;
+      }
+      return lazyDecodeApplicationProperties(getData().duplicate().position(0));
+   }
+
+   protected ApplicationProperties lazyDecodeApplicationProperties(ReadableBuffer data) {
       if (applicationProperties == null && applicationPropertiesPosition != VALUE_NOT_PRESENT) {
-         applicationProperties = scanForMessageSection(applicationPropertiesPosition, ApplicationProperties.class);
+         applicationProperties = scanForMessageSection(data, applicationPropertiesPosition, ApplicationProperties.class);
+         if (owner != null && memoryEstimate != -1) {
+            // the memory has already been tracked and needs to be updated to reflect the new decoding
+            int addition = unmarshalledApplicationPropertiesMemoryEstimateFromData(data);
+            ((PagingStore)owner).addSize(addition);
+            final int updatedEstimate = memoryEstimate + addition;
+            memoryEstimate = updatedEstimate;
+         }
       }
 
       return applicationProperties;
+   }
+
+   protected int unmarshalledApplicationPropertiesMemoryEstimateFromData(ReadableBuffer data) {
+      if (applicationProperties != null) {
+         // they have been unmarshalled, estimate memory usage based on their encoded size
+         if (remainingBodyPosition != VALUE_NOT_PRESENT) {
+            return remainingBodyPosition - applicationPropertiesPosition;
+         } else {
+            return data.capacity() - applicationPropertiesPosition;
+         }
+      }
+      return 0;
    }
 
    @SuppressWarnings("unchecked")
@@ -492,7 +560,11 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
    }
 
    protected Object getMessageAnnotation(String annotation) {
-      return getMessageAnnotation(Symbol.getSymbol(annotation));
+      Object messageAnnotation = getMessageAnnotation(Symbol.getSymbol(AMQPMessageSupport.toAnnotationName(annotation)));
+      if (messageAnnotation == null) {
+         messageAnnotation = getMessageAnnotation(Symbol.getSymbol(annotation));
+      }
+      return messageAnnotation;
    }
 
    protected Object getMessageAnnotation(Symbol annotation) {
@@ -519,7 +591,7 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
    // re-encode should be done to update the backing data with the in memory elements.
 
    protected synchronized void ensureMessageDataScanned() {
-      final MessageDataScanningStatus state = MessageDataScanningStatus.valueOf(messageDataScanned);
+      final MessageDataScanningStatus state = getDataScanningStatus();
       switch (state) {
          case NOT_SCANNED:
             scanMessageData();
@@ -538,76 +610,14 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
       return remainingBodyPosition > 0 ? remainingBodyPosition : 1024;
    }
 
-   protected void saveEncoding(ByteBuf buf) {
-
-      WritableBuffer oldBuffer = TLSEncode.getEncoder().getBuffer();
-
-      TLSEncode.getEncoder().setByteBuffer(new NettyWritable(buf));
-
-      try {
-         buf.writeInt(headerPosition);
-         buf.writeInt(encodedHeaderSize);
-         TLSEncode.getEncoder().writeObject(header);
-
-         buf.writeInt(deliveryAnnotationsPosition);
-         buf.writeInt(encodedDeliveryAnnotationsSize);
-
-         buf.writeInt(messageAnnotationsPosition);
-         TLSEncode.getEncoder().writeObject(messageAnnotations);
-
-
-         buf.writeInt(propertiesPosition);
-         TLSEncode.getEncoder().writeObject(properties);
-
-         buf.writeInt(applicationPropertiesPosition);
-         buf.writeInt(remainingBodyPosition);
-
-         TLSEncode.getEncoder().writeObject(applicationProperties);
-
-      } finally {
-         TLSEncode.getEncoder().setByteBuffer(oldBuffer);
-      }
-   }
-
-
-   protected void readSavedEncoding(ByteBuf buf) {
-      ReadableBuffer oldBuffer = TLSEncode.getDecoder().getBuffer();
-
-      TLSEncode.getDecoder().setBuffer(new NettyReadable(buf));
-
-      try {
-         messageDataScanned = MessageDataScanningStatus.SCANNED.code;
-
-         headerPosition = buf.readInt();
-         encodedHeaderSize = buf.readInt();
-         header = (Header)TLSEncode.getDecoder().readObject();
-
-         deliveryAnnotationsPosition = buf.readInt();
-         encodedDeliveryAnnotationsSize = buf.readInt();
-
-         messageAnnotationsPosition = buf.readInt();
-         messageAnnotations = (MessageAnnotations)TLSEncode.getDecoder().readObject();
-
-         propertiesPosition = buf.readInt();
-         properties = (Properties)TLSEncode.getDecoder().readObject();
-
-         applicationPropertiesPosition = buf.readInt();
-         remainingBodyPosition = buf.readInt();
-
-         applicationProperties = (ApplicationProperties)TLSEncode.getDecoder().readObject();
-      } finally {
-         TLSEncode.getDecoder().setBuffer(oldBuffer);
-      }
-   }
-
-
-
    protected synchronized void resetMessageData() {
       header = null;
       messageAnnotations = null;
       properties = null;
       applicationProperties = null;
-      expiration = 0;
+      if (!expirationReload) {
+         expiration = 0;
+      }
       encodedHeaderSize = 0;
       memoryEstimate = -1;
       scheduledTime = -1;
@@ -620,13 +630,14 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
    }
 
    protected synchronized void scanMessageData() {
-      this.messageDataScanned = MessageDataScanningStatus.SCANNED.code;
+      scanMessageData(getData());
+   }
+
+   protected synchronized void scanMessageData(ReadableBuffer data) {
       DecoderImpl decoder = TLSEncode.getDecoder();
-      decoder.setBuffer(getData().rewind());
+      decoder.setBuffer(data);
 
       resetMessageData();
-
-      ReadableBuffer data = getData();
 
       try {
          while (data.hasRemaining()) {
@@ -637,13 +648,13 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
                headerPosition = constructorPos;
                encodedHeaderSize = data.position();
                if (header.getTtl() != null) {
-                  expiration = System.currentTimeMillis() + header.getTtl().intValue();
+                  if (!expirationReload) {
+                     expiration = System.currentTimeMillis() + header.getTtl().intValue();
+                  }
                }
             } else if (DeliveryAnnotations.class.equals(constructor.getTypeClass())) {
-               // Don't decode these as they are not used by the broker at all and are
-               // discarded on send, mark for lazy decode if ever needed.
-               constructor.skipValue();
                deliveryAnnotationsPosition = constructorPos;
+               this.deliveryAnnotations = (DeliveryAnnotations) constructor.readValue();
                encodedDeliveryAnnotationsSize = data.position() - constructorPos;
             } else if (MessageAnnotations.class.equals(constructor.getTypeClass())) {
                messageAnnotationsPosition = constructorPos;
@@ -653,7 +664,9 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
                properties = (Properties) constructor.readValue();
 
                if (properties.getAbsoluteExpiryTime() != null && properties.getAbsoluteExpiryTime().getTime() > 0) {
-                  expiration = properties.getAbsoluteExpiryTime().getTime();
+                  if (!expirationReload) {
+                     expiration = properties.getAbsoluteExpiryTime().getTime();
+                  }
                }
             } else if (ApplicationProperties.class.equals(constructor.getTypeClass())) {
                // Lazy decoding will start at the TypeConstructor of these ApplicationProperties
@@ -673,6 +686,7 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
          decoder.setByteBuffer(null);
          data.rewind();
       }
+      this.messageDataScanned = MessageDataScanningStatus.SCANNED.code;
    }
 
    @Override
@@ -687,13 +701,13 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
     * this method is not currently used by the AMQP protocol head and will not be
     * called for out-bound sends.
     *
-    * @see #getSendBuffer(int) for the actual method used for message sends.
+    * @see #getSendBuffer(int, MessageReference) for the actual method used for message sends.
     */
    @Override
    public final void sendBuffer(ByteBuf buffer, int deliveryCount) {
       ensureDataIsValid();
       NettyWritable writable = new NettyWritable(buffer);
-      writable.put(getSendBuffer(deliveryCount));
+      writable.put(getSendBuffer(deliveryCount, null));
    }
 
    /**
@@ -709,14 +723,20 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
     *
     * @return a Netty ByteBuf containing the encoded bytes of this Message instance.
     */
-   public ReadableBuffer getSendBuffer(int deliveryCount) {
+   public ReadableBuffer getSendBuffer(int deliveryCount, MessageReference reference) {
       ensureDataIsValid();
 
-      if (deliveryCount > 1) {
-         return createCopyWithNewDeliveryCount(deliveryCount);
-      } else if (deliveryAnnotationsPosition != VALUE_NOT_PRESENT
-         || (deliveryAnnotationsForSendBuffer != null && !deliveryAnnotationsForSendBuffer.getValue().isEmpty())) {
-         return createCopyWithSkippedOrExplicitlySetDeliveryAnnotations();
+      DeliveryAnnotations daToWrite;
+
+      if (reference != null && reference.getProtocolData() instanceof DeliveryAnnotations) {
+         daToWrite = (DeliveryAnnotations) reference.getProtocolData();
+      } else {
+         // deliveryAnnotationsForSendBuffer was an old API form where a deliver could set it before deliver
+         daToWrite = deliveryAnnotationsForSendBuffer;
+      }
+
+      if (deliveryCount > 1 || daToWrite != null || deliveryAnnotationsPosition != VALUE_NOT_PRESENT) {
+         return createDeliveryCopy(deliveryCount, daToWrite);
       } else {
          // Common case message has no delivery annotations, no delivery annotations for the send buffer were set
          // and this is the first delivery so no re-encoding or section skipping needed.
@@ -724,25 +744,9 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
       }
    }
 
-   protected ReadableBuffer createCopyWithSkippedOrExplicitlySetDeliveryAnnotations() {
-      // The original message had delivery annotations, or delivery annotations for the send buffer are set.
-      // That means we must copy into a new buffer skipping the original delivery annotations section
-      // (not meant to survive beyond this hop) and including the delivery annotations for the send buffer if set.
+   /** it will create a copy with the relevant delivery annotation and its copy */
+   protected ReadableBuffer createDeliveryCopy(int deliveryCount, DeliveryAnnotations deliveryAnnotations) {
       ReadableBuffer duplicate = getData().duplicate();
-
-      final ByteBuf result = PooledByteBufAllocator.DEFAULT.heapBuffer(getEncodeSize());
-      result.writeBytes(duplicate.limit(encodedHeaderSize).byteBuffer());
-      writeDeliveryAnnotationsForSendBuffer(result);
-      duplicate.clear();
-      // skip existing delivery annotations of the original message
-      duplicate.position(encodedHeaderSize + encodedDeliveryAnnotationsSize);
-      result.writeBytes(duplicate.byteBuffer());
-
-      return new NettyReadable(result);
-   }
-
-   protected ReadableBuffer createCopyWithNewDeliveryCount(int deliveryCount) {
-      assert deliveryCount > 1;
 
       final int amqpDeliveryCount = deliveryCount - 1;
 
@@ -752,31 +756,34 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
       // otherwise we want to write the original header if present.  When a
       // Header is present we need to copy it as we are updating the re-delivered
       // message and not the stored version which we don't want to invalidate here.
-      Header header = this.header;
-      if (header == null) {
-         header = new Header();
+      Header localHeader = this.header;
+      if (localHeader == null) {
+         if (deliveryCount > 1) {
+            localHeader = new Header();
+         }
       } else {
-         header = new Header(header);
+         localHeader = new Header(header);
       }
 
-      header.setDeliveryCount(UnsignedInteger.valueOf(amqpDeliveryCount));
-      TLSEncode.getEncoder().setByteBuffer(new NettyWritable(result));
-      TLSEncode.getEncoder().writeObject(header);
-      TLSEncode.getEncoder().setByteBuffer((WritableBuffer) null);
+      if (localHeader != null) {
+         localHeader.setDeliveryCount(UnsignedInteger.valueOf(amqpDeliveryCount));
+         TLSEncode.getEncoder().setByteBuffer(new NettyWritable(result));
+         TLSEncode.getEncoder().writeObject(localHeader);
+         TLSEncode.getEncoder().setByteBuffer((WritableBuffer) null);
+      }
 
-      writeDeliveryAnnotationsForSendBuffer(result);
+      writeDeliveryAnnotationsForSendBuffer(result, deliveryAnnotations);
       // skip existing delivery annotations of the original message
-      getData().position(encodedHeaderSize + encodedDeliveryAnnotationsSize);
-      result.writeBytes(getData().byteBuffer());
-      getData().position(0);
+      duplicate.position(encodedHeaderSize + encodedDeliveryAnnotationsSize);
+      result.writeBytes(duplicate.byteBuffer());
 
       return new NettyReadable(result);
    }
 
-   protected void writeDeliveryAnnotationsForSendBuffer(ByteBuf result) {
-      if (deliveryAnnotationsForSendBuffer != null && !deliveryAnnotationsForSendBuffer.getValue().isEmpty()) {
+   protected void writeDeliveryAnnotationsForSendBuffer(ByteBuf result, DeliveryAnnotations deliveryAnnotations) {
+      if (deliveryAnnotations != null && !deliveryAnnotations.getValue().isEmpty()) {
          TLSEncode.getEncoder().setByteBuffer(new NettyWritable(result));
-         TLSEncode.getEncoder().writeObject(deliveryAnnotationsForSendBuffer);
+         TLSEncode.getEncoder().writeObject(deliveryAnnotations);
          TLSEncode.getEncoder().setByteBuffer((WritableBuffer) null);
       }
    }
@@ -829,8 +836,24 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
    public abstract int getMemoryEstimate();
 
    @Override
+   public Map<String, Object> toPropertyMap(int valueSizeLimit) {
+      Map map = new HashMap<>();
+      for (SimpleString name : getPropertyNames()) {
+         Object value = getObjectProperty(name.toString());
+         //some property is Binary, which is not available for management console
+         if (value instanceof Binary) {
+            value = ((Binary)value).getArray();
+         }
+         value = JsonUtil.truncate(value, valueSizeLimit);
+         map.put(name.toString(), value);
+      }
+      return map;
+   }
+
+   @Override
    public ICoreMessage toCore(CoreMessageObjectPools coreMessageObjectPools) {
       try {
+         ensureScanning();
          return AmqpCoreConverter.toCore(
             this, coreMessageObjectPools, header, messageAnnotations, properties, lazyDecodeApplicationProperties(), getBody(), getFooter());
       } catch (Exception e) {
@@ -958,8 +981,15 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
 
    @Override
    public final long getExpiration() {
-      ensureMessageDataScanned();
+      if (!expirationReload) {
+         ensureMessageDataScanned();
+      }
       return expiration;
+   }
+
+   public void reloadExpiration(long expiration) {
+      this.expiration = expiration;
+      this.expirationReload = true;
    }
 
    @Override
@@ -1027,7 +1057,7 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
             return null;
          }
       }
-      return getObjectProperty(org.apache.activemq.artemis.api.core.Message.HDR_DUPLICATE_DETECTION_ID);
+      return getApplicationObjectProperty(org.apache.activemq.artemis.api.core.Message.HDR_DUPLICATE_DETECTION_ID.toString());
    }
 
    @Override
@@ -1067,6 +1097,10 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
       this.address = address;
       createExtraProperties().putSimpleStringProperty(ADDRESS_PROPERTY, address);
       return this;
+   }
+
+   final void reloadAddress(SimpleString address) {
+      this.address = address;
    }
 
    @Override
@@ -1370,35 +1404,42 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
 
    @Override
    public final Object getObjectProperty(String key) {
-      if (key.equals(MessageUtil.TYPE_HEADER_NAME.toString())) {
-         if (properties != null) {
-            return properties.getSubject();
-         }
-      } else if (key.equals(MessageUtil.CONNECTION_ID_PROPERTY_NAME.toString())) {
-         return getConnectionID();
-      } else if (key.equals(MessageUtil.JMSXGROUPID)) {
-         return getGroupID();
-      } else if (key.equals(MessageUtil.JMSXGROUPSEQ)) {
-         return getGroupSequence();
-      } else if (key.equals(MessageUtil.JMSXUSERID)) {
-         return getAMQPUserID();
-      } else if (key.equals(MessageUtil.CORRELATIONID_HEADER_NAME.toString())) {
-         if (properties != null && properties.getCorrelationId() != null) {
-            return AMQPMessageIdHelper.INSTANCE.toCorrelationIdString(properties.getCorrelationId());
-         }
-      } else {
-         Object value = getApplicationPropertiesMap(false).get(key);
+      switch (key) {
+         case MessageUtil.TYPE_HEADER_NAME_STRING:
+            if (properties != null) {
+               return properties.getSubject();
+            }
+            return null;
+         case MessageUtil.CONNECTION_ID_PROPERTY_NAME_STRING:
+            return getConnectionID();
+         case MessageUtil.JMSXGROUPID:
+            return getGroupID();
+         case MessageUtil.JMSXGROUPSEQ:
+            return getGroupSequence();
+         case MessageUtil.JMSXUSERID:
+            return getAMQPUserID();
+         case MessageUtil.CORRELATIONID_HEADER_NAME_STRING:
+            if (properties != null && properties.getCorrelationId() != null) {
+               return AMQPMessageIdHelper.INSTANCE.toCorrelationIdString(properties.getCorrelationId());
+            }
+            return null;
+         default:
+            return getApplicationObjectProperty(key);
+      }
+   }
+
+   private Object getApplicationObjectProperty(String key) {
+      Object value = getApplicationPropertiesMap(false).get(key);
+      if (value instanceof Number) {
+         // slow path
          if (value instanceof UnsignedInteger ||
-             value instanceof UnsignedByte ||
-             value instanceof UnsignedLong ||
-             value instanceof UnsignedShort) {
-            return ((Number)value).longValue();
-         } else {
-            return value;
+            value instanceof UnsignedByte ||
+            value instanceof UnsignedLong ||
+            value instanceof UnsignedShort) {
+            return ((Number) value).longValue();
          }
       }
-
-      return null;
+      return value;
    }
 
    @Override
@@ -1413,12 +1454,13 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
 
    @Override
    public final String getStringProperty(String key) throws ActiveMQPropertyConversionException {
-      if (key.equals(MessageUtil.TYPE_HEADER_NAME.toString())) {
-         return properties.getSubject();
-      } else if (key.equals(MessageUtil.CONNECTION_ID_PROPERTY_NAME.toString())) {
-         return getConnectionID();
-      } else {
-         return (String) getApplicationPropertiesMap(false).get(key);
+      switch (key) {
+         case MessageUtil.TYPE_HEADER_NAME_STRING:
+            return properties.getSubject();
+         case MessageUtil.CONNECTION_ID_PROPERTY_NAME_STRING:
+            return getConnectionID();
+         default:
+            return (String) getApplicationPropertiesMap(false).get(key);
       }
    }
 
@@ -1638,7 +1680,7 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
 
    @Override
    public String toString() {
-      return "AMQPMessage [durable=" + isDurable() +
+      return this.getClass().getSimpleName() + "( [durable=" + isDurable() +
          ", messageID=" + getMessageID() +
          ", address=" + getAddress() +
          ", size=" + getEncodeSize() +
@@ -1672,5 +1714,15 @@ public abstract class AMQPMessage extends RefCountMessage implements org.apache.
 
    protected SimpleString.StringSimpleStringPool getPropertyValuesPool() {
       return coreMessageObjectPools == null ? null : coreMessageObjectPools.getPropertiesStringSimpleStringPools().getPropertyValuesPool();
+   }
+
+   @Override
+   public Object getOwner() {
+      return owner;
+   }
+
+   @Override
+   public void setOwner(Object object) {
+      this.owner = object;
    }
 }

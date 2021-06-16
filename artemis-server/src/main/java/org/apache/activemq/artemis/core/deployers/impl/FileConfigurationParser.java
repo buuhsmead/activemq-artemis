@@ -31,6 +31,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.activemq.artemis.ArtemisConstants;
 import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
@@ -45,6 +46,7 @@ import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.UDPBroadcastEndpointFactory;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
+import org.apache.activemq.artemis.core.config.amqpBrokerConnectivity.AMQPBrokerConnectConfiguration;
 import org.apache.activemq.artemis.core.config.BridgeConfiguration;
 import org.apache.activemq.artemis.core.config.ClusterConnectionConfiguration;
 import org.apache.activemq.artemis.core.config.Configuration;
@@ -57,6 +59,9 @@ import org.apache.activemq.artemis.core.config.MetricsConfiguration;
 import org.apache.activemq.artemis.core.config.ScaleDownConfiguration;
 import org.apache.activemq.artemis.core.config.TransformerConfiguration;
 import org.apache.activemq.artemis.core.config.WildcardConfiguration;
+import org.apache.activemq.artemis.core.config.amqpBrokerConnectivity.AMQPBrokerConnectionElement;
+import org.apache.activemq.artemis.core.config.amqpBrokerConnectivity.AMQPBrokerConnectionAddressType;
+import org.apache.activemq.artemis.core.config.amqpBrokerConnectivity.AMQPMirrorBrokerConnectionElement;
 import org.apache.activemq.artemis.core.config.federation.FederationAddressPolicyConfiguration;
 import org.apache.activemq.artemis.core.config.federation.FederationDownstreamConfiguration;
 import org.apache.activemq.artemis.core.config.federation.FederationPolicySet;
@@ -89,6 +94,7 @@ import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.core.settings.impl.DeletionPolicy;
 import org.apache.activemq.artemis.core.settings.impl.ResourceLimitSettings;
 import org.apache.activemq.artemis.core.settings.impl.SlowConsumerPolicy;
+import org.apache.activemq.artemis.core.settings.impl.SlowConsumerThresholdMeasurementUnit;
 import org.apache.activemq.artemis.utils.ByteUtil;
 import org.apache.activemq.artemis.utils.ClassloadingUtil;
 import org.apache.activemq.artemis.utils.DefaultSensitiveStringCodec;
@@ -96,6 +102,7 @@ import org.apache.activemq.artemis.utils.PasswordMaskingUtil;
 import org.apache.activemq.artemis.utils.XMLConfigurationUtil;
 import org.apache.activemq.artemis.utils.XMLUtil;
 import org.apache.activemq.artemis.utils.critical.CriticalAnalyzerPolicy;
+import org.jboss.logging.Logger;
 import org.w3c.dom.Element;
 import org.w3c.dom.NamedNodeMap;
 import org.w3c.dom.Node;
@@ -105,6 +112,8 @@ import org.w3c.dom.NodeList;
  * Parses an XML document according to the {@literal artemis-configuration.xsd} schema.
  */
 public final class FileConfigurationParser extends XMLConfigurationUtil {
+
+   private static final Logger logger = Logger.getLogger(FileConfigurationParser.class);
 
    // Security Parsing
    public static final String SECURITY_ELEMENT_NAME = "security-setting";
@@ -232,6 +241,8 @@ public final class FileConfigurationParser extends XMLConfigurationUtil {
 
    private static final String SLOW_CONSUMER_THRESHOLD_NODE_NAME = "slow-consumer-threshold";
 
+   private static final String SLOW_CONSUMER_THRESHOLD_MEASUREMENT_UNIT_NODE_NAME = "slow-consumer-threshold-measurement-unit";
+
    private static final String SLOW_CONSUMER_CHECK_PERIOD_NODE_NAME = "slow-consumer-check-period";
 
    private static final String SLOW_CONSUMER_POLICY_NODE_NAME = "slow-consumer-policy";
@@ -264,6 +275,8 @@ public final class FileConfigurationParser extends XMLConfigurationUtil {
 
    private static final String CONFIG_DELETE_ADDRESSES = "config-delete-addresses";
 
+   private static final String CONFIG_DELETE_DIVERTS = "config-delete-diverts";
+
    private static final String DEFAULT_PURGE_ON_NO_CONSUMERS = "default-purge-on-no-consumers";
 
    private static final String DEFAULT_MAX_CONSUMERS = "default-max-consumers";
@@ -273,6 +286,8 @@ public final class FileConfigurationParser extends XMLConfigurationUtil {
    private static final String DEFAULT_ADDRESS_ROUTING_TYPE = "default-address-routing-type";
 
    private static final String MANAGEMENT_BROWSE_PAGE_SIZE = "management-browse-page-size";
+
+   private static final String MANAGEMENT_MESSAGE_ATTRIBUTE_SIZE_LIMIT = "management-message-attribute-size-limit";
 
    private static final String MAX_CONNECTIONS_NODE_NAME = "max-connections";
 
@@ -296,7 +311,6 @@ public final class FileConfigurationParser extends XMLConfigurationUtil {
 
    private static final String ENABLE_METRICS = "enable-metrics";
 
-   private static final String PAGE_STORE_NAME = "page-store-name";
 
    // Attributes ----------------------------------------------------
 
@@ -407,7 +421,7 @@ public final class FileConfigurationParser extends XMLConfigurationUtil {
 
       config.setConnectionTtlCheckInterval(getLong(e, "connection-ttl-check-interval", config.getConnectionTtlCheckInterval(), Validators.GT_ZERO));
 
-      config.setConfigurationFileRefreshPeriod(getLong(e, "configuration-file-refresh-period", config.getConfigurationFileRefreshPeriod(), Validators.GT_ZERO));
+      config.setConfigurationFileRefreshPeriod(getLong(e, "configuration-file-refresh-period", config.getConfigurationFileRefreshPeriod(), Validators.MINUS_ONE_OR_GT_ZERO));
 
       config.setTemporaryQueueNamespace(getString(e, "temporary-queue-namespace", config.getTemporaryQueueNamespace(), Validators.NOT_NULL_OR_EMPTY));
 
@@ -584,6 +598,21 @@ public final class FileConfigurationParser extends XMLConfigurationUtil {
          parseClusterConnectionConfigurationURI(ccNode, config);
       }
 
+
+      NodeList ccAMQPConnections = e.getElementsByTagName("broker-connections");
+
+      if (ccAMQPConnections != null) {
+         NodeList ccAMQConnectionsURI = e.getElementsByTagName("amqp-connection");
+
+         if (ccAMQConnectionsURI != null) {
+            for (int i = 0; i < ccAMQConnectionsURI.getLength(); i++) {
+               Element ccNode = (Element) ccAMQConnectionsURI.item(i);
+
+               parseAMQPBrokerConnections(ccNode, config);
+            }
+         }
+      }
+
       NodeList dvNodes = e.getElementsByTagName("divert");
 
       for (int i = 0; i < dvNodes.getLength(); i++) {
@@ -600,6 +629,9 @@ public final class FileConfigurationParser extends XMLConfigurationUtil {
       config.setCreateBindingsDir(getBoolean(e, "create-bindings-dir", config.isCreateBindingsDir()));
 
       config.setJournalDirectory(getString(e, "journal-directory", config.getJournalDirectory(), Validators.NOT_NULL_OR_EMPTY));
+
+
+      parseJournalRetention(e, config);
 
       config.setNodeManagerLockDirectory(getString(e, "node-manager-lock-directory", null, Validators.NO_CHECK));
 
@@ -637,6 +669,8 @@ public final class FileConfigurationParser extends XMLConfigurationUtil {
       config.setJournalSyncNonTransactional(getBoolean(e, "journal-sync-non-transactional", config.isJournalSyncNonTransactional()));
 
       config.setJournalFileSize(getTextBytesAsIntBytes(e, "journal-file-size", config.getJournalFileSize(), Validators.POSITIVE_INT));
+
+      config.setJournalMaxAtticFiles(getInteger(e, "journal-max-attic-files", config.getJournalMaxAtticFiles(), Validators.NO_CHECK));
 
       int journalBufferTimeout = getInteger(e, "journal-buffer-timeout", config.getJournalType() == JournalType.ASYNCIO ? ArtemisConstants.DEFAULT_JOURNAL_BUFFER_TIMEOUT_AIO : ArtemisConstants.DEFAULT_JOURNAL_BUFFER_TIMEOUT_NIO, Validators.GE_ZERO);
 
@@ -741,6 +775,47 @@ public final class FileConfigurationParser extends XMLConfigurationUtil {
       }
    }
 
+
+   private void parseJournalRetention(final Element e, final Configuration config) {
+      NodeList retention = e.getElementsByTagName("journal-retention-directory");
+
+      if (retention.getLength() != 0) {
+         Element node = (Element) retention.item(0);
+
+         String directory = node.getTextContent().trim();
+
+         String storageLimitStr = getAttributeValue(node, "storage-limit");
+         long storageLimit;
+
+         if (storageLimitStr == null) {
+            storageLimit = -1;
+         } else {
+            storageLimit = ByteUtil.convertTextBytes(storageLimitStr.trim());
+         }
+         int period = getAttributeInteger(node, "period", -1, Validators.GT_ZERO);
+         String unitStr = getAttributeValue(node, "unit");
+
+         if (unitStr == null) {
+            unitStr = "DAYS";
+         }
+
+         TimeUnit unit = TimeUnit.valueOf(unitStr.toUpperCase());
+
+         config.setJournalRetentionDirectory(directory);
+         config.setJournalRetentionMaxBytes(storageLimit);
+         config.setJournalRetentionPeriod(unit, period);
+
+         if (directory == null || directory.equals("")) {
+            throw new IllegalArgumentException("journal-retention-directory=null");
+         }
+
+         if (storageLimit == -1 && period == -1) {
+            throw new IllegalArgumentException("configure either storage-limit or period on journal-retention-directory");
+         }
+
+      }
+   }
+
    /**
     * @param e
     * @param config
@@ -832,6 +907,8 @@ public final class FileConfigurationParser extends XMLConfigurationUtil {
                metricsConfiguration.setJvmMemory(XMLUtil.parseBoolean(child));
             } else if (child.getNodeName().equals("jvm-threads")) {
                metricsConfiguration.setJvmThread(XMLUtil.parseBoolean(child));
+            } else if (child.getNodeName().equals("netty-pool")) {
+               metricsConfiguration.setNettyPool(XMLUtil.parseBoolean(child));
             } else if (child.getNodeName().equals("plugin")) {
                metricsConfiguration.setPlugin(parseMetricsPlugin(child, config));
             }
@@ -1175,6 +1252,11 @@ public final class FileConfigurationParser extends XMLConfigurationUtil {
             Validators.MINUS_ONE_OR_GT_ZERO.validate(SLOW_CONSUMER_THRESHOLD_NODE_NAME, slowConsumerThreshold);
 
             addressSettings.setSlowConsumerThreshold(slowConsumerThreshold);
+         } else if (SLOW_CONSUMER_THRESHOLD_MEASUREMENT_UNIT_NODE_NAME.equalsIgnoreCase(name)) {
+            String slowConsumerThresholdMeasurementUnit = getTrimmedTextContent(child);
+            Validators.SLOW_CONSUMER_THRESHOLD_MEASUREMENT_UNIT.validate(SLOW_CONSUMER_THRESHOLD_MEASUREMENT_UNIT_NODE_NAME, slowConsumerThresholdMeasurementUnit);
+
+            addressSettings.setSlowConsumerThresholdMeasurementUnit(SlowConsumerThresholdMeasurementUnit.valueOf(slowConsumerThresholdMeasurementUnit));
          } else if (SLOW_CONSUMER_CHECK_PERIOD_NODE_NAME.equalsIgnoreCase(name)) {
             long slowConsumerCheckPeriod = XMLUtil.parseLong(child);
             Validators.GT_ZERO.validate(SLOW_CONSUMER_CHECK_PERIOD_NODE_NAME, slowConsumerCheckPeriod);
@@ -1225,8 +1307,15 @@ public final class FileConfigurationParser extends XMLConfigurationUtil {
             Validators.DELETION_POLICY_TYPE.validate(CONFIG_DELETE_ADDRESSES, value);
             DeletionPolicy policy = Enum.valueOf(DeletionPolicy.class, value);
             addressSettings.setConfigDeleteAddresses(policy);
+         } else if (CONFIG_DELETE_DIVERTS.equalsIgnoreCase(name)) {
+            String value = getTrimmedTextContent(child);
+            Validators.DELETION_POLICY_TYPE.validate(CONFIG_DELETE_DIVERTS, value);
+            DeletionPolicy policy = Enum.valueOf(DeletionPolicy.class, value);
+            addressSettings.setConfigDeleteDiverts(policy);
          } else if (MANAGEMENT_BROWSE_PAGE_SIZE.equalsIgnoreCase(name)) {
             addressSettings.setManagementBrowsePageSize(XMLUtil.parseInt(child));
+         } else if (MANAGEMENT_MESSAGE_ATTRIBUTE_SIZE_LIMIT.equalsIgnoreCase(name)) {
+            addressSettings.setManagementMessageAttributeSizeLimit(XMLUtil.parseInt(child));
          } else if (DEFAULT_PURGE_ON_NO_CONSUMERS.equalsIgnoreCase(name)) {
             addressSettings.setDefaultPurgeOnNoConsumers(XMLUtil.parseBoolean(child));
          } else if (DEFAULT_MAX_CONSUMERS.equalsIgnoreCase(name)) {
@@ -1267,8 +1356,6 @@ public final class FileConfigurationParser extends XMLConfigurationUtil {
             addressSettings.setExpiryQueueSuffix(new SimpleString(getTrimmedTextContent(child)));
          } else if (ENABLE_METRICS.equalsIgnoreCase(name)) {
             addressSettings.setEnableMetrics(XMLUtil.parseBoolean(child));
-         } else if (PAGE_STORE_NAME.equalsIgnoreCase(name)) {
-            addressSettings.setPageStoreName(new SimpleString(getTrimmedTextContent(child)));
          }
       }
       return setting;
@@ -1719,7 +1806,7 @@ public final class FileConfigurationParser extends XMLConfigurationUtil {
       DatabaseStorageConfiguration conf = new DatabaseStorageConfiguration();
       conf.setBindingsTableName(getString(storeNode, "bindings-table-name", conf.getBindingsTableName(), Validators.NO_CHECK));
       conf.setMessageTableName(getString(storeNode, "message-table-name", conf.getMessageTableName(), Validators.NO_CHECK));
-      conf.setLargeMessageTableName(getString(storeNode, "large-message-table-name", conf.getJdbcConnectionUrl(), Validators.NO_CHECK));
+      conf.setLargeMessageTableName(getString(storeNode, "large-message-table-name", conf.getLargeMessageTableName(), Validators.NO_CHECK));
       conf.setPageStoreTableName(getString(storeNode, "page-store-table-name", conf.getPageStoreTableName(), Validators.NO_CHECK));
       conf.setNodeManagerStoreTableName(getString(storeNode, "node-manager-store-table-name", conf.getNodeManagerStoreTableName(), Validators.NO_CHECK));
       conf.setJdbcConnectionUrl(getString(storeNode, "jdbc-connection-url", conf.getJdbcConnectionUrl(), Validators.NO_CHECK));
@@ -1743,7 +1830,12 @@ public final class FileConfigurationParser extends XMLConfigurationUtil {
          NodeList propertyNodeList = storeNode.getElementsByTagName("data-source-property");
          for (int i = 0; i < propertyNodeList.getLength(); i++) {
             Element propertyNode = (Element) propertyNodeList.item(i);
-            conf.addDataSourceProperty(propertyNode.getAttributeNode("key").getValue(), propertyNode.getAttributeNode("value").getValue());
+            final String propertyName = propertyNode.getAttributeNode("key").getValue();
+            String propertyValue = propertyNode.getAttributeNode("value").getValue();
+            if (propertyValue != null && PasswordMaskingUtil.isEncMasked(propertyValue)) {
+               propertyValue = PasswordMaskingUtil.resolveMask(mainConfig.isMaskPassword(), propertyValue, mainConfig.getPasswordCodec());
+            }
+            conf.addDataSourceProperty(propertyName, propertyValue);
          }
       }
 
@@ -1846,7 +1938,64 @@ public final class FileConfigurationParser extends XMLConfigurationUtil {
 
       ClusterConnectionConfiguration config = mainConfig.addClusterConfiguration(name, uri);
 
-      System.out.println("Adding cluster connection :: " + config);
+      if (logger.isDebugEnabled()) {
+         logger.debug("Adding cluster connection :: " + config);
+      }
+   }
+
+   private void parseAMQPBrokerConnections(final Element e,
+                                           final Configuration mainConfig) throws Exception {
+      String name = e.getAttribute("name");
+
+      String uri = e.getAttribute("uri");
+
+      int retryInterval = getAttributeInteger(e, "retry-interval", 5000, Validators.GT_ZERO);
+      int reconnectAttemps = getAttributeInteger(e, "reconnect-attempts", -1, Validators.MINUS_ONE_OR_GT_ZERO);
+      String user = getAttributeValue(e, "user");
+      String password = getAttributeValue(e, "password");
+      boolean autoStart = getBooleanAttribute(e, "auto-start", true);
+
+      getInteger(e, "local-bind-port", -1, Validators.MINUS_ONE_OR_GT_ZERO);
+
+      AMQPBrokerConnectConfiguration config = new AMQPBrokerConnectConfiguration(name, uri);
+      config.parseURI();
+      config.setRetryInterval(retryInterval).setReconnectAttempts(reconnectAttemps).setUser(user).setPassword(password).setAutostart(autoStart);
+
+      mainConfig.addAMQPConnection(config);
+
+
+      NodeList senderList = e.getChildNodes();
+      for (int i = 0; i < senderList.getLength(); i++) {
+         if (senderList.item(i).getNodeType() == Node.ELEMENT_NODE) {
+            Element e2 = (Element)senderList.item(i);
+            AMQPBrokerConnectionAddressType nodeType = AMQPBrokerConnectionAddressType.valueOf(e2.getTagName().toUpperCase());
+            AMQPBrokerConnectionElement connectionElement;
+
+            if (nodeType == AMQPBrokerConnectionAddressType.MIRROR) {
+               boolean messageAcks = getBooleanAttribute(e2, "message-acknowledgements", true);
+               boolean queueCreation = getBooleanAttribute(e2,"queue-creation", true);
+               boolean queueRemoval = getBooleanAttribute(e2, "queue-removal", true);
+               String sourceMirrorAddress = getAttributeValue(e2, "source-mirror-address");
+               AMQPMirrorBrokerConnectionElement amqpMirrorConnectionElement = new AMQPMirrorBrokerConnectionElement();
+               amqpMirrorConnectionElement.setMessageAcknowledgements(messageAcks).setQueueCreation(queueCreation).setQueueRemoval(queueRemoval).
+                  setSourceMirrorAddress(sourceMirrorAddress);
+               connectionElement = amqpMirrorConnectionElement;
+               connectionElement.setType(AMQPBrokerConnectionAddressType.MIRROR);
+            } else {
+               String match = getAttributeValue(e2, "address-match");
+               String queue = getAttributeValue(e2, "queue-name");
+               connectionElement = new AMQPBrokerConnectionElement();
+               connectionElement.setMatchAddress(SimpleString.toSimpleString(match)).setType(nodeType);
+               connectionElement.setQueueName(SimpleString.toSimpleString(queue));
+            }
+
+            config.addElement(connectionElement);
+         }
+      }
+
+      if (logger.isDebugEnabled()) {
+         logger.debug("Adding AMQP connection :: " + config);
+      }
    }
 
    private void parseClusterConnectionConfiguration(final Element e, final Configuration mainConfig) throws Exception {
@@ -1974,9 +2123,9 @@ public final class FileConfigurationParser extends XMLConfigurationUtil {
       String transformerClassName = getString(brNode, "transformer-class-name", null, Validators.NO_CHECK);
 
       // Default bridge conf
-      int confirmationWindowSize = getTextBytesAsIntBytes(brNode, "confirmation-window-size", ActiveMQDefaultConfiguration.getDefaultBridgeConfirmationWindowSize(), Validators.POSITIVE_INT);
+      int confirmationWindowSize = getTextBytesAsIntBytes(brNode, "confirmation-window-size", ActiveMQDefaultConfiguration.getDefaultBridgeConfirmationWindowSize(), Validators.MINUS_ONE_OR_POSITIVE_INT);
 
-      int producerWindowSize = getTextBytesAsIntBytes(brNode, "producer-window-size", ActiveMQDefaultConfiguration.getDefaultBridgeConfirmationWindowSize(), Validators.POSITIVE_INT);
+      int producerWindowSize = getTextBytesAsIntBytes(brNode, "producer-window-size", ActiveMQDefaultConfiguration.getDefaultBridgeProducerWindowSize(), Validators.MINUS_ONE_OR_POSITIVE_INT);
 
       long retryInterval = getLong(brNode, "retry-interval", ActiveMQClient.DEFAULT_RETRY_INTERVAL, Validators.GT_ZERO);
 
@@ -2002,6 +2151,7 @@ public final class FileConfigurationParser extends XMLConfigurationUtil {
 
       ComponentConfigurationRoutingType routingType = ComponentConfigurationRoutingType.valueOf(getString(brNode, "routing-type", ActiveMQDefaultConfiguration.getDefaultBridgeRoutingType(), Validators.COMPONENT_ROUTING_TYPE));
 
+      int concurrency = getInteger(brNode, "concurrency", ActiveMQDefaultConfiguration.getDefaultBridgeConcurrency(), Validators.GT_ZERO);
 
       NodeList clusterPassNodes = brNode.getElementsByTagName("password");
       String password = null;
@@ -2068,7 +2218,8 @@ public final class FileConfigurationParser extends XMLConfigurationUtil {
          .setHA(ha)
          .setUser(user)
          .setPassword(password)
-         .setRoutingType(routingType);
+         .setRoutingType(routingType)
+         .setConcurrency(concurrency);
 
       if (!staticConnectorNames.isEmpty()) {
          config.setStaticConnectors(staticConnectorNames);

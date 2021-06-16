@@ -26,8 +26,10 @@ import javax.transaction.xa.XAResource;
 import javax.transaction.xa.Xid;
 import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
+import java.text.DateFormat;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.Map;
@@ -61,6 +63,7 @@ import org.apache.activemq.artemis.api.core.management.QueueControl;
 import org.apache.activemq.artemis.api.core.management.ResourceNames;
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.config.DivertConfiguration;
+import org.apache.activemq.artemis.core.management.impl.QueueControlImpl;
 import org.apache.activemq.artemis.core.messagecounter.impl.MessageCounterManagerImpl;
 import org.apache.activemq.artemis.core.paging.impl.PagingManagerImpl;
 import org.apache.activemq.artemis.core.postoffice.impl.LocalQueueBinding;
@@ -76,6 +79,7 @@ import org.apache.activemq.artemis.utils.Base64;
 import org.apache.activemq.artemis.utils.RandomUtil;
 import org.apache.activemq.artemis.utils.RetryRule;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -87,6 +91,7 @@ import static org.apache.activemq.artemis.core.management.impl.openmbean.Composi
 
 @RunWith(value = Parameterized.class)
 public class QueueControlTest extends ManagementTestBase {
+   private static final String NULL_DATE = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM).format(new Date(0));
 
    @Rule
    public RetryRule retryRule = new RetryRule(2);
@@ -473,6 +478,7 @@ public class QueueControlTest extends ManagementTestBase {
       long beforeSend = System.currentTimeMillis();
       ClientProducer producer = session.createProducer(address);
       producer.send(session.createMessage(false).putStringProperty("x", "valueX").putStringProperty("y", "valueY"));
+      Wait.assertEquals(1, queueControl::getMessageCount);
 
       long firstMessageTimestamp = queueControl.getFirstMessageTimestamp();
       assertTrue(beforeSend <= firstMessageTimestamp);
@@ -480,6 +486,123 @@ public class QueueControlTest extends ManagementTestBase {
 
       long firstMessageAge = queueControl.getFirstMessageAge();
       assertTrue(firstMessageAge <= (System.currentTimeMillis() - firstMessageTimestamp));
+
+      session.deleteQueue(queue);
+   }
+
+   @Test
+   public void testMessageAttributeLimits() throws Exception {
+      SimpleString address = RandomUtil.randomSimpleString();
+      SimpleString queue = RandomUtil.randomSimpleString();
+
+      AddressSettings addressSettings = new AddressSettings().setManagementMessageAttributeSizeLimit(100);
+      server.getAddressSettingsRepository().addMatch(address.toString(), addressSettings);
+
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
+
+      byte[] twoKBytes = new byte[2048];
+      for (int i = 0; i < 2048; i++) {
+         twoKBytes[i] = '*';
+      }
+
+      String twoKString = new String(twoKBytes);
+
+      ClientMessage clientMessage = session.createMessage(false);
+
+      clientMessage.putStringProperty("y", "valueY");
+      clientMessage.putStringProperty("bigString", twoKString);
+      clientMessage.putBytesProperty("bigBytes", twoKBytes);
+      clientMessage.putObjectProperty("bigObject", twoKString);
+
+      clientMessage.getBodyBuffer().writeBytes(twoKBytes);
+
+      QueueControl queueControl = createManagementControl(address, queue);
+      Assert.assertEquals(0, getMessageCount(queueControl));
+
+      ClientProducer producer = session.createProducer(address);
+      producer.send(clientMessage);
+
+      Wait.assertEquals(1, () -> getMessageCount(queueControl));
+
+      assertTrue(server.getPagingManager().getPageStore(address).getAddressSize() > 2048);
+
+      Map<String, Object>[] messages = queueControl.listMessages("");
+      assertEquals(1, messages.length);
+      for (String key : messages[0].keySet()) {
+         Object value = messages[0].get(key);
+         System.err.println( key + " " + value);
+         assertTrue(value.toString().length() <= 150);
+
+         if (value instanceof byte[]) {
+            assertTrue(((byte[])value).length <= 150);
+         }
+      }
+
+      String all = queueControl.listMessagesAsJSON("");
+      assertTrue(all.length() < 1024);
+
+      String first = queueControl.getFirstMessageAsJSON();
+      assertTrue(first.length() < 1024);
+
+      CompositeData[] browseResult = queueControl.browse(1, 100);
+      for (CompositeData compositeData : browseResult) {
+         for (String key : compositeData.getCompositeType().keySet()) {
+            Object value = compositeData.get(key);
+            System.err.println("" + key + ", " + value);
+
+            if (value != null) {
+
+               if (key.equals("StringProperties")) {
+                  // these are very verbose composite data structures
+                  assertTrue(value.toString().length() + " truncated? " + key, value.toString().length() <= 2048);
+               } else {
+                  assertTrue(value.toString().length() + " truncated? " + key, value.toString().length() <= 512);
+               }
+
+               if (value instanceof byte[]) {
+                  assertTrue("truncated? " + key, ((byte[]) value).length <= 150);
+               }
+            }
+         }
+      }
+
+      session.deleteQueue(queue);
+   }
+
+   @Test
+   public void testTextMessageAttributeLimits() throws Exception {
+      SimpleString address = RandomUtil.randomSimpleString();
+      SimpleString queue = RandomUtil.randomSimpleString();
+
+      AddressSettings addressSettings = new AddressSettings().setManagementMessageAttributeSizeLimit(10);
+      server.getAddressSettingsRepository().addMatch(address.toString(), addressSettings);
+
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
+
+      final String twentyBytes = new String(new char[20]).replace("\0", "#");
+
+      ClientMessage clientMessage = session.createMessage(Message.TEXT_TYPE, durable);
+      clientMessage.getBodyBuffer().writeNullableSimpleString(SimpleString.toSimpleString(twentyBytes));
+      clientMessage.putStringProperty("x", twentyBytes);
+
+      QueueControl queueControl = createManagementControl(address, queue);
+      Assert.assertEquals(0, getMessageCount(queueControl));
+
+      ClientProducer producer = session.createProducer(address);
+      producer.send(clientMessage);
+
+      Wait.assertEquals(1, () -> getMessageCount(queueControl));
+
+      Map<String, Object>[] messages = queueControl.listMessages("");
+      assertEquals(1, messages.length);
+      assertTrue("truncated? ", ((String)messages[0].get("x")).contains("more"));
+
+      CompositeData[] browseResult = queueControl.browse(1, 100);
+      for (CompositeData compositeData : browseResult) {
+         for (String key : new String[] {"text", "PropertiesText", "StringProperties"}) {
+            assertTrue("truncated? : " + key, compositeData.get(key).toString().contains("more"));
+         }
+      }
 
       session.deleteQueue(queue);
    }
@@ -1078,7 +1201,7 @@ public class QueueControlTest extends ManagementTestBase {
       QueueControl queueControl = createManagementControl(address, queue);
 
       ClientProducer producer = session.createProducer(address);
-      producer.send(session.createMessage(durable));
+      producer.send(session.createMessage(durable).putBytesProperty("bytes", new byte[]{'%'}));
       producer.send(session.createMessage(durable));
 
       Wait.assertEquals(2, () -> queueControl.listMessages(null).length);
@@ -1680,6 +1803,44 @@ public class QueueControlTest extends ManagementTestBase {
    }
 
    @Test
+   public void testMoveMessagesWithMessageCount() throws Exception {
+      SimpleString address = RandomUtil.randomSimpleString();
+      SimpleString queue = RandomUtil.randomSimpleString();
+      SimpleString otherAddress = RandomUtil.randomSimpleString();
+      SimpleString otherQueue = RandomUtil.randomSimpleString();
+
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
+      session.createQueue(new QueueConfiguration(otherQueue).setAddress(otherAddress).setDurable(durable));
+      ClientProducer producer = session.createProducer(address);
+
+      for (int i = 0; i < 10; i++) {
+         ClientMessage message = session.createMessage(durable);
+         SimpleString key = RandomUtil.randomSimpleString();
+         long value = RandomUtil.randomLong();
+         message.putLongProperty(key, value);
+         producer.send(message);
+      }
+
+      final LocalQueueBinding binding = (LocalQueueBinding) server.getPostOffice().getBinding(queue);
+      Assert.assertEquals(10, binding.getQueue().getMessageCount());
+
+      QueueControl queueControl = createManagementControl(address, queue);
+      Assert.assertEquals(10, queueControl.getMessageCount());
+
+      // moved all messages to otherQueue
+      int movedMessagesCount = queueControl.moveMessages(QueueControlImpl.FLUSH_LIMIT, null, otherQueue.toString(), false, 5);
+      Assert.assertEquals(5, movedMessagesCount);
+      Assert.assertEquals(5, queueControl.getMessageCount());
+
+      consumeMessages(5, session, queue);
+
+      consumeMessages(5, session, otherQueue);
+
+      session.deleteQueue(queue);
+      session.deleteQueue(otherQueue);
+   }
+
+   @Test
    public void testMoveMessage() throws Exception {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
@@ -2138,6 +2299,44 @@ public class QueueControlTest extends ManagementTestBase {
       consumeMessages(1, session, queue);
 
       session.deleteQueue(queue);
+   }
+
+   @Test
+   public void testRemoveScheduledMessageRestart() throws Exception {
+      Assume.assumeTrue(durable);
+      SimpleString address = RandomUtil.randomSimpleString();
+      SimpleString queue = RandomUtil.randomSimpleString();
+
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
+      ClientProducer producer = session.createProducer(address);
+
+      // send 2 messages on queue, both scheduled
+      long timeout = System.currentTimeMillis() + 5000;
+      ClientMessage m1 = session.createMessage(durable);
+      m1.putLongProperty(Message.HDR_SCHEDULED_DELIVERY_TIME, timeout);
+      producer.send(m1);
+      ClientMessage m2 = session.createMessage(durable);
+      m2.putLongProperty(Message.HDR_SCHEDULED_DELIVERY_TIME, timeout);
+      producer.send(m2);
+
+      QueueControl queueControl = createManagementControl(address, queue);
+      assertScheduledMetrics(queueControl, 2, durable);
+
+      // the message IDs are set on the server
+      Map<String, Object>[] messages = queueControl.listScheduledMessages();
+      Assert.assertEquals(2, messages.length);
+      long messageID = (Long) messages[0].get("messageID");
+
+      // delete 1st message
+      boolean deleted = queueControl.removeMessage(messageID);
+      Assert.assertTrue(deleted);
+      assertScheduledMetrics(queueControl, 1, durable);
+
+      locator.close();
+      server.stop();
+      server.start();
+
+      assertScheduledMetrics(queueControl, 1, durable);
    }
 
    @Test
@@ -2742,7 +2941,7 @@ public class QueueControlTest extends ManagementTestBase {
       Assert.assertEquals(1, info.getCount());
       Assert.assertEquals(1, info.getCountDelta());
       Assert.assertEquals(info.getUpdateTimestamp(), info.getLastAddTimestamp());
-      Assert.assertTrue(info.getLastAckTimestamp().contains("12/31/69")); // no acks received yet
+      Assert.assertEquals(NULL_DATE, info.getLastAckTimestamp()); // no acks received yet
 
       producer.send(session.createMessage(durable));
       Wait.assertTrue(() -> server.locateQueue(queue).getMessageCount() == 2);
@@ -2756,7 +2955,7 @@ public class QueueControlTest extends ManagementTestBase {
       Assert.assertEquals(2, info.getCount());
       Assert.assertEquals(1, info.getCountDelta());
       Assert.assertEquals(info.getUpdateTimestamp(), info.getLastAddTimestamp());
-      Assert.assertTrue(info.getLastAckTimestamp().contains("12/31/69")); // no acks received yet
+      Assert.assertEquals(NULL_DATE, info.getLastAckTimestamp()); // no acks received yet
 
       consumeMessages(2, session, queue);
 
@@ -3290,6 +3489,40 @@ public class QueueControlTest extends ManagementTestBase {
    }
 
    @Test
+   public void testBrowseLimitOnListBrowseAndFilteredCount() throws Exception {
+      SimpleString address = RandomUtil.randomSimpleString();
+      SimpleString queue = RandomUtil.randomSimpleString();
+
+      AddressSettings addressSettings = new AddressSettings().setManagementBrowsePageSize(5);
+      server.getAddressSettingsRepository().addMatch(address.toString(), addressSettings);
+
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(durable));
+
+      ClientProducer producer = session.createProducer(address);
+      for (int i = 0; i < 10; i++) {
+         producer.send(session.createMessage(true));
+      }
+      producer.close();
+
+      QueueControl queueControl = createManagementControl(address, queue);
+
+
+      // no filter, delegates to count metric
+      Wait.assertEquals(10, queueControl::getMessageCount);
+
+      assertEquals(5, queueControl.browse().length);
+      assertEquals(5, queueControl.listMessages("").length);
+
+      JsonArray array = JsonUtil.readJsonArray(queueControl.listMessagesAsJSON(""));
+      assertEquals(5, array.size());
+
+      // filer could match all
+      assertEquals(5, queueControl.countMessages("AMQSize > 0"));
+
+      session.deleteQueue(queue);
+   }
+
+   @Test
    public void testResetGroups() throws Exception {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
@@ -3373,7 +3606,7 @@ public class QueueControlTest extends ManagementTestBase {
    public void setUp() throws Exception {
       super.setUp();
       Configuration conf = createDefaultInVMConfig().setJMXManagementEnabled(true);
-      server = addServer(ActiveMQServers.newActiveMQServer(conf, mbeanServer, false));
+      server = addServer(ActiveMQServers.newActiveMQServer(conf, mbeanServer, true));
 
       server.start();
 

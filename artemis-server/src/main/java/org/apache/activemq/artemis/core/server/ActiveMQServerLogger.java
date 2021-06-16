@@ -1048,8 +1048,8 @@ public interface ActiveMQServerLogger extends BasicLogger {
    void errorExpiringReferencesNoBindings(SimpleString expiryAddress);
 
    @LogMessage(level = Logger.Level.WARN)
-   @Message(id = 222147, value = "Messages are being expired on queue{0}. However there is no expiry queue configured, hence messages will be dropped.", format = Message.Format.MESSAGE_FORMAT)
-   void errorExpiringReferencesNoQueue(SimpleString name);
+   @Message(id = 222147, value = "Messages are being expired on queue {0}, but there is no Expiry Address configured so messages will be dropped.", format = Message.Format.MESSAGE_FORMAT)
+   void errorExpiringReferencesNoAddress(SimpleString name);
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222148, value = "Message {0} has exceeded max delivery attempts. No bindings for Dead Letter Address {1} so dropping it",
@@ -1077,9 +1077,9 @@ public interface ActiveMQServerLogger extends BasicLogger {
    void errorDecrementingRefCount(@Cause Throwable e);
 
    @LogMessage(level = Logger.Level.WARN)
-   @Message(id = 222153, value = "Unable to remove message id = {0} please remove manually",
+   @Message(id = 222153, value = "Cannot locate record for message id = {0} on Journal",
       format = Message.Format.MESSAGE_FORMAT)
-   void errorRemovingMessage(@Cause Throwable e, Long messageID);
+   void cannotFindMessageOnJournal(@Cause Throwable e, Long messageID);
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222154, value = "Error checking DLQ",
@@ -1225,9 +1225,9 @@ public interface ActiveMQServerLogger extends BasicLogger {
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222186,
-      value = "unable to authorise cluster control",
+      value = "unable to authorise cluster control: {0}",
       format = Message.Format.MESSAGE_FORMAT)
-   void clusterControlAuthfailure();
+   void clusterControlAuthfailure(String causeMessage);
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222187,
@@ -1459,8 +1459,8 @@ public interface ActiveMQServerLogger extends BasicLogger {
    void unableDestroyConnectionWithSessionMetadata(@Cause Throwable e);
 
    @LogMessage(level = Logger.Level.WARN)
-   @Message(id = 222234, value = "Unable to deactivate a callback", format = Message.Format.MESSAGE_FORMAT)
-   void unableToDeactiveCallback(@Cause Throwable e);
+   @Message(id = 222234, value = "Unable to invoke a callback", format = Message.Format.MESSAGE_FORMAT)
+   void unableToInvokeCallback(@Cause Throwable e);
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222235, value = "Unable to inject a monitor", format = Message.Format.MESSAGE_FORMAT)
@@ -1706,9 +1706,6 @@ public interface ActiveMQServerLogger extends BasicLogger {
                                  "**************************************************************************************************************************************************************************************************************************************************************", format = Message.Format.MESSAGE_FORMAT)
    void possibleSplitBrain(String nodeID, String connectionPairInformation);
 
-   @LogMessage(level = Logger.Level.WARN)
-   @Message(id = 222295, value = "Subscription {0} uses wildcard address {1} but no matching address-setting has configured the shared page-store-name; counters may be inaccurate", format = Message.Format.MESSAGE_FORMAT)
-   void wildcardRoutingWithoutSharedPageStore(SimpleString queueName, SimpleString address);
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222296, value = "Unable to deploy Hawtio MBeam, console client side RBAC not available",
@@ -1719,6 +1716,19 @@ public interface ActiveMQServerLogger extends BasicLogger {
    @Message(id = 222297, value = "Unable to start Management Context, RBAC not available",
          format = Message.Format.MESSAGE_FORMAT)
    void unableStartManagementContext(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222298, value = "Failed to create bootstrap user \"{0}\". User management may not function.", format = Message.Format.MESSAGE_FORMAT)
+   void failedToCreateBootstrapCredentials(@Cause Exception e, String user);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222299, value = "No bootstrap credentials found. User management may not function.", format = Message.Format.MESSAGE_FORMAT)
+   void noBootstrapCredentialsFound();
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222300, value = "Getting SSL handler failed when serving client from {0}: {1}.",
+      format = Message.Format.MESSAGE_FORMAT)
+   void gettingSslHandlerFailed(String clientAddress, String cause);
 
    @LogMessage(level = Logger.Level.ERROR)
    @Message(id = 224000, value = "Failure in initialisation", format = Message.Format.MESSAGE_FORMAT)

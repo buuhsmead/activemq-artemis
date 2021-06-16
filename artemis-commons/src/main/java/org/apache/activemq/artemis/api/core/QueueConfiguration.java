@@ -109,7 +109,6 @@ public class QueueConfiguration implements Serializable {
    private Boolean internal;
    private Boolean _transient;
    private Boolean autoCreated;
-   private transient SimpleString pageStoreName;
 
    /**
     * Instantiate this object and invoke {@link #setName(SimpleString)}
@@ -717,7 +716,7 @@ public class QueueConfiguration implements Serializable {
     * @return the {@code QueueConfiguration} created from the JSON-formatted input {@code String}
     */
    public static QueueConfiguration fromJSON(String jsonString) {
-      JsonObject json = JsonLoader.createReader(new StringReader(jsonString)).readObject();
+      JsonObject json = JsonLoader.readObject(new StringReader(jsonString));
 
       // name is the only required value
       if (!json.keySet().contains(NAME)) {
@@ -877,13 +876,5 @@ public class QueueConfiguration implements Serializable {
          + ", internal=" + internal
          + ", transient=" + _transient
          + ", autoCreated=" + autoCreated + ']';
-   }
-
-   public void setPageStoreName(SimpleString pageStoreName) {
-      this.pageStoreName = pageStoreName;
-   }
-
-   public SimpleString getPageStoreName() {
-      return pageStoreName != null ? pageStoreName : getAddress();
    }
 }

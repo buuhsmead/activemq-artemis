@@ -22,7 +22,7 @@
    <parent>
       <groupId>org.apache.activemq</groupId>
       <artifactId>artemis-pom</artifactId>
-      <version>2.16.0-SNAPSHOT</version>
+      <version>2.18.0-SNAPSHOT</version>
    </parent>
 
    <artifactId>apache-artemis</artifactId>
@@ -134,11 +134,6 @@
       </dependency>
       <dependency>
          <groupId>org.apache.activemq</groupId>
-         <artifactId>artemis-tools</artifactId>
-         <version>${project.version}</version>
-      </dependency>
-      <dependency>
-         <groupId>org.apache.activemq</groupId>
          <artifactId>artemis-website</artifactId>
          <version>${project.version}</version>
       </dependency>
@@ -159,16 +154,20 @@
            <groupId>io.airlift</groupId>
            <artifactId>airline</artifactId>
        </dependency>
-       <dependency>
-           <groupId>org.apache.activemq</groupId>
-           <artifactId>activemq-client</artifactId>
-          <exclusions>
-             <exclusion>
-                <groupId>org.apache.geronimo.specs</groupId>
-                <artifactId>geronimo-jms_1.1_spec</artifactId>
-             </exclusion>
-          </exclusions>
-       </dependency>
+      <dependency>
+         <groupId>org.apache.activemq</groupId>
+         <artifactId>activemq-client</artifactId>
+         <exclusions>
+            <exclusion>
+               <groupId>org.apache.geronimo.specs</groupId>
+               <artifactId>geronimo-jms_1.1_spec</artifactId>
+            </exclusion>
+            <exclusion>
+               <groupId>org.apache.geronimo.specs</groupId>
+               <artifactId>geronimo-j2ee-management_1.1_spec</artifactId>
+            </exclusion>
+         </exclusions>
+      </dependency>
        <dependency>
            <groupId>org.apache.activemq</groupId>
            <artifactId>activemq-openwire-legacy</artifactId>
@@ -189,6 +188,12 @@
          <groupId>org.apache.qpid</groupId>
          <artifactId>qpid-jms-client</artifactId>
          <version>${qpid.jms.version}</version>
+         <exclusions>
+            <exclusion>
+               <groupId>org.apache.geronimo.specs</groupId>
+               <artifactId>geronimo-jms_2.0_spec</artifactId>
+            </exclusion>
+         </exclusions>
       </dependency>
 
 
@@ -231,16 +236,16 @@
          <artifactId>netty-all</artifactId>
       </dependency>
        <dependency>
-           <groupId>org.apache.geronimo.specs</groupId>
-           <artifactId>geronimo-json_1.0_spec</artifactId>
+          <groupId>jakarta.json</groupId>
+          <artifactId>jakarta.json-api</artifactId>
        </dependency>
        <dependency>
            <groupId>org.apache.johnzon</groupId>
            <artifactId>johnzon-core</artifactId>
        </dependency>
       <dependency>
-         <groupId>org.apache.geronimo.specs</groupId>
-         <artifactId>geronimo-jaspic_1.0_spec</artifactId>
+         <groupId>jakarta.security.auth.message</groupId>
+         <artifactId>jakarta.security.auth.message-api</artifactId>
       </dependency>
    </dependencies>
 
@@ -258,13 +263,14 @@
          </plugin>
          <plugin>
             <artifactId>maven-assembly-plugin</artifactId>
-            <version>${maven.assembly.plugin.version}</version>
             <executions>
-              <execution>
-                  <id>source</id>
+               <execution>
+                  <id>bin</id>
                   <configuration>
-                     <descriptor>src/main/assembly/source-assembly.xml</descriptor>
-                     <tarLongFileMode>gnu</tarLongFileMode>
+                     <descriptors>
+                       <descriptor>src/main/assembly/bin.xml</descriptor>
+                     </descriptors>
+                     <tarLongFileMode>posix</tarLongFileMode>
                   </configuration>
                   <phase>package</phase>
                   <goals>
@@ -272,10 +278,13 @@
                   </goals>
                </execution>
                <execution>
-                  <id>bin</id>
+                  <id>dir</id>
                   <configuration>
-                     <descriptor>src/main/assembly/dep.xml</descriptor>
-                     <tarLongFileMode>gnu</tarLongFileMode>
+                     <attach>false</attach>
+                     <descriptors>
+                       <descriptor>src/main/assembly/dir.xml</descriptor>
+                     </descriptors>
+                     <tarLongFileMode>posix</tarLongFileMode>
                   </configuration>
                   <phase>package</phase>
                   <goals>
@@ -307,4 +316,31 @@
       </plugins>
    </build>
 
+   <profiles>
+      <profile>
+         <id>apache-release</id>
+         <build>
+            <plugins>
+               <plugin>
+                  <artifactId>maven-assembly-plugin</artifactId>
+                  <executions>
+                     <execution>
+                        <id>source</id>
+                        <configuration>
+                           <descriptors>
+                              <descriptor>src/main/assembly/source-assembly.xml</descriptor>
+                           </descriptors>
+                           <tarLongFileMode>posix</tarLongFileMode>
+                        </configuration>
+                        <phase>package</phase>
+                        <goals>
+                           <goal>single</goal>
+                        </goals>
+                     </execution>
+                  </executions>
+               </plugin>
+            </plugins>
+         </build>
+      </profile>
+   </profiles>
 </project>

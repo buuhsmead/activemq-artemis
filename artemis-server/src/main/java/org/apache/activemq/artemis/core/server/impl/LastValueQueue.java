@@ -17,6 +17,8 @@
 package org.apache.activemq.artemis.core.server.impl;
 
 import java.util.Collections;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -43,6 +45,7 @@ import org.apache.activemq.artemis.core.settings.HierarchicalRepository;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.core.transaction.Transaction;
 import org.apache.activemq.artemis.utils.actors.ArtemisExecutor;
+import org.jboss.logging.Logger;
 
 /**
  * A queue that will discard messages if a newer message with the same
@@ -55,8 +58,26 @@ import org.apache.activemq.artemis.utils.actors.ArtemisExecutor;
 @SuppressWarnings("ALL")
 public class LastValueQueue extends QueueImpl {
 
+   private static final Logger logger = Logger.getLogger(LastValueQueue.class);
    private final Map<SimpleString, HolderReference> map = new ConcurrentHashMap<>();
    private final SimpleString lastValueKey;
+
+   // only use this within synchronized methods or synchronized(this) blocks
+   protected final LinkedList<MessageReference> nextDeliveries = new LinkedList<>();
+
+
+   /* in certain cases we need to redeliver a message */
+   @Override
+   protected MessageReference nextDelivery() {
+      return nextDeliveries.poll();
+   }
+
+   @Override
+   protected void repeatNextDelivery(MessageReference reference) {
+      // put the ref back onto the head of the list so that the next time poll() is called this ref is returned
+      nextDeliveries.addFirst(reference);
+   }
+
 
    @Deprecated
    public LastValueQueue(final long persistenceID,
@@ -150,34 +171,29 @@ public class LastValueQueue extends QueueImpl {
          HolderReference hr = map.get(prop);
 
          if (hr != null) {
-            // We need to overwrite the old ref with the new one and ack the old one
+            if (isNonDestructive() && hr.isInDelivery()) {
+               // if the ref is already being delivered we'll do the replace in the postAcknowledge
+               hr.setReplacementRef(ref);
+            } else {
+               // We need to overwrite the old ref with the new one and ack the old one
+               replaceLVQMessage(ref, hr);
 
-            replaceLVQMessage(ref, hr);
-
-            if (isNonDestructive() && hr.isDelivered()) {
-               hr.resetDelivered();
-               // --------------------------------------------------------------------------------
-               // If non Destructive, and if a reference was previously delivered
-               // we would not be able to receive this message again
-               // unless we reset the iterators
-               // The message is not removed, so we can't actually remove it
-               // a result of this operation is that previously delivered messages
-               // will probably be delivered again.
-               // if we ever want to avoid other redeliveries we would have to implement a reset or redeliver
-               // operation on the iterator for a single message
-               resetAllIterators();
-               deliverAsync();
+               if (isNonDestructive() && hr.isDelivered()) {
+                  hr.resetDelivered();
+                  // since we're replacing a ref that was already delivered we want to trigger a delivery for this new replacement
+                  nextDeliveries.add(hr);
+                  deliverAsync();
+               }
             }
-
          } else {
             hr = new HolderReference(prop, ref);
 
             map.put(prop, hr);
 
-            super.addTail(hr, direct);
+            super.addTail(hr, isNonDestructive() ? false : direct);
          }
       } else {
-         super.addTail(ref, direct);
+         super.addTail(ref, isNonDestructive() ? false : direct);
       }
    }
 
@@ -191,6 +207,18 @@ public class LastValueQueue extends QueueImpl {
       } else {
          return (long) pendingMetrics.getMessageCount() + getScheduledCount();
       }
+   }
+
+   /** LVQ has to use regular addHead due to last value queues calculations */
+   @Override
+   public void addSorted(MessageReference ref, boolean scheduling) {
+      this.addHead(ref, scheduling);
+   }
+
+   /** LVQ has to use regular addHead due to last value queues calculations */
+   @Override
+   public void addSorted(List<MessageReference> refs, boolean scheduling) {
+      this.addHead(refs, scheduling);
    }
 
    @Override
@@ -231,6 +259,19 @@ public class LastValueQueue extends QueueImpl {
       } else {
          super.addHead(ref, scheduling);
       }
+   }
+
+   @Override
+   public void postAcknowledge(final MessageReference ref, AckReason reason) {
+      if (isNonDestructive()) {
+         if (ref instanceof HolderReference) {
+            HolderReference hr = (HolderReference) ref;
+            if (hr.getReplacementRef() != null) {
+               replaceLVQMessage(hr.getReplacementRef(), hr);
+            }
+         }
+      }
+      super.postAcknowledge(ref, reason);
    }
 
    @Override
@@ -285,6 +326,19 @@ public class LastValueQueue extends QueueImpl {
       super.acknowledge(tx, ref, reason, consumer);
    }
 
+   @Override
+   public synchronized void reload(final MessageReference ref) {
+      // repopulate LVQ map & reload proper HolderReferences
+      SimpleString lastValueProp = ref.getLastValueProperty();
+      if (lastValueProp != null) {
+         HolderReference hr = new HolderReference(lastValueProp, ref);
+         map.put(lastValueProp, hr);
+         super.reload(hr);
+      } else {
+         super.reload(ref);
+      }
+   }
+
    private synchronized void removeIfCurrent(MessageReference ref) {
       SimpleString lastValueProp = ref.getLastValueProperty();
       if (lastValueProp != null) {
@@ -332,10 +386,20 @@ public class LastValueQueue extends QueueImpl {
 
       private volatile MessageReference ref;
 
+      private volatile MessageReference replacementRef;
+
       private long consumerID;
 
       private boolean hasConsumerID = false;
 
+
+      public MessageReference getReplacementRef() {
+         return replacementRef;
+      }
+
+      public void setReplacementRef(MessageReference replacementRef) {
+         this.replacementRef = replacementRef;
+      }
 
       public void resetDelivered() {
          delivered = false;
@@ -540,14 +604,10 @@ public class LastValueQueue extends QueueImpl {
       }
 
       @Override
-      public PagingStore getOwner() {
-         return ref.getOwner();
+      public String toString() {
+         return new StringBuilder().append("HolderReference").append("@").append(Integer.toHexString(System.identityHashCode(this))).append("[ref=").append(ref).append("]").toString();
       }
 
-      @Override
-      public void setOwner(PagingStore owner) {
-         ref.setOwner(owner);
-      }
    }
 
    @Override

@@ -745,6 +745,26 @@ public class ReclaimerTest extends ActiveMQTestBase {
       }
 
       @Override
+      public int getReplaceableCount() {
+         return 0;
+      }
+
+      @Override
+      public void incReplaceableCount() {
+
+      }
+
+      @Override
+      public void incAddRecord() {
+
+      }
+
+      @Override
+      public int getAddRecord() {
+         return 0;
+      }
+
+      @Override
       public void incNegCount(final JournalFile file) {
          incNegCount(file, 1);
       }

@@ -363,7 +363,7 @@ public interface ActiveMQMessageBundle {
    ActiveMQSessionCreationException sessionLimitReached(String username, int limit);
 
    @Message(id = 229111, value = "Too many queues created by user ''{0}''. Queues allowed: {1}.", format = Message.Format.MESSAGE_FORMAT)
-   ActiveMQSessionCreationException queueLimitReached(String username, int limit);
+   ActiveMQSecurityException queueLimitReached(String username, int limit);
 
    @Message(id = 229112, value = "Cannot set MBeanServer during startup or while started")
    IllegalStateException cannotSetMBeanserver();
@@ -495,4 +495,10 @@ public interface ActiveMQMessageBundle {
 
    @Message(id = 229232, value = "Cannot create consumer on {0}. Session is closed.", format = Message.Format.MESSAGE_FORMAT)
    ActiveMQIllegalStateException cannotCreateConsumerOnClosedSession(SimpleString queueName);
+
+   @Message(id = 229233, value = "Cannot set ActiveMQSecurityManager during startup or while started")
+   IllegalStateException cannotSetSecurityManager();
+
+   @Message(id = 229234, value = "Invalid slow consumer threshold measurement unit {0}", format = Message.Format.MESSAGE_FORMAT)
+   IllegalArgumentException invalidSlowConsumerThresholdMeasurementUnit(String val);
 }

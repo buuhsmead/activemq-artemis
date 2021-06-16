@@ -39,7 +39,8 @@ public abstract class AbstractJDBCDriver {
 
    protected JDBCConnectionProvider connectionProvider;
 
-   public AbstractJDBCDriver() { }
+   public AbstractJDBCDriver() {
+   }
 
    public AbstractJDBCDriver(JDBCConnectionProvider connectionProvider, SQLProvider provider) {
       this.connectionProvider = connectionProvider;
@@ -132,6 +133,7 @@ public abstract class AbstractJDBCDriver {
                         logger.tracef("Table %s did exist but is empty. Starting initialization.", tableName);
                      } else {
                         logger.tracef("Table %s did exist but is empty. Initialization completed: no initialization statements left.", tableName);
+                        connection.commit();
                      }
                   }
                } catch (SQLException e) {

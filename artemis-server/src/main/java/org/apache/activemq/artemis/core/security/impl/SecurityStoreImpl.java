@@ -156,6 +156,7 @@ public class SecurityStoreImpl implements SecurityStore, HierarchicalRepositoryC
          boolean userIsValid = false;
          boolean check = true;
 
+         Subject subject = null;
          Pair<Boolean, Subject> cacheEntry = authenticationCache.getIfPresent(createAuthenticationCacheKey(user, password, connection));
          if (cacheEntry != null) {
             if (!cacheEntry.getA()) {
@@ -165,13 +166,13 @@ public class SecurityStoreImpl implements SecurityStore, HierarchicalRepositoryC
                // cached authentication succeeded previously so don't check again
                check = false;
                userIsValid = true;
-               validatedUser = getUserFromSubject(cacheEntry.getB());
+               subject = cacheEntry.getB();
+               validatedUser = getUserFromSubject(subject);
             }
          }
-
          if (check) {
             if (securityManager instanceof ActiveMQSecurityManager5) {
-               Subject subject = ((ActiveMQSecurityManager5) securityManager).authenticate(user, password, connection, securityDomain);
+               subject = ((ActiveMQSecurityManager5) securityManager).authenticate(user, password, connection, securityDomain);
                authenticationCache.put(createAuthenticationCacheKey(user, password, connection), new Pair<>(subject != null, subject));
                validatedUser = getUserFromSubject(subject);
             } else if (securityManager instanceof ActiveMQSecurityManager4) {
@@ -187,24 +188,14 @@ public class SecurityStoreImpl implements SecurityStore, HierarchicalRepositoryC
 
          // authentication failed, send a notification & throw an exception
          if (!userIsValid && validatedUser == null) {
-            String certSubjectDN = getCertSubjectDN(connection);
+            authenticationFailed(user, connection);
+         }
 
-            if (notificationService != null) {
-               TypedProperties props = new TypedProperties();
-               props.putSimpleStringProperty(ManagementHelper.HDR_USER, SimpleString.toSimpleString(user));
-               props.putSimpleStringProperty(ManagementHelper.HDR_CERT_SUBJECT_DN, SimpleString.toSimpleString(certSubjectDN));
-               props.putSimpleStringProperty(ManagementHelper.HDR_REMOTE_ADDRESS, SimpleString.toSimpleString(connection == null ? "null" : connection.getRemoteAddress()));
-
-               Notification notification = new Notification(null, CoreNotificationType.SECURITY_AUTHENTICATION_VIOLATION, props);
-
-               notificationService.sendNotification(notification);
-            }
-
-            Exception e = ActiveMQMessageBundle.BUNDLE.unableToValidateUser(connection == null ? "null" : connection.getRemoteAddress(), user, certSubjectDN);
-
-            ActiveMQServerLogger.LOGGER.securityProblemWhileAuthenticating(e.getMessage());
-
-            throw e;
+         if (AuditLogger.isAnyLoggingEnabled() && connection != null) {
+            connection.setAuditSubject(subject);
+         }
+         if (AuditLogger.isResourceLoggingEnabled()) {
+            AuditLogger.userSuccesfullyLoggedInAudit(subject);
          }
 
          return validatedUser;
@@ -268,6 +259,18 @@ public class SecurityStoreImpl implements SecurityStore, HierarchicalRepositoryC
          final Boolean validated;
          if (securityManager instanceof ActiveMQSecurityManager5) {
             Subject subject = getSubjectForAuthorization(session, ((ActiveMQSecurityManager5) securityManager));
+
+            /**
+             * A user may authenticate successfully at first, but then later when their Subject is evicted from the
+             * local cache re-authentication may fail. This could happen, for example, if the user was removed
+             * from LDAP or the user's token expired.
+             *
+             * If the subject is null then authorization will *always* fail.
+             */
+            if (subject == null) {
+               authenticationFailed(user, session.getRemotingConnection());
+            }
+
             validated = ((ActiveMQSecurityManager5) securityManager).authorize(subject, roles, checkType, fqqn != null ? fqqn.toString() : bareAddress.toString());
          } else if (securityManager instanceof ActiveMQSecurityManager4) {
             validated = ((ActiveMQSecurityManager4) securityManager).validateUserAndRole(user, session.getPassword(), roles, checkType, bareAddress.toString(), session.getRemotingConnection(), session.getSecurityDomain()) != null;
@@ -335,6 +338,47 @@ public class SecurityStoreImpl implements SecurityStore, HierarchicalRepositoryC
          validatedUser = userPrincipal.getName();
       }
       return validatedUser;
+   }
+
+   /**
+    * Get the cached Subject. If the Subject is not in the cache then authenticate again to retrieve
+    * it.
+    *
+    * @param session contains the authentication data
+    * @return the authenticated Subject with all associated role principals or null if not
+    * authenticated or JAAS is not supported by the SecurityManager.
+    */
+   @Override
+   public Subject getSessionSubject(SecurityAuth session) {
+      if (securityManager instanceof ActiveMQSecurityManager5) {
+         return getSubjectForAuthorization(session, (ActiveMQSecurityManager5) securityManager);
+      }
+      return null;
+   }
+
+   private void authenticationFailed(String user, RemotingConnection connection) throws Exception {
+      String certSubjectDN = getCertSubjectDN(connection);
+
+      if (notificationService != null) {
+         TypedProperties props = new TypedProperties();
+         props.putSimpleStringProperty(ManagementHelper.HDR_USER, SimpleString.toSimpleString(user));
+         props.putSimpleStringProperty(ManagementHelper.HDR_CERT_SUBJECT_DN, SimpleString.toSimpleString(certSubjectDN));
+         props.putSimpleStringProperty(ManagementHelper.HDR_REMOTE_ADDRESS, SimpleString.toSimpleString(connection == null ? "null" : connection.getRemoteAddress()));
+
+         Notification notification = new Notification(null, CoreNotificationType.SECURITY_AUTHENTICATION_VIOLATION, props);
+
+         notificationService.sendNotification(notification);
+      }
+
+      Exception e = ActiveMQMessageBundle.BUNDLE.unableToValidateUser(connection == null ? "null" : connection.getRemoteAddress(), user, certSubjectDN);
+
+      ActiveMQServerLogger.LOGGER.securityProblemWhileAuthenticating(e.getMessage());
+
+      if (AuditLogger.isResourceLoggingEnabled()) {
+         AuditLogger.userFailedLoggedInAudit(null, e.getMessage());
+      }
+
+      throw e;
    }
 
    /**

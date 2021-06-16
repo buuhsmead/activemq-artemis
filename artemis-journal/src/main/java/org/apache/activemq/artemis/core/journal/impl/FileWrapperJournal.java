@@ -28,6 +28,7 @@ import org.apache.activemq.artemis.core.journal.EncodingSupport;
 import org.apache.activemq.artemis.core.journal.IOCompletion;
 import org.apache.activemq.artemis.core.journal.Journal;
 import org.apache.activemq.artemis.core.journal.JournalLoadInformation;
+import org.apache.activemq.artemis.core.journal.JournalUpdateCallback;
 import org.apache.activemq.artemis.core.journal.LoaderCallback;
 import org.apache.activemq.artemis.core.persistence.Persister;
 import org.apache.activemq.artemis.core.journal.PreparedTransactionInfo;
@@ -57,6 +58,11 @@ public final class FileWrapperJournal extends JournalBase {
    private final ConcurrentLongHashMap<AtomicInteger> transactions = new ConcurrentLongHashMap<>();
    private final JournalImpl journal;
    protected volatile JournalFile currentFile;
+
+   @Override
+   public void replaceableRecord(byte recordType) {
+      journal.replaceableRecord(recordType);
+   }
 
    /**
     * @param journal
@@ -96,7 +102,18 @@ public final class FileWrapperJournal extends JournalBase {
                                boolean sync,
                                IOCompletion callback) throws Exception {
       JournalInternalRecord addRecord = new JournalAddRecord(true, id, recordType, persister, record);
+      writeRecord(addRecord, false, -1, false, callback);
+   }
 
+   @Override
+   public void appendAddEvent(long id,
+                              byte recordType,
+                              Persister persister,
+                              Object record,
+                              boolean sync,
+                              IOCompletion callback) throws Exception {
+
+      JournalInternalRecord addRecord = new JournalAddRecord(JournalImpl.EVENT_RECORD, id, recordType, persister, record);
       writeRecord(addRecord, false, -1, false, callback);
    }
 
@@ -174,9 +191,8 @@ public final class FileWrapperJournal extends JournalBase {
 
 
    @Override
-   public boolean tryAppendDeleteRecord(long id, boolean sync, IOCompletion callback) throws Exception {
+   public void tryAppendDeleteRecord(long id, boolean sync, JournalUpdateCallback updateCallback, IOCompletion callback) throws Exception {
       appendDeleteRecord(id, sync, callback);
-      return true;
    }
 
    @Override
@@ -207,15 +223,16 @@ public final class FileWrapperJournal extends JournalBase {
    }
 
    @Override
-   public boolean tryAppendUpdateRecord(long id,
+   public void tryAppendUpdateRecord(long id,
                                      byte recordType,
                                      Persister persister,
                                      Object record,
                                      boolean sync,
+                                     boolean replaceableUpdate,
+                                     JournalUpdateCallback updateCallback,
                                      IOCompletion callback) throws Exception {
       JournalInternalRecord updateRecord = new JournalAddRecord(false, id, recordType, persister, record);
       writeRecord(updateRecord, false, -1, false, callback);
-      return true;
    }
 
    @Override
@@ -314,11 +331,6 @@ public final class FileWrapperJournal extends JournalBase {
 
    @Override
    public int getUserVersion() {
-      throw new UnsupportedOperationException();
-   }
-
-   @Override
-   public void runDirectJournalBlast() throws Exception {
       throw new UnsupportedOperationException();
    }
 

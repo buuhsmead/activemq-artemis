@@ -52,6 +52,9 @@ public class JMXConnectorDTO {
    @XmlAttribute (name = "key-store-provider")
    String keyStoreProvider;
 
+   @XmlAttribute (name = "key-store-type")
+   String keyStoreType;
+
    @XmlAttribute (name = "key-store-path")
    String keyStorePath;
 
@@ -60,6 +63,9 @@ public class JMXConnectorDTO {
 
    @XmlAttribute (name = "trust-store-provider")
    String trustStoreProvider;
+
+   @XmlAttribute (name = "trust-store-type")
+   String trustStoreType;
 
    @XmlAttribute (name = "trust-store-path")
    String trustStorePath;
@@ -102,6 +108,10 @@ public class JMXConnectorDTO {
       return keyStoreProvider;
    }
 
+   public String getKeyStoreType() {
+      return keyStoreType;
+   }
+
    public String getKeyStorePath() {
       return keyStorePath;
    }
@@ -114,6 +124,10 @@ public class JMXConnectorDTO {
       return trustStoreProvider;
    }
 
+   public String getTrustStoreType() {
+      return trustStoreType;
+   }
+
    public String getTrustStorePath() {
       return trustStorePath;
    }
@@ -123,6 +137,6 @@ public class JMXConnectorDTO {
    }
 
    private String getPassword(String password) throws Exception {
-      return PasswordMaskingUtil.resolveMask(null, password, this.passwordCodec);
+      return PasswordMaskingUtil.resolveMask(password, this.passwordCodec);
    }
 }

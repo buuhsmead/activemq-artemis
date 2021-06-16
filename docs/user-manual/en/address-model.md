@@ -292,7 +292,7 @@ is controlled by following:
 Parameter|Description
 ---|---
 `auto-create-addresses`|When set to true, the broker will create the address requested by the client if it does not exist already. The default is `true`.
-`auto-delete-addresses`|When set to true, the broker will be delete any **auto-created** adddress once all of it’s queues have been deleted. The default is `true`
+`auto-delete-addresses`|When set to true, the broker will be delete any **auto-created** address once all of it’s queues have been deleted. The default is `true`
 `default-address-routing-type`|The routing type to use if the client does not specify one. Possible values are `MULTICAST` and `ANYCAST`. See earlier in this chapter for more information about routing types. The default value is `MULTICAST`.
 
 ### Auto Address Creation
@@ -353,10 +353,15 @@ queues. The broker decides on behalf of the client which queues to send
 messages to or from which queue to receive messages. However, more advanced use
 cases might require that the client specify a queue directly. In these
 situations the client uses a fully qualified queue name, by specifying both
-the address name and the queue name, separated by a ::.
+the address name and the queue name, separated by `::`.
+
+> **Note**
+>
+> The string `::` should only be used for FQQN and not in any other context
+> in address or queue names.
 
 Currently Artemis supports fully qualified queue names on Core, AMQP, JMS,
-OpenWire, MQTT and STOMP protocols for receiving messages only.
+OpenWire, MQTT and STOMP protocols for both sending and receiving messages.
 
 ### Specifying a Fully Qualified Queue Name
 
@@ -394,7 +399,7 @@ of the message to **one** of the `ANYCAST` queues and to **all** of the
 However, clients can specify a special prefix when connecting to an address to
 indicate which kind of routing type to use. The prefixes are custom values that
 are designated using the anycastPrefix and multicastPrefix parameters within
-the URL of an acceptor.
+the URL of an acceptor. When multiple values are needed, these can be separated by a comma.
 
 ### Configuring an Anycast Prefix
 
@@ -508,7 +513,7 @@ Open the file `<broker-instance>/etc/broker.xml` for editing.
 If a user requires to statically configure a queue that routes exclusively to
 one active consumer the **exclusive** flag can be enabled on the queue.
   
-When **exclusive** is set to **true** the queue will route messages to the a
+When **exclusive** is set to **true** the queue will route messages to a
 single active consumer.  When the active consumer that is being routed to is
 detached from the queue, if another active consumer exist, one will be chosen
 and routing will now be exclusive to it.
@@ -534,7 +539,7 @@ for example where a queue needs to be defined so a consumer can bind,
 but you want to disable message routing to it for the time being.
 
 Or you need to stop message flow to the queue to allow investigation keeping the consumer bound, 
-but dont wish to have further messages routed to the queue to avoid message build up.
+but don't wish to have further messages routed to the queue to avoid message build up.
   
 When **enabled** is set to **true**  the queue will have messages routed to it. (default)
 
@@ -615,7 +620,7 @@ the queue once the client disconnects.
 
 When a client requests to subscribe to a point to point address.  The protocol
 manager will look up the queue associated with the point to point address.
-This queue should have the same name as the addresss.
+This queue should have the same name as the address.
 
 **Note:** If the queue is auto created, it will be auto deleted once there are
 no consumers and no messages in it.  For more information on auto create see
@@ -660,6 +665,7 @@ that would be found in the `broker.xml` file.
       <redistribution-delay>0</redistribution-delay>
       <send-to-dla-on-no-route>true</send-to-dla-on-no-route>
       <slow-consumer-threshold>-1</slow-consumer-threshold>
+      <slow-consumer-threshold-measurement-unit>MESSAGES_PER_SECOND</slow-consumer-threshold-measurement-unit>
       <slow-consumer-policy>NOTIFY</slow-consumer-policy>
       <slow-consumer-check-period>5</slow-consumer-check-period>
       <auto-create-jms-queues>true</auto-create-jms-queues> <!-- deprecated! see auto-create-queues -->
@@ -672,6 +678,7 @@ that would be found in the `broker.xml` file.
       <auto-delete-queues-delay>0</auto-delete-queues-delay>
       <auto-delete-queues-message-count>0</auto-delete-queues-message-count>
       <config-delete-queues>OFF</config-delete-queues>
+      <config-delete-diverts>OFF</config-delete-diverts>
       <auto-create-addresses>true</auto-create-addresses>
       <auto-delete-addresses>true</auto-delete-addresses>
       <auto-delete-addresses-delay>0</auto-delete-addresses-delay>
@@ -781,38 +788,6 @@ the client-side. If the value is `BLOCK` then client message producers will
 block when they try and send further messages.  See the [Flow
 Control](flow-control.md) and [Paging](paging.md) chapters for more info.
 
-`page-store-name` defines the name of the shared page store for matching addresses.
-It is typically unused because the page store name maps to an address name by default.
-However when addresses are hierarchical and subscriptions use 
-[wildcards](wildcard-routing.md), this setting is **required** to support [paging](paging.md).
-Subscriptions assume a single page store for cursor management and resource usage
-calculations. Using an explicitly configured `page-store-name` that will match the
-root address of the hierarchy, paging can coalesce to a single page store and 
-the required assumptions will hold.
-
-For example, with a MULTICAST address hierarchy of:
- - ticker.stock.us.apple
- - ticker.stock.us.orange
- - ticker.stock.eu.pear
- 
- and with wildcard subscriptions on:
-  - ticker.stock.#
-  - ticker.stock.eu.#
-  
- an address setting of: 
- 
- ```xml
- <address-settings>
-    <address-setting match="ticker.stock.#">
-       <page-store-name>ticker.stock.#</page-store-name>
-       ...
- ```
- will ensure that all paged messages coalesce into a single page store named `ticker.stock.#`.
- The name does not need to be the same as the `match` attribute, it can be any string value.
- What **is** important is that the `match` attribute captures the root of the hierarchy that will
- support wildcards subscriptions.
- 
- 
 `message-counter-history-day-limit` is the number of days to keep message
 counter history for this address assuming that `message-counter-enabled` is
 `true`. Default is `0`.
@@ -854,8 +829,19 @@ message will instead be sent to the `dead-letter-address` (DLA) for that
 address, if it exists.
 
 `slow-consumer-threshold`. The minimum rate of message consumption allowed
-before a consumer is considered "slow." Measured in messages-per-second.
-Default is `-1` (i.e. disabled); any other valid value must be greater than 0.
+before a consumer is considered "slow." Measured in units specified by the
+slow-consumer-threshold-measurement-unit configuration option. Default is `-1`
+ (i.e. disabled); any other valid value must be greater than 0. 
+ Read more about [slow consumers](slow-consumers.md).
+
+`slow-consumer-threshold-measurement-unit`. The units used to measure the 
+slow-consumer-threshold.  Valid options are:
+* MESSAGES_PER_SECOND
+* MESSAGES_PER_MINUTE
+* MESSAGES_PER_HOUR
+* MESSAGES_PER_DAY 
+
+If no unit is specified the default MESSAGES_PER_SECOND will be used.
 Read more about [slow consumers](slow-consumers.md).
 
 `slow-consumer-policy`. What should happen when a slow consumer is detected.
@@ -865,7 +851,13 @@ CONSUMER\_SLOW management notification which an application could receive and
 take action with. Read more about [slow consumers](slow-consumers.md).
 
 `slow-consumer-check-period`. How often to check for slow consumers on a
-particular queue. Measured in *seconds*. Default is `5`. Read more about [slow
+particular queue. Measured in *seconds*. Default is `5`. 
+
+* Note: This should be at least 2x the maximum time it takes a consumer to process
+1 message.  For example, if the slow-consumer-threshold is set to 1 and the 
+slow-consumer-threshold-measurement-unit is set to MESSAGES_PER_MINUTE then this
+should be set to at least 2 x 60s i.e. 120s.
+Read more about [slow
 consumers](slow-consumers.md).
 
 `auto-create-jms-queues` is **deprecated**. See `auto-create-queues`. Whether
@@ -932,6 +924,9 @@ For Core JMS you can set it using the destination queue attributes
 reload, by delete policy: `OFF` or `FORCE`.  Default is `OFF`. Read more about
 [configuration reload](config-reload.md).
 
+`config-delete-diverts`. How the broker should handle diverts deleted on config
+reload, by delete policy: `OFF` or `FORCE`.  Default is `OFF`. Read more about
+[configuration reload](config-reload.md).
 `auto-create-addresses`. Whether or not the broker should automatically create
 an address when a message is sent to or a consumer tries to consume from a
 queue which is mapped to an address whose name fits the address `match`.
@@ -954,8 +949,8 @@ config reload, by delete policy: `OFF` or `FORCE`. Default is `OFF`. Read more
 about [configuration reload](config-reload.md).
 
 `management-browse-page-size` is the number of messages a management resource
-can browse. This is relevant for the "browse" management method exposed on the
-queue control. Default is `200`.
+can browse. This is relevant for the `browse, list and count-with-filter` management
+methods exposed on the queue control. Default is `200`.
 
 `default-purge-on-no-consumers` defines a queue's default
 `purge-on-no-consumers` setting if none is provided on the queue itself.

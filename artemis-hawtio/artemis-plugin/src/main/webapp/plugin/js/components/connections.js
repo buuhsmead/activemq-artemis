@@ -16,7 +16,7 @@
  */
 var Artemis;
 (function (Artemis) {
-    Artemis.log.info("loading connections");
+    Artemis.log.debug("loading connections");
     Artemis._module.component('artemisConnections', {
         template:
             `
@@ -29,6 +29,7 @@ var Artemis;
             </h1>
             <div ng-include="'plugin/artemistoolbar.html'"></div>
             <pf-table-view config="$ctrl.tableConfig"
+                            dt-options="$ctrl.dtOptions"
                             columns="$ctrl.tableColumns"
                             action-buttons="$ctrl.tableActionButtons"
                             items="$ctrl.connections">
@@ -68,9 +69,10 @@ var Artemis;
     .name;
 
 
-    function ConnectionsController($scope, workspace, jolokia, localStorage, artemisMessage, $location, $timeout, $filter, pagination, artemisConnection, artemisSession) {
+    function ConnectionsController($scope, workspace, jolokia, localStorage, artemisMessage, $location, $timeout, $filter, $sanitize, pagination, artemisConnection, artemisSession) {
         var ctrl = this;
         ctrl.pagination = pagination;
+        ctrl.pagination.reset();
         var mbean = Artemis.getBrokerMBean(workspace, jolokia);
         ctrl.allConnections = [];
         ctrl.connections = [];
@@ -79,16 +81,51 @@ var Artemis;
         ctrl.refreshed = false;
         ctrl.connectionToDelete = '';
         ctrl.closeDialog = false;
+        ctrl.dtOptions = {
+           // turn of ordering as we do it ourselves
+           ordering: false,
+           columns: [
+                {name: "ID", visible: true},
+                {name: "Client ID", visible: true},
+                {name: "Users", visible: true},
+                {name: "Protocol", visible: true},
+                {name: "Session Count", visible: true},
+                {name: "Remote Address", visible: true},
+                {name: "Local Address", visible: true},
+                {name: "Session ID", visible: true},
+                {name: "Creation Time", visible: true}
+           ]
+        };
+
+        Artemis.log.debug('localStorage: connectionsColumnDefs =', localStorage.getItem('connectionsColumnDefs'));
+        if (localStorage.getItem('connectionsColumnDefs')) {
+            loadedDefs = JSON.parse(localStorage.getItem('connectionsColumnDefs'));
+            //sanity check to make sure columns havent been added
+            if(loadedDefs.length === ctrl.dtOptions.columns.length) {
+                ctrl.dtOptions.columns = loadedDefs;
+            }
+            Artemis.log.debug('loaded' + ctrl.dtOptions.columns);
+        }
+
+        ctrl.updateColumns = function () {
+            var attributes = [];
+            ctrl.dtOptions.columns.forEach(function (column) {
+                attributes.push({name: column.name, visible: column.visible});
+            });
+            Artemis.log.debug("saving columns " + JSON.stringify(attributes));
+            localStorage.setItem('connectionsColumnDefs', JSON.stringify(attributes));
+        }
+
         ctrl.filter = {
             fieldOptions: [
-                {id: 'CONNECTION_ID', name: 'ID'},
-                {id: 'CLIENT_ID', name: 'Client ID'},
-                {id: 'USERS', name: 'Users'},
-                {id: 'PROTOCOL', name: 'Protocol'},
-                {id: 'SESSION_COUNT', name: 'Session Count'},
-                {id: 'REMOTE_ADDRESS', name: 'Remote Address'},
-                {id: 'LOCAL_ADDRESS', name: 'Local Address'},
-                {id: 'SESSION_ID', name: 'Session ID'}
+                {id: 'connectionID', name: 'ID'},
+                {id: 'clientID', name: 'Client ID'},
+                {id: 'users', name: 'Users'},
+                {id: 'protocol', name: 'Protocol'},
+                {id: 'sessionCount', name: 'Session Count'},
+                {id: 'remoteAddress', name: 'Remote Address'},
+                {id: 'localAddress', name: 'Local Address'},
+                {id: 'sessionID', name: 'Session ID'}
             ],
             operationOptions: [
                 {id: 'EQUALS', name: 'Equals'},
@@ -106,6 +143,12 @@ var Artemis;
                 value: "",
                 sortOrder: "asc",
                 sortColumn: "connectionID"
+            },
+            text: {
+                fieldText: "Filter Field..",
+                operationText: "Operation..",
+                sortOrderText: "ascending",
+                sortByText: "ID"
             }
         };
 
@@ -126,23 +169,25 @@ var Artemis;
             { header: 'Client ID', itemField: 'clientID' },
             { header: 'Users', itemField: 'users' },
             { header: 'protocol', itemField: 'protocol' },
-            { header: 'Session Count', itemField: 'sessionCount', templateFn: function(value, item) { return '<a href="#" onclick="selectSessions(\'' + item.connectionID + '\')">' + value + '</a>' }},
+            { header: 'Session Count', itemField: 'sessionCount', templateFn: function(value, item) { return '<a href="#" onclick="selectSessions(' + item.idx + ')">' + $sanitize(value) + '</a>' }},
             { header: 'Remote Address', itemField: 'remoteAddress' },
             { header: 'Local Address', itemField: 'localAddress' },
             { header: 'Creation Time', itemField: 'creationTime' }
         ];
 
-        selectSessions = function (connection) {
-            Artemis.log.info("navigating to connection:" + connection)
+        selectSessions = function (idx) {
+            var connection = ctrl.connections[idx].connectionID;
+            Artemis.log.debug("navigating to connection:" + connection)
             artemisConnection.connection = { connectionID: connection };
             $location.path("artemis/artemisSessions");
         };
 
         if (artemisSession.session) {
-            Artemis.log.info("navigating to session = " + artemisSession.session.connectionID);
+            Artemis.log.debug("navigating to session = " + artemisSession.session.connectionID);
             ctrl.filter.values.field = ctrl.filter.fieldOptions[0].id;
             ctrl.filter.values.operation = ctrl.filter.operationOptions[0].id;
             ctrl.filter.values.value = artemisSession.session.connectionID;
+            artemisSession.session = null;
         }
 
         ctrl.refresh = function () {
@@ -190,7 +235,7 @@ var Artemis;
         }
 
         ctrl.closeConnection = function () {
-           Artemis.log.info("closing connection: " + ctrl.connectionToDelete);
+           Artemis.log.debug("closing connection: " + ctrl.connectionToDelete);
               if (mbean) {
                   jolokia.request({ type: 'exec',
                      mbean: mbean,
@@ -213,6 +258,7 @@ var Artemis;
             var data = JSON.parse(response.value);
             ctrl.connections = [];
             angular.forEach(data["data"], function (value, idx) {
+                value.idx = idx;
                 ctrl.connections.push(value);
             });
             ctrl.pagination.page(data["count"]);
@@ -223,7 +269,7 @@ var Artemis;
 
         ctrl.pagination.load();
     }
-    ConnectionsController.$inject = ['$scope', 'workspace', 'jolokia', 'localStorage', 'artemisMessage', '$location', '$timeout', '$filter', 'pagination', 'artemisConnection', 'artemisSession'];
+    ConnectionsController.$inject = ['$scope', 'workspace', 'jolokia', 'localStorage', 'artemisMessage', '$location', '$timeout', '$filter', '$sanitize', 'pagination', 'artemisConnection', 'artemisSession'];
 
 
 })(Artemis || (Artemis = {}));

@@ -16,9 +16,7 @@
  */
 package org.apache.activemq.artemis.core.persistence.impl.journal;
 
-import java.util.Iterator;
 import java.util.LinkedList;
-import java.util.List;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -70,8 +68,8 @@ public class OperationContextImpl implements OperationContext {
       OperationContextImpl.threadLocalContext.set(context);
    }
 
-   private List<TaskHolder> tasks;
-   private List<TaskHolder> storeOnlyTasks;
+   private LinkedList<TaskHolder> tasks;
+   private LinkedList<StoreOnlyTaskHolder> storeOnlyTasks;
 
    private long minimalStore = Long.MAX_VALUE;
    private long minimalReplicated = Long.MAX_VALUE;
@@ -132,63 +130,78 @@ public class OperationContextImpl implements OperationContext {
 
    @Override
    public void executeOnCompletion(final IOCallback completion, final boolean storeOnly) {
-      if (errorCode != -1) {
-         completion.onError(errorCode, errorMessage);
-         return;
-      }
-
       boolean executeNow = false;
 
       synchronized (this) {
-         final int UNDEFINED = Integer.MIN_VALUE;
-         int storeLined = UNDEFINED;
-         int pageLined = UNDEFINED;
-         int replicationLined = UNDEFINED;
-         if (storeOnly) {
-            if (storeOnlyTasks == null) {
-               storeOnlyTasks = new LinkedList<>();
-            }
-         } else {
-            if (tasks == null) {
-               tasks = new LinkedList<>();
-               minimalReplicated = (replicationLined = replicationLineUp.intValue());
-               minimalStore = (storeLined = storeLineUp.intValue());
-               minimalPage = (pageLined = pageLineUp.intValue());
-            }
-         }
-         //On the next branches each of them is been used
-         if (replicationLined == UNDEFINED) {
-            replicationLined = replicationLineUp.intValue();
-            storeLined = storeLineUp.intValue();
-            pageLined = pageLineUp.intValue();
-         }
-         // On this case, we can just execute the context directly
-
-         if (replicationLined == replicated && storeLined == stored && pageLined == paged) {
-            // We want to avoid the executor if everything is complete...
-            // However, we can't execute the context if there are executions pending
-            // We need to use the executor on this case
-            if (executorsPending.get() == 0) {
-               // No need to use an executor here or a context switch
-               // there are no actions pending.. hence we can just execute the task directly on the same thread
-               executeNow = true;
-            } else {
-               execute(completion);
-            }
-         } else {
+         if (errorCode == -1) {
+            final int UNDEFINED = Integer.MIN_VALUE;
+            int storeLined = UNDEFINED;
+            int pageLined = UNDEFINED;
+            int replicationLined = UNDEFINED;
             if (storeOnly) {
-               storeOnlyTasks.add(new TaskHolder(completion, storeLined, replicationLined, pageLined));
+               if (storeOnlyTasks == null) {
+                  storeOnlyTasks = new LinkedList<>();
+               }
             } else {
-               tasks.add(new TaskHolder(completion, storeLined, replicationLined, pageLined));
+               if (tasks == null) {
+                  tasks = new LinkedList<>();
+                  minimalReplicated = (replicationLined = replicationLineUp.intValue());
+                  minimalStore = (storeLined = storeLineUp.intValue());
+                  minimalPage = (pageLined = pageLineUp.intValue());
+               }
+            }
+            //On the next branches each of them is been used
+            if (replicationLined == UNDEFINED) {
+               replicationLined = replicationLineUp.intValue();
+               storeLined = storeLineUp.intValue();
+               pageLined = pageLineUp.intValue();
+            }
+            // On this case, we can just execute the context directly
+
+            if (replicationLined == replicated && storeLined == stored && pageLined == paged) {
+               // We want to avoid the executor if everything is complete...
+               // However, we can't execute the context if there are executions pending
+               // We need to use the executor on this case
+               if (executorsPending.get() == 0) {
+                  // No need to use an executor here or a context switch
+                  // there are no actions pending.. hence we can just execute the task directly on the same thread
+                  executeNow = true;
+               } else {
+                  execute(completion);
+               }
+            } else {
+               if (storeOnly) {
+                  assert !storeOnlyTasks.isEmpty() ? storeOnlyTasks.peekLast().storeLined <= storeLined : true;
+                  storeOnlyTasks.add(new StoreOnlyTaskHolder(completion, storeLined));
+               } else {
+                  // ensure total ordering
+                  assert validateTasksAdd(storeLined, replicationLined, pageLined);
+                  tasks.add(new TaskHolder(completion, storeLined, replicationLined, pageLined));
+               }
             }
          }
       }
 
-      if (executeNow) {
-         // Executing outside of any locks
+      // Executing outside of any locks
+      if (errorCode != -1) {
+         completion.onError(errorCode, errorMessage);
+      } else if (executeNow) {
          completion.done();
       }
 
+   }
+
+   private boolean validateTasksAdd(int storeLined, int replicationLined, int pageLined) {
+      if (tasks.isEmpty()) {
+         return true;
+      }
+      final TaskHolder holder = tasks.peekLast();
+      if (holder.storeLined > storeLined ||
+         holder.replicationLined > replicationLined ||
+         holder.pageLined > pageLined) {
+         return false;
+      }
+      return true;
    }
 
    @Override
@@ -197,35 +210,56 @@ public class OperationContextImpl implements OperationContext {
       checkTasks();
    }
 
+   private void checkStoreTasks() {
+      final LinkedList<StoreOnlyTaskHolder> storeOnlyTasks = this.storeOnlyTasks;
+      assert storeOnlyTasks != null;
+      final int size = storeOnlyTasks.size();
+      if (size == 0) {
+         return;
+      }
+      final long stored = this.stored;
+      for (int i = 0; i < size; i++) {
+         final StoreOnlyTaskHolder holder = storeOnlyTasks.peek();
+         if (holder.storeLined < stored) {
+            // fail fast: storeOnlyTasks are ordered by storeLined, there is no need to continue
+            return;
+         }
+         // If set, we use an executor to avoid the server being single threaded
+         execute(holder.task);
+         final StoreOnlyTaskHolder removed = storeOnlyTasks.poll();
+         assert removed == holder;
+      }
+   }
+
+   private void checkCompleteContext() {
+      final LinkedList<TaskHolder> tasks = this.tasks;
+      assert tasks != null;
+      final int size = this.tasks.size();
+      if (size == 0) {
+         return;
+      }
+      assert size >= 1;
+      // no need to use an iterator here, we can save that cost
+      for (int i = 0; i < size; i++) {
+         final TaskHolder holder = tasks.peek();
+         if (stored < holder.storeLined || replicated < holder.replicationLined || paged < holder.pageLined) {
+            // End of list here. No other task will be completed after this
+            return;
+         }
+         execute(holder.task);
+         final TaskHolder removed = tasks.poll();
+         assert removed == holder;
+      }
+   }
+
    private void checkTasks() {
 
       if (storeOnlyTasks != null) {
-         Iterator<TaskHolder> iter = storeOnlyTasks.iterator();
-         while (iter.hasNext()) {
-            TaskHolder holder = iter.next();
-            if (stored >= holder.storeLined) {
-               // If set, we use an executor to avoid the server being single threaded
-               execute(holder.task);
-
-               iter.remove();
-            }
-         }
+         checkStoreTasks();
       }
 
       if (stored >= minimalStore && replicated >= minimalReplicated && paged >= minimalPage) {
-         Iterator<TaskHolder> iter = tasks.iterator();
-         while (iter.hasNext()) {
-            TaskHolder holder = iter.next();
-            if (stored >= holder.storeLined && replicated >= holder.replicationLined && paged >= holder.pageLined) {
-               // If set, we use an executor to avoid the server being single threaded
-               execute(holder.task);
-
-               iter.remove();
-            } else {
-               // End of list here. No other task will be completed after this
-               break;
-            }
-         }
+         checkCompleteContext();
       }
    }
 
@@ -267,11 +301,11 @@ public class OperationContextImpl implements OperationContext {
       this.errorMessage = errorMessage;
 
       if (tasks != null) {
-         Iterator<TaskHolder> iter = tasks.iterator();
-         while (iter.hasNext()) {
-            TaskHolder holder = iter.next();
+         // it's saving the Iterator allocation cost
+         final int size = tasks.size();
+         for (int i = 0; i < size; i++) {
+            final TaskHolder holder = tasks.poll();
             holder.task.onError(errorCode, errorMessage);
-            iter.remove();
          }
       }
    }
@@ -300,6 +334,28 @@ public class OperationContextImpl implements OperationContext {
          this.storeLined = storeLined;
          this.replicationLined = replicationLined;
          this.pageLined = pageLined;
+         this.task = task;
+      }
+   }
+
+   /**
+    * This class has been created to both better capture the intention that the {@link IOCallback} is related to a
+    * store-only operation and to reduce the memory footprint for store-only cases, given that many fields of
+    * {@link TaskHolder} are not necessary for this to work. Inheritance proved to not as effective especially without
+    * COOPS and with a 64 bit JVM so we've used different classes.
+    */
+   static final class StoreOnlyTaskHolder {
+
+      @Override
+      public String toString() {
+         return "StoreOnlyTaskHolder [storeLined=" + storeLined + ", task=" + task + "]";
+      }
+
+      final int storeLined;
+      final IOCallback task;
+
+      StoreOnlyTaskHolder(final IOCallback task, int storeLined) {
+         this.storeLined = storeLined;
          this.task = task;
       }
    }

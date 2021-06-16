@@ -41,7 +41,9 @@ import org.apache.activemq.artemis.core.paging.PagingStore;
 import org.apache.activemq.artemis.core.paging.cursor.PagePosition;
 import org.apache.activemq.artemis.core.persistence.config.PersistedAddressSetting;
 import org.apache.activemq.artemis.core.persistence.config.PersistedDivertConfiguration;
-import org.apache.activemq.artemis.core.persistence.config.PersistedRoles;
+import org.apache.activemq.artemis.core.persistence.config.PersistedRole;
+import org.apache.activemq.artemis.core.persistence.config.PersistedSecuritySetting;
+import org.apache.activemq.artemis.core.persistence.config.PersistedUser;
 import org.apache.activemq.artemis.core.persistence.impl.PageCountPending;
 import org.apache.activemq.artemis.core.postoffice.Binding;
 import org.apache.activemq.artemis.core.postoffice.PostOffice;
@@ -56,6 +58,7 @@ import org.apache.activemq.artemis.core.server.impl.AddressInfo;
 import org.apache.activemq.artemis.core.server.impl.JournalLoader;
 import org.apache.activemq.artemis.core.transaction.ResourceManager;
 import org.apache.activemq.artemis.core.transaction.Transaction;
+import org.apache.activemq.artemis.utils.ArtemisCloseable;
 import org.apache.activemq.artemis.utils.IDGenerator;
 
 /**
@@ -195,15 +198,15 @@ public interface StorageManager extends IDGenerator, ActiveMQComponent {
 
    void storeReference(long queueID, long messageID, boolean last) throws Exception;
 
-   boolean deleteMessage(long messageID) throws Exception;
+   void deleteMessage(long messageID) throws Exception;
 
    void storeAcknowledge(long queueID, long messageID) throws Exception;
 
    void storeCursorAcknowledge(long queueID, PagePosition position) throws Exception;
 
-   boolean updateDeliveryCount(MessageReference ref) throws Exception;
+   void updateDeliveryCount(MessageReference ref) throws Exception;
 
-   boolean updateScheduledDeliveryTime(MessageReference ref) throws Exception;
+   void updateScheduledDeliveryTime(MessageReference ref) throws Exception;
 
    void storeDuplicateID(SimpleString address, byte[] duplID, long recordID) throws Exception;
 
@@ -269,6 +272,8 @@ public interface StorageManager extends IDGenerator, ActiveMQComponent {
     * @return
     */
    SequentialFile createFileForLargeMessage(long messageID, LargeMessageExtension extension);
+
+   void largeMessageClosed(LargeServerMessage largeServerMessage) throws ActiveMQException;
 
    void deleteLargeMessageBody(LargeServerMessage largeServerMessage) throws ActiveMQException;
 
@@ -354,17 +359,30 @@ public interface StorageManager extends IDGenerator, ActiveMQComponent {
 
    List<PersistedAddressSetting> recoverAddressSettings() throws Exception;
 
-   void storeSecurityRoles(PersistedRoles persistedRoles) throws Exception;
+   void storeSecuritySetting(PersistedSecuritySetting persistedRoles) throws Exception;
 
-   void deleteSecurityRoles(SimpleString addressMatch) throws Exception;
+   void deleteSecuritySetting(SimpleString addressMatch) throws Exception;
 
-   List<PersistedRoles> recoverPersistedRoles() throws Exception;
+   List<PersistedSecuritySetting> recoverSecuritySettings() throws Exception;
 
    void storeDivertConfiguration(PersistedDivertConfiguration persistedDivertConfiguration) throws Exception;
 
    void deleteDivertConfiguration(String divertName) throws Exception;
 
    List<PersistedDivertConfiguration> recoverDivertConfigurations();
+
+   void storeUser(PersistedUser persistedUser) throws Exception;
+
+   void deleteUser(String username) throws Exception;
+
+   Map<String, PersistedUser> getPersistedUsers();
+
+   void storeRole(PersistedRole persistedRole) throws Exception;
+
+   void deleteRole(String role) throws Exception;
+
+   Map<String, PersistedRole> getPersistedRoles();
+
    /**
     * @return The ID with the stored counter
     */
@@ -462,15 +480,9 @@ public interface StorageManager extends IDGenerator, ActiveMQComponent {
     * say Paging classes, that use locks of their own AND also write through the StorageManager MUST
     * first read lock the storageManager before taking their own locks. Otherwise, we may dead-lock
     * when starting replication sync.
-    */
-   void readLock();
-
-   /**
-    * Unlock the manager.
     *
-    * @see StorageManager#readLock()
     */
-   void readUnLock();
+   ArtemisCloseable closeableReadLock();
 
    /**
     * Closes the {@link IDGenerator} persisting the current record ID.

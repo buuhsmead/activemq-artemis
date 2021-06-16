@@ -1379,7 +1379,7 @@ public class BridgeTest extends ActiveMQTestBase {
 
          Map<String, Object> server1Params = new HashMap<>();
          addTargetParameters(server1Params);
-         server1 = createClusteredServerWithParams(isNetty(), 1, true, PAGE_SIZE, PAGE_MAX, server1Params);
+         server1 = createClusteredServerWithParams(isNetty(), 1, true, PAGE_SIZE, -1, server1Params);
          server1.getConfiguration().setJournalBufferTimeout_AIO(10).setJournalBufferTimeout_NIO(10);
 
          final String testAddress = "testAddress";
@@ -1400,11 +1400,9 @@ public class BridgeTest extends ActiveMQTestBase {
          ArrayList<String> staticConnectors = new ArrayList<>();
          staticConnectors.add(server1tc.getName());
 
-         BridgeConfiguration bridgeConfiguration = new BridgeConfiguration().setName("bridge1").setQueueName(queueName0).setForwardingAddress(forwardAddress).setRetryInterval(1).setReconnectAttemptsOnSameNode(-1).setUseDuplicateDetection(false).setConfirmationWindowSize(1).setStaticConnectors(staticConnectors);
+         BridgeConfiguration bridgeConfiguration = new BridgeConfiguration().setName("bridge1").setQueueName(queueName0).setForwardingAddress(forwardAddress).setRetryInterval(1).setReconnectAttemptsOnSameNode(-1).setUseDuplicateDetection(true).setConfirmationWindowSize(1).setStaticConnectors(staticConnectors);
 
          bridgeConfiguration.setCallTimeout(1000);
-
-         bridgeConfiguration.setUseDuplicateDetection(true);
 
          List<BridgeConfiguration> bridgeConfigs = new ArrayList<>();
          bridgeConfigs.add(bridgeConfiguration);
@@ -1496,7 +1494,7 @@ public class BridgeTest extends ActiveMQTestBase {
             msgCount.incrementAndGet();
 
             if (i % 500 == 0)
-              instanceLog.debug("received " + i);
+               instanceLog.debug("received " + i);
          }
 
          boolean failed = false;
@@ -2011,6 +2009,39 @@ public class BridgeTest extends ActiveMQTestBase {
       Bridge bridge = server.getClusterManager().getBridges().get(BRIDGE);
       assertNotNull(bridge);
       assertEquals(transformer, ((BridgeImpl) bridge).getTransformer());
+   }
+
+   @Test
+   public void testDefaultConfirmationWindowSize() throws Exception {
+      final SimpleString ADDRESS = new SimpleString("myAddress");
+      final SimpleString QUEUE = new SimpleString("myQueue");
+      final SimpleString FORWARDING_ADDRESS = new SimpleString("myForwardingAddress");
+      final SimpleString FORWARDING_QUEUE = new SimpleString("myForwardingQueue");
+      final String BRIDGE = "myBridge";
+
+      Configuration config = createDefaultConfig(0, isNetty()).addConnectorConfiguration("myConnector", new TransportConfiguration(getConnector()));
+      ActiveMQServer server = addServer(new ActiveMQServerImpl(config));
+      server.start();
+      server.waitForActivation(100, TimeUnit.MILLISECONDS);
+      server.createQueue(new QueueConfiguration(QUEUE).setAddress(ADDRESS).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      server.createQueue(new QueueConfiguration(FORWARDING_QUEUE).setAddress(FORWARDING_ADDRESS).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      ArrayList<String> connectors = new ArrayList<>();
+      connectors.add("myConnector");
+      server.deployBridge(new BridgeConfiguration()
+                             .setName(BRIDGE)
+                             .setQueueName(QUEUE.toString())
+                             .setForwardingAddress(FORWARDING_ADDRESS.toString())
+                             .setStaticConnectors(connectors));
+
+      // now we actually have to use the bridge to make sure it connected correctly
+      locator = addServerLocator(ActiveMQClient.createServerLocatorWithoutHA(new TransportConfiguration(getConnector())));
+      ClientSessionFactory sf = addSessionFactory(locator.createSessionFactory());
+      ClientSession session = addClientSession(sf.createSession(false, true, true));
+      ClientProducer producer = addClientProducer(session.createProducer(ADDRESS));
+      ClientConsumer consumer = addClientConsumer(session.createConsumer(FORWARDING_QUEUE));
+      session.start();
+      producer.send(session.createMessage(true));
+      Assert.assertNotNull(consumer.receive(200));
    }
 
    /**

@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Function;
 
 import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
@@ -243,11 +244,6 @@ public class ServerConsumerImpl implements ServerConsumer, ReadyListener {
 
       this.creationTime = System.currentTimeMillis();
 
-      if (browseOnly) {
-         browserDeliverer = new BrowserDeliverer(messageQueue.browserIterator());
-      } else {
-         messageQueue.addConsumer(this);
-      }
       this.supportLargeMessage = supportLargeMessage;
 
       if (credits != null) {
@@ -259,6 +255,12 @@ public class ServerConsumerImpl implements ServerConsumer, ReadyListener {
       }
 
       this.server = server;
+
+      if (browseOnly) {
+         browserDeliverer = new BrowserDeliverer(messageQueue.browserIterator());
+      } else {
+         messageQueue.addConsumer(this);
+      }
 
       if (session.getRemotingConnection() instanceof CoreRemotingConnection) {
          CoreRemotingConnection coreRemotingConnection = (CoreRemotingConnection) session.getRemotingConnection();
@@ -402,6 +404,12 @@ public class ServerConsumerImpl implements ServerConsumer, ReadyListener {
 
          return HandleStatus.BUSY;
       }
+      if (server.hasBrokerMessagePlugins() && !server.callBrokerMessagePluginsCanAccept(this, ref)) {
+         if (logger.isTraceEnabled()) {
+            logger.trace("Reference " + ref + " is not allowed to be consumed by " + this + " due to message plugin filter.");
+         }
+         return HandleStatus.NO_MATCH;
+      }
 
       synchronized (lock) {
          // If the consumer is stopped then we don't accept the message, it
@@ -486,7 +494,7 @@ public class ServerConsumerImpl implements ServerConsumer, ReadyListener {
          Message message = reference.getMessage();
 
          if (AuditLogger.isMessageEnabled()) {
-            AuditLogger.coreConsumeMessage(getQueueName().toString());
+            AuditLogger.coreConsumeMessage(session.getRemotingConnection().getAuditSubject(), getQueueName().toString());
          }
          if (server.hasBrokerMessagePlugins()) {
             server.callBrokerMessagePlugins(plugin -> plugin.beforeDeliver(this, reference));
@@ -531,12 +539,7 @@ public class ServerConsumerImpl implements ServerConsumer, ReadyListener {
    }
 
    @Override
-   public void close(final boolean failed) throws Exception {
-      close(failed, false);
-   }
-
-   @Override
-   public synchronized void close(final boolean failed, boolean sorted) throws Exception {
+   public synchronized void close(final boolean failed) throws Exception {
 
       // Close should only ever be done once per consumer.
       if (isClosed) return;
@@ -562,7 +565,7 @@ public class ServerConsumerImpl implements ServerConsumer, ReadyListener {
 
       List<MessageReference> refs = cancelRefs(failed, false, null);
 
-      Transaction tx = new TransactionImpl(storageManager, sorted);
+      Transaction tx = new TransactionImpl(storageManager);
 
       refs.forEach(ref -> {
          if (logger.isTraceEnabled()) {
@@ -641,7 +644,7 @@ public class ServerConsumerImpl implements ServerConsumer, ReadyListener {
    public void forceDelivery(final long sequence)  {
       forceDelivery(sequence, () -> {
          Message forcedDeliveryMessage = new CoreMessage(storageManager.generateID(), 50);
-         MessageReference reference = MessageReference.Factory.createReference(forcedDeliveryMessage, messageQueue, null);
+         MessageReference reference = MessageReference.Factory.createReference(forcedDeliveryMessage, messageQueue);
          reference.setDeliveryCount(0);
 
          forcedDeliveryMessage.putLongProperty(ClientConsumerImpl.FORCED_DELIVERY_MESSAGE, sequence);
@@ -848,9 +851,9 @@ public class ServerConsumerImpl implements ServerConsumer, ReadyListener {
     * This will be useful for other protocols that will need this such as openWire or MQTT.
     */
    @Override
-   public synchronized List<MessageReference> getDeliveringReferencesBasedOnProtocol(boolean remove,
-                                                                        Object protocolDataStart,
-                                                                        Object protocolDataEnd) {
+   public synchronized List<MessageReference> scanDeliveringReferences(boolean remove,
+                                                                        Function<MessageReference, Boolean> startFunction,
+                                                                        Function<MessageReference, Boolean> endFunction) {
       LinkedList<MessageReference> retReferences = new LinkedList<>();
       boolean hit = false;
       synchronized (lock) {
@@ -858,24 +861,22 @@ public class ServerConsumerImpl implements ServerConsumer, ReadyListener {
 
          while (referenceIterator.hasNext()) {
             MessageReference reference = referenceIterator.next();
-
-            if (!hit) {
-               hit = reference.getProtocolData() != null && reference.getProtocolData().equals(protocolDataStart);
+            if (!hit && startFunction.apply(reference)) {
+               hit = true;
             }
 
-            // notice: this is not an else clause, this is also valid for the first hit
             if (hit) {
                if (remove) {
                   referenceIterator.remove();
                }
+
                retReferences.add(reference);
 
-               // Whenever this is met we interrupt the loop
-               // even on the first hit
-               if (reference.getProtocolData() != null && reference.getProtocolData().equals(protocolDataEnd)) {
+               if (endFunction.apply(reference)) {
                   break;
                }
             }
+
          }
       }
 
@@ -983,7 +984,7 @@ public class ServerConsumerImpl implements ServerConsumer, ReadyListener {
          }
 
          if (ref == null) {
-            ActiveMQIllegalStateException ils = new ActiveMQIllegalStateException("Cannot find ref to ack " + messageID);
+            ActiveMQIllegalStateException ils = ActiveMQMessageBundle.BUNDLE.consumerNoReference(id, messageID, messageQueue.getName());
             tx.markAsRollbackOnly(ils);
             throw ils;
          }
@@ -1016,7 +1017,7 @@ public class ServerConsumerImpl implements ServerConsumer, ReadyListener {
    }
 
    @Override
-   public synchronized void individualCancel(final long messageID, boolean failed, boolean sorted) throws Exception {
+   public synchronized void individualCancel(final long messageID, boolean failed) throws Exception {
       if (browseOnly) {
          return;
       }
@@ -1031,7 +1032,7 @@ public class ServerConsumerImpl implements ServerConsumer, ReadyListener {
          ref.decrementDeliveryCount();
       }
 
-      ref.getQueue().cancel(ref, System.currentTimeMillis(), sorted);
+      ref.getQueue().cancel(ref, System.currentTimeMillis());
    }
 
 
@@ -1412,7 +1413,7 @@ public class ServerConsumerImpl implements ServerConsumer, ReadyListener {
                context = null;
             }
 
-            largeMessage.releaseResources(false);
+            largeMessage.releaseResources(false, false);
 
             largeMessage.toMessage().usageDown();
 

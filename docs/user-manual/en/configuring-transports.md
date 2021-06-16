@@ -318,9 +318,12 @@ additional properties:
 
 - `sslContext`
 
-A key that can be used in conjunction with `org.apache.activemq.artemis.core.remoting.impl.ssl.CachingSSLContextFactory`
-to cache created SSLContext and avoid recreating. Look [Configuring a SSLContextFactory](#Configuring a SSLContextFactory)
-for more details.
+  An optional cache key only evaluated if `org.apache.activemq.artemis.core.remoting.impl.ssl.CachingSSLContextFactory`
+  is active, to cache the initial created SSL context and reuse it. If not
+  specified CachingSSLContextFactory will automatically calculate a cache key based on
+  the given keystore/truststore parameters.
+  See [Configuring an SSLContextFactory](#Configuring an SSLContextFactory)
+  for more details.
 
 - `sslEnabled`
 
@@ -340,8 +343,8 @@ for more details.
   override the server-side setting by either using the customary
   "javax.net.ssl.keyStore" system property or the ActiveMQ-specific
   "org.apache.activemq.ssl.keyStore" system property. The ActiveMQ-specific
-  system property is useful if another component on client is already making use
-  of the standard, Java system property.
+  system property is useful if another component on the client is already making
+  use of the standard Java system property.
 
 - `keyStorePassword`
 
@@ -355,8 +358,26 @@ for more details.
   setting by either using the customary "javax.net.ssl.keyStorePassword" system
   property or the ActiveMQ-specific "org.apache.activemq.ssl.keyStorePassword"
   system property. The ActiveMQ-specific system property is useful if another
-  component on client is already making use of the standard, Java system
+  component on the client is already making use of the standard Java system
   property.
+
+- `keyStoreType`
+
+  The type of keystore being used. For example, `JKS`, `JCEKS`, `PKCS12`, etc.
+  This value can also be set via the "javax.net.ssl.keyStoreType" system property
+  or the ActiveMQ-specific "org.apache.activemq.ssl.keyStoreType" system property.
+  The ActiveMQ-specific system property is useful if another component on the 
+  client is already making use of the standard Java system property. Default is
+  `JKS`.
+
+- `keyStoreProvider`
+
+  The provider used for the keystore. For example, `SUN`, `SunJCE`, etc. This 
+  value can also be set via the "javax.net.ssl.keyStoreProvider" system property
+  or the ActiveMQ-specific "org.apache.activemq.ssl.keyStoreProvider" system
+  property. The ActiveMQ-specific system property is useful if another component
+  on the client is already making use of the standard Java system property.
+  Default is `null`.
 
 - `trustStorePath`
 
@@ -372,8 +393,8 @@ for more details.
   then it can override the server-side setting by either using the customary
   "javax.net.ssl.trustStore" system property or the ActiveMQ-specific
   "org.apache.activemq.ssl.trustStore" system property. The ActiveMQ-specific
-  system property is useful if another component on client is already making use
-  of the standard, Java system property.
+  system property is useful if another component on the client is already making
+  use of the standard Java system property.
 
 - `trustStorePassword`
 
@@ -388,8 +409,25 @@ for more details.
   setting by either using the customary "javax.net.ssl.trustStorePassword" system
   property or the ActiveMQ-specific "org.apache.activemq.ssl.trustStorePassword"
   system property. The ActiveMQ-specific system property is useful if another
-  component on client is already making use of the standard, Java system
+  component on the client is already making use of the standard Java system
   property.
+
+- `trustStoreType`
+
+  The type of truststore being used. For example, `JKS`, `JCEKS`, `PKCS12`, etc.
+  This value can also be set via the "javax.net.ssl.trustStoreType" system property
+  or the ActiveMQ-specific "org.apache.activemq.ssl.trustStoreType" system property.
+  The ActiveMQ-specific system property is useful if another component on the client
+  is already making use of the standard Java system property. Default is `JKS`.
+
+- `trustStoreProvider`
+
+  The provider used for the truststore. For example, `SUN`, `SunJCE`, etc. This
+  value can also be set via the "javax.net.ssl.trustStoreProvider" system property
+  or the ActiveMQ-specific "org.apache.activemq.ssl.trustStoreProvider" system
+  property. The ActiveMQ-specific system property is useful if another component
+  on the client is already making use of the standard Java system property.
+  Default is `null`.
 
 - `enabledCipherSuites`
 
@@ -499,22 +537,34 @@ for more details.
   [broker's classpath](using-server.md#adding-runtime-dependencies).
 
 
-#### Configuring a SSLContextFactory
+#### Configuring an SSLContextFactory
 
-If you have a `JDK` provider you can configure which SSLContextFactory to use.
-Currently we provide two implementations: 
+If you use `JDK` as SSL provider (the default), you can configure which
+SSLContextFactory to use.
+Currently the following two implementations are provided:
 - `org.apache.activemq.artemis.core.remoting.impl.ssl.DefaultSSLContextFactory`
+  (registered by the default)
 - `org.apache.activemq.artemis.core.remoting.impl.ssl.CachingSSLContextFactory`
-but you can also add your own implementation of `org.apache.activemq.artemis.spi.core.remoting.ssl.SSLContextFactory`.
 
-The implementations are loaded by a ServiceLoader, thus you need to declare your implementation in
+You may also create your own implementation of 
+`org.apache.activemq.artemis.spi.core.remoting.ssl.SSLContextFactory`.
+
+The implementations are loaded by a `java.util.ServiceLoader`, thus you need to declare your implementation in
 a `META-INF/services/org.apache.activemq.artemis.spi.core.remoting.ssl.SSLContextFactory` file.
 If several implementations are available, the one with the highest `priority` will be selected.
+
 So for example, if you want to use `org.apache.activemq.artemis.core.remoting.impl.ssl.CachingSSLContextFactory`
 you need to add a `META-INF/services/org.apache.activemq.artemis.spi.core.remoting.ssl.SSLContextFactory` file
 to your classpath with the content `org.apache.activemq.artemis.core.remoting.impl.ssl.CachingSSLContextFactory`.
 
-**Note:** This mechanism doesn't work if you have selected `OPENSSL` as provider.
+A similar mechanism exists for the `OPENSSL` SSL provider in which case you can configure an OpenSSLContextFactory.
+Currently the following two implementations are provided:
+- `org.apache.activemq.artemis.core.remoting.impl.ssl.DefaultOpenSSLContextFactory`
+  (registered by the default)
+- `org.apache.activemq.artemis.core.remoting.impl.ssl.CachingOpenSSLContextFactory`
+
+You may also create your own implementation of 
+`org.apache.activemq.artemis.spi.core.remoting.ssl.OpenSSLContextFactory`.
 
 
 ### Configuring Netty HTTP

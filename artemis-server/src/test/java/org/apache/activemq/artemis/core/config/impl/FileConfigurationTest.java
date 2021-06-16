@@ -27,6 +27,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
@@ -62,6 +63,7 @@ import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerBasePlugin;
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerPlugin;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.core.settings.impl.SlowConsumerPolicy;
+import org.apache.activemq.artemis.core.settings.impl.SlowConsumerThresholdMeasurementUnit;
 import org.apache.activemq.artemis.utils.RandomUtil;
 import org.apache.activemq.artemis.utils.critical.CriticalAnalyzerPolicy;
 import org.junit.AfterClass;
@@ -131,6 +133,9 @@ public class FileConfigurationTest extends ConfigurationImplTest {
       Assert.assertEquals("max concurrent io", 17, conf.getPageMaxConcurrentIO());
       Assert.assertEquals(true, conf.isReadWholePage());
       Assert.assertEquals("somedir2", conf.getJournalDirectory());
+      Assert.assertEquals("history", conf.getJournalRetentionDirectory());
+      Assert.assertEquals(10L * 1024L * 1024L * 1024L, conf.getJournalRetentionMaxBytes());
+      Assert.assertEquals(TimeUnit.DAYS.toMillis(365), conf.getJournalRetentionPeriod());
       Assert.assertEquals(false, conf.isCreateJournalDir());
       Assert.assertEquals(JournalType.NIO, conf.getJournalType());
       Assert.assertEquals(10000, conf.getJournalBufferSize_NIO());
@@ -255,7 +260,7 @@ public class FileConfigurationTest extends ConfigurationImplTest {
          }
       }
 
-      Assert.assertEquals(3, conf.getBridgeConfigurations().size());
+      Assert.assertEquals(4, conf.getBridgeConfigurations().size());
       for (BridgeConfiguration bc : conf.getBridgeConfigurations()) {
          if (bc.getName().equals("bridge1")) {
             Assert.assertEquals("bridge1", bc.getName());
@@ -286,7 +291,7 @@ public class FileConfigurationTest extends ConfigurationImplTest {
             Assert.assertEquals("dg1", bc.getDiscoveryGroupName());
             Assert.assertEquals(568320, bc.getProducerWindowSize());
             Assert.assertEquals(ComponentConfigurationRoutingType.PASS, bc.getRoutingType());
-         } else {
+         } else if (bc.getName().equals("bridge3")) {
             Assert.assertEquals("bridge3", bc.getName());
             Assert.assertEquals("org.foo.BridgeTransformer3", bc.getTransformerConfiguration().getClassName());
             Assert.assertEquals("bridgeTransformerValue1", bc.getTransformerConfiguration().getProperties().get("bridgeTransformerKey1"));
@@ -363,6 +368,7 @@ public class FileConfigurationTest extends ConfigurationImplTest {
       assertEquals(10, conf.getAddressesSettings().get("a1").getPageCacheMaxSize());
       assertEquals(4, conf.getAddressesSettings().get("a1").getMessageCounterHistoryDayLimit());
       assertEquals(10, conf.getAddressesSettings().get("a1").getSlowConsumerThreshold());
+      assertEquals(SlowConsumerThresholdMeasurementUnit.MESSAGES_PER_HOUR, conf.getAddressesSettings().get("a1").getSlowConsumerThresholdMeasurementUnit());
       assertEquals(5, conf.getAddressesSettings().get("a1").getSlowConsumerCheckPeriod());
       assertEquals(SlowConsumerPolicy.NOTIFY, conf.getAddressesSettings().get("a1").getSlowConsumerPolicy());
       assertEquals(true, conf.getAddressesSettings().get("a1").isAutoCreateJmsQueues());
@@ -378,8 +384,6 @@ public class FileConfigurationTest extends ConfigurationImplTest {
       assertEquals(3, conf.getAddressesSettings().get("a1").getDefaultRingSize());
       assertEquals(0, conf.getAddressesSettings().get("a1").getRetroactiveMessageCount());
       assertTrue(conf.getAddressesSettings().get("a1").isEnableMetrics());
-      assertNull("none fonfigured", conf.getAddressesSettings().get("a1").getPageStoreName());
-      assertEquals(new SimpleString("a2.shared"), conf.getAddressesSettings().get("a2").getPageStoreName());
 
       assertEquals("a2.1", conf.getAddressesSettings().get("a2").getDeadLetterAddress().toString());
       assertEquals(true, conf.getAddressesSettings().get("a2").isAutoCreateDeadLetterResources());
@@ -399,6 +403,7 @@ public class FileConfigurationTest extends ConfigurationImplTest {
       assertEquals(20, conf.getAddressesSettings().get("a2").getPageCacheMaxSize());
       assertEquals(8, conf.getAddressesSettings().get("a2").getMessageCounterHistoryDayLimit());
       assertEquals(20, conf.getAddressesSettings().get("a2").getSlowConsumerThreshold());
+      assertEquals(SlowConsumerThresholdMeasurementUnit.MESSAGES_PER_DAY, conf.getAddressesSettings().get("a2").getSlowConsumerThresholdMeasurementUnit());
       assertEquals(15, conf.getAddressesSettings().get("a2").getSlowConsumerCheckPeriod());
       assertEquals(SlowConsumerPolicy.KILL, conf.getAddressesSettings().get("a2").getSlowConsumerPolicy());
       assertEquals(false, conf.getAddressesSettings().get("a2").isAutoCreateJmsQueues());
@@ -489,6 +494,7 @@ public class FileConfigurationTest extends ConfigurationImplTest {
       assertFalse(metricsConfiguration.isJvmMemory());
       assertTrue(metricsConfiguration.isJvmGc());
       assertTrue(metricsConfiguration.isJvmThread());
+      assertTrue(metricsConfiguration.isNettyPool());
    }
 
    private void verifyAddresses() {
@@ -792,6 +798,7 @@ public class FileConfigurationTest extends ConfigurationImplTest {
       assertTrue(metricsConfiguration.isJvmMemory());
       assertTrue(metricsConfiguration.isJvmGc());
       assertTrue(metricsConfiguration.isJvmThread());
+      assertTrue(metricsConfiguration.isNettyPool());
 
       ActiveMQMetricsPlugin metricPlugin = metricsConfiguration.getPlugin();
       assertTrue(metricPlugin instanceof FakeMetricPlugin);

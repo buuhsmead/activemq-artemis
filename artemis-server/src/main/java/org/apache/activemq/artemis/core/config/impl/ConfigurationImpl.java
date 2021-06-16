@@ -39,6 +39,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
 import org.apache.activemq.artemis.api.core.BroadcastGroupConfiguration;
@@ -46,6 +47,7 @@ import org.apache.activemq.artemis.api.core.DiscoveryGroupConfiguration;
 import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
+import org.apache.activemq.artemis.core.config.amqpBrokerConnectivity.AMQPBrokerConnectConfiguration;
 import org.apache.activemq.artemis.core.config.BridgeConfiguration;
 import org.apache.activemq.artemis.core.config.ClusterConnectionConfiguration;
 import org.apache.activemq.artemis.core.config.Configuration;
@@ -166,6 +168,8 @@ public class ConfigurationImpl implements Configuration, Serializable {
 
    protected List<ClusterConnectionConfiguration> clusterConfigurations = new ArrayList<>();
 
+   protected List<AMQPBrokerConnectConfiguration> amqpBrokerConnectConfigurations = new ArrayList<>();
+
    protected List<FederationConfiguration> federationConfigurations = new ArrayList<>();
 
    @Deprecated
@@ -196,6 +200,12 @@ public class ConfigurationImpl implements Configuration, Serializable {
 
    protected String journalDirectory = ActiveMQDefaultConfiguration.getDefaultJournalDir();
 
+   protected String journalRetentionDirectory = null;
+
+   protected long journalRetentionMaxBytes = 0;
+
+   protected long journalRetentionPeriod;
+
    protected String nodeManagerLockDirectory = null;
 
    protected boolean createJournalDir = ActiveMQDefaultConfiguration.isDefaultCreateJournalDir();
@@ -217,6 +227,8 @@ public class ConfigurationImpl implements Configuration, Serializable {
    protected int journalPoolFiles = ActiveMQDefaultConfiguration.getDefaultJournalPoolFiles();
 
    protected int journalMinFiles = ActiveMQDefaultConfiguration.getDefaultJournalMinFiles();
+
+   protected int journalMaxAtticFilesFiles = ActiveMQDefaultConfiguration.getDefaultJournalMaxAtticFiles();
 
    // AIO and NIO need different values for these attributes
 
@@ -354,12 +366,59 @@ public class ConfigurationImpl implements Configuration, Serializable {
 
    private String temporaryQueueNamespace = ActiveMQDefaultConfiguration.getDefaultTemporaryQueueNamespace();
 
+
    /**
     * Parent folder for all data folders.
     */
    private File artemisInstance;
 
    // Public -------------------------------------------------------------------------
+
+   @Override
+   public String getJournalRetentionDirectory() {
+      return journalRetentionDirectory;
+   }
+
+   @Override
+   public ConfigurationImpl setJournalRetentionDirectory(String dir) {
+      this.journalRetentionDirectory = dir;
+      return this;
+   }
+
+   @Override
+   public File getJournalRetentionLocation() {
+      if (journalRetentionDirectory == null) {
+         return null;
+      } else {
+         return subFolder(getJournalRetentionDirectory());
+      }
+   }
+
+   @Override
+   public long getJournalRetentionPeriod() {
+      return this.journalRetentionPeriod;
+   }
+
+   @Override
+   public Configuration setJournalRetentionPeriod(TimeUnit unit, long period) {
+      if (period <= 0) {
+         this.journalRetentionPeriod = -1;
+      } else {
+         this.journalRetentionPeriod = unit.toMillis(period);
+      }
+      return this;
+   }
+
+   @Override
+   public long getJournalRetentionMaxBytes() {
+      return journalRetentionMaxBytes;
+   }
+
+   @Override
+   public ConfigurationImpl setJournalRetentionMaxBytes(long bytes) {
+      this.journalRetentionMaxBytes = bytes;
+      return this;
+   }
 
    @Override
    public Configuration setSystemPropertyPrefix(String systemPropertyPrefix) {
@@ -725,6 +784,17 @@ public class ConfigurationImpl implements Configuration, Serializable {
       ClusterConnectionConfiguration newConfig = new ClusterConnectionConfiguration(new URI(uri)).setName(name);
       clusterConfigurations.add(newConfig);
       return newConfig;
+   }
+
+   @Override
+   public ConfigurationImpl addAMQPConnection(AMQPBrokerConnectConfiguration amqpBrokerConnectConfiguration) {
+      this.amqpBrokerConnectConfigurations.add(amqpBrokerConnectConfiguration);
+      return this;
+   }
+
+   @Override
+   public List<AMQPBrokerConnectConfiguration> getAMQPConnection() {
+      return this.amqpBrokerConnectConfigurations;
    }
 
    @Override
@@ -1722,13 +1792,12 @@ public class ConfigurationImpl implements Configuration, Serializable {
       sb.append("clustered=").append(isClustered()).append(",");
       if (isJDBC()) {
          DatabaseStorageConfiguration dsc = (DatabaseStorageConfiguration) getStoreConfiguration();
-         sb.append("jdbcDriverClassName=").append(dsc.getJdbcDriverClassName()).append(",");
-         sb.append("jdbcConnectionUrl=").append(dsc.getJdbcConnectionUrl()).append(",");
+         sb.append("jdbcDriverClassName=").append(dsc.getDataSourceProperty("driverClassName")).append(",");
+         sb.append("jdbcConnectionUrl=").append(dsc.getDataSourceProperty("url")).append(",");
          sb.append("messageTableName=").append(dsc.getMessageTableName()).append(",");
          sb.append("bindingsTableName=").append(dsc.getBindingsTableName()).append(",");
          sb.append("largeMessageTableName=").append(dsc.getLargeMessageTableName()).append(",");
          sb.append("pageStoreTableName=").append(dsc.getPageStoreTableName()).append(",");
-
       } else {
          sb.append("journalDirectory=").append(journalDirectory).append(",");
          sb.append("bindingsDirectory=").append(bindingsDirectory).append(",");
@@ -2489,7 +2558,7 @@ public class ConfigurationImpl implements Configuration, Serializable {
    /**
     * It will find the right location of a subFolder, related to artemisInstance
     */
-   private File subFolder(String subFolder) {
+   public File subFolder(String subFolder) {
       try {
          return getBrokerInstance().toPath().resolve(subFolder).toFile();
       } catch (Exception e) {
@@ -2505,6 +2574,17 @@ public class ConfigurationImpl implements Configuration, Serializable {
    @Override
    public ConfigurationImpl setTemporaryQueueNamespace(final String temporaryQueueNamespace) {
       this.temporaryQueueNamespace = temporaryQueueNamespace;
+      return this;
+   }
+
+   @Override
+   public int getJournalMaxAtticFiles() {
+      return journalMaxAtticFilesFiles;
+   }
+
+   @Override
+   public Configuration setJournalMaxAtticFiles(int maxAtticFiles) {
+      this.journalMaxAtticFilesFiles = maxAtticFiles;
       return this;
    }
 

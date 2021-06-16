@@ -27,6 +27,7 @@ var Artemis;
             </h1>
              <div ng-include="'plugin/artemistoolbar.html'"></div>
              <pf-table-view config="$ctrl.tableConfig"
+                            dt-options="$ctrl.dtOptions"
                             columns="$ctrl.tableColumns"
                             action-buttons="$ctrl.tableActionButtons"
                             items="$ctrl.consumers">
@@ -66,9 +67,10 @@ var Artemis;
     .name;
 
 
-    function ConsumersController($scope, workspace, jolokia, localStorage, artemisMessage, $location, $timeout, $filter, pagination, artemisConsumer, artemisQueue, artemisAddress, artemisSession) {
+    function ConsumersController($scope, workspace, jolokia, localStorage, artemisMessage, $location, $timeout, $filter, $sanitize, pagination, artemisConsumer, artemisQueue, artemisAddress, artemisSession) {
         var ctrl = this;
         ctrl.pagination = pagination;
+        ctrl.pagination.reset();
         var mbean = Artemis.getBrokerMBean(workspace, jolokia);
         ctrl.allConsumers = [];
         ctrl.consumers = [];
@@ -78,17 +80,52 @@ var Artemis;
         ctrl.consumerToDeletesSession = '';
         ctrl.consumerToDelete = '';
         ctrl.closeDialog = false;
+        ctrl.dtOptions = {
+           // turn of ordering as we do it ourselves
+           ordering: false,
+           columns: [
+              {name: "ID", visible: true},
+              {name: "Session", visible: true},
+              {name: "Client ID", visible: true},
+              {name: "Protocol", visible: true},
+              {name: "Queue", visible: true},
+              {name: "Queue Type", visible: true},
+              {name: "Filter", visible: true},
+              {name: "Address", visible: true},
+              {name: "Remote Address", visible: true},
+              {name: "Local Address", visible: true},
+              {name: "Creation Time", visible: true}
+         ]
+        };
+
+        Artemis.log.debug('localStorage: consumersColumnDefs =', localStorage.getItem('consumersColumnDefs'));
+        if (localStorage.getItem('consumersColumnDefs')) {
+          loadedDefs = JSON.parse(localStorage.getItem('consumersColumnDefs'));
+          //sanity check to make sure columns havent been added
+          if(loadedDefs.length === ctrl.dtOptions.columns.length) {
+              ctrl.dtOptions.columns = loadedDefs;
+          }
+        }
+
+        ctrl.updateColumns = function () {
+          var attributes = [];
+          ctrl.dtOptions.columns.forEach(function (column) {
+              attributes.push({name: column.name, visible: column.visible});
+          });
+          Artemis.log.debug("saving columns " + JSON.stringify(attributes));
+          localStorage.setItem('consumersColumnDefs', JSON.stringify(attributes));
+        }
         ctrl.filter = {
             fieldOptions: [
-                {id: 'ID', name: 'ID'},
-                {id: 'SESSION_ID', name: 'Session ID'},
-                {id: 'CLIENT_ID', name: 'Client ID'},
-                {id: 'USER', name: 'User'},
-                {id: 'ADDRESS', name: 'Address'},
-                {id: 'QUEUE', name: 'Queue'},
-                {id: 'PROTOCOL', name: 'Protocol'},
-                {id: 'LOCAL_ADDRESS', name: 'Local Address'},
-                {id: 'REMOTE_ADDRESS', name: 'Remote Address'}
+                {id: 'id', name: 'ID'},
+                {id: 'session', name: 'Session'},
+                {id: 'clientID', name: 'Client ID'},
+                {id: 'user', name: 'User'},
+                {id: 'address', name: 'Address'},
+                {id: 'queue', name: 'Queue'},
+                {id: 'protocol', name: 'Protocol'},
+                {id: 'localAddress', name: 'Local Address'},
+                {id: 'remoteAddress', name: 'Remote Address'}
             ],
             operationOptions: [
                 {id: 'EQUALS', name: 'Equals'},
@@ -128,13 +165,13 @@ var Artemis;
         };
         ctrl.tableColumns = [
             { header: 'ID', itemField: 'id' },
-            { header: 'Session', itemField: 'session' , templateFn: function(value, item) { return '<a href="#" onclick="selectSession(\'' + item.session + '\')">' + value + '</a>' }},
+            { header: 'Session', itemField: 'session' , templateFn: function(value, item) { return '<a href="#" onclick="selectSession(' + item.idx + ')">' + $sanitize(value) + '</a>' }},
             { header: 'Client ID', itemField: 'clientID' },
             { header: 'Protocol', itemField: 'protocol' },
-            { header: 'Queue', itemField: 'queue', templateFn: function(value, item) { return '<a href="#" onclick="selectQueue(\'' + item.queue + '\')">' + value + '</a>' }},
-            { header: 'queueType', itemField: 'queueType' },
+            { header: 'Queue', itemField: 'queue', templateFn: function(value, item) { return '<a href="#" onclick="selectQueue(' + item.idx + ')">' + $sanitize(value) + '</a>' }},
+            { header: 'Queue Type', itemField: 'queueType' },
             { header: 'Filter', itemField: 'filter' },
-            { header: 'Address', itemField: 'address' , templateFn: function(value, item) { return '<a href="#" onclick="selectAddress(\'' + item.address + '\')">' + value + '</a>' }},
+            { header: 'Address', itemField: 'address' , templateFn: function(value, item) { return '<a href="#" onclick="selectAddress(' + item.idx + ')">' + $sanitize(value) + '</a>' }},
             { header: 'Remote Address', itemField: 'remoteAddress' },
             { header: 'Local Address', itemField: 'localAddress' },
             { header: 'Creation Time', itemField: 'creationTime' }
@@ -160,26 +197,38 @@ var Artemis;
         };
 
         if (artemisConsumer.consumer) {
-            Artemis.log.info("navigating to consumer = " + artemisConsumer.consumer.sessionID);
+            Artemis.log.debug("navigating to consumer = " + artemisConsumer.consumer.session);
             ctrl.filter.values.field = ctrl.filter.fieldOptions[1].id;
             ctrl.filter.values.operation = ctrl.filter.operationOptions[0].id;
-            ctrl.filter.values.value = artemisConsumer.consumer.sessionID;
+            ctrl.filter.values.value = artemisConsumer.consumer.session;
+            artemisConsumer.consumer = null;
         }
 
-        selectQueue = function (queue) {
-            Artemis.log.info("navigating to queue:" + queue)
+        if (artemisQueue.queue) {
+            Artemis.log.info("navigating to consumer = " + artemisQueue.queue.queue);
+            ctrl.filter.values.field = ctrl.filter.fieldOptions[5].id;
+            ctrl.filter.values.operation = ctrl.filter.operationOptions[0].id;
+            ctrl.filter.values.value = artemisQueue.queue.queue;
+            artemisQueue.queue = null;
+        }
+
+        selectQueue = function (idx) {
+            var queue = ctrl.consumers[idx].queue;
+            Artemis.log.debug("navigating to queue:" + queue)
             artemisQueue.queue = { queue: queue };
             $location.path("artemis/artemisQueues");
         };
 
-        selectAddress = function (address) {
-            Artemis.log.info("navigating to address:" + address)
+        selectAddress = function (idx) {
+            var address = ctrl.consumers[idx].address;
+            Artemis.log.debug("navigating to address:" + address)
             artemisAddress.address = { address: address };
             $location.path("artemis/artemisAddresses");
         };
 
-        selectSession = function (session) {
-            Artemis.log.info("navigating to session:" + session)
+        selectSession = function (idx) {
+            var session = ctrl.consumers[idx].session;
+            Artemis.log.debug("navigating to session:" + session)
             artemisSession.session = { session: session };
             $location.path("artemis/artemisSessions");
         };
@@ -191,7 +240,7 @@ var Artemis;
         }
 
         ctrl.closeConsumer = function () {
-           Artemis.log.info("closing session: " + ctrl.consumerToDelete);
+           Artemis.log.debug("closing session: " + ctrl.consumerToDelete);
               if (mbean) {
                   jolokia.request({ type: 'exec',
                      mbean: mbean,
@@ -217,6 +266,8 @@ var Artemis;
                     ctrl.pagination.reset();
                     ctrl.refreshed = false;
                 }
+
+                Artemis.log.info(JSON.stringify(sessionsFilter));
                 jolokia.request({ type: 'exec', mbean: mbean, operation: method, arguments: [JSON.stringify(sessionsFilter), ctrl.pagination.pageNumber, ctrl.pagination.pageSize] }, Core.onSuccess(populateTable, { error: onError }));
             }
         };
@@ -232,6 +283,7 @@ var Artemis;
             var data = JSON.parse(response.value);
             ctrl.consumers = [];
             angular.forEach(data["data"], function (value, idx) {
+                value.idx = idx;
                 ctrl.consumers.push(value);
             });
             ctrl.pagination.page(data["count"]);
@@ -242,7 +294,7 @@ var Artemis;
 
         ctrl.pagination.load();
     }
-    ConsumersController.$inject = ['$scope', 'workspace', 'jolokia', 'localStorage', 'artemisMessage', '$location', '$timeout', '$filter', 'pagination', 'artemisConsumer', 'artemisQueue', 'artemisAddress', 'artemisSession'];
+    ConsumersController.$inject = ['$scope', 'workspace', 'jolokia', 'localStorage', 'artemisMessage', '$location', '$timeout', '$filter', '$sanitize', 'pagination', 'artemisConsumer', 'artemisQueue', 'artemisAddress', 'artemisSession'];
 
 
 })(Artemis || (Artemis = {}));

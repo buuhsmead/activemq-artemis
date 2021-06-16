@@ -136,7 +136,7 @@ public class ServerSessionImpl implements ServerSession, FailureListener {
 
    protected final boolean strictUpdateDeliveryCount;
 
-   protected final RemotingConnection remotingConnection;
+   protected RemotingConnection remotingConnection;
 
    protected final Map<Long, ServerConsumer> consumers = new ConcurrentHashMap<>();
 
@@ -400,19 +400,17 @@ public class ServerSessionImpl implements ServerSession, FailureListener {
 
             Transaction txToRollback = tx;
             if (txToRollback != null) {
-               if (txToRollback.getXid() != null) {
+               if (txToRollback.tryRollback() && txToRollback.getXid() != null) {
                   resourceManager.removeTransaction(txToRollback.getXid(), remotingConnection);
                }
-               txToRollback.rollbackIfPossible();
             }
 
             txToRollback = pendingTX;
 
             if (txToRollback != null) {
-               if (txToRollback.getXid() != null) {
+               if (txToRollback.tryRollback() && txToRollback.getXid() != null) {
                   resourceManager.removeTransaction(txToRollback.getXid(), remotingConnection);
                }
-               txToRollback.rollbackIfPossible();
             }
 
          } else {
@@ -541,8 +539,17 @@ public class ServerSessionImpl implements ServerSession, FailureListener {
       try {
          securityCheck(address, unPrefixedQueueName, browseOnly ? CheckType.BROWSE : CheckType.CONSUME, this);
       } catch (Exception e) {
-         // this is here for backwards compatibility with the pre-FQQN syntax from ARTEMIS-592
-         securityCheck(address.concat(".").concat(unPrefixedQueueName), queueName, browseOnly ? CheckType.BROWSE : CheckType.CONSUME, this);
+         /*
+          * This is here for backwards compatibility with the pre-FQQN syntax from ARTEMIS-592.
+          * We only want to do this check if an exact match exists in the security-settings.
+          * This code is deprecated and should be removed at the release of the next major version.
+          */
+         SimpleString exactMatch = address.concat(".").concat(unPrefixedQueueName);
+         if (server.getSecurityRepository().containsExactMatch(exactMatch.toString())) {
+            securityCheck(exactMatch, unPrefixedQueueName, browseOnly ? CheckType.BROWSE : CheckType.CONSUME, this);
+         } else {
+            throw e;
+         }
       }
 
       Filter filter = FilterImpl.createFilter(filterString);
@@ -1065,6 +1072,30 @@ public class ServerSessionImpl implements ServerSession, FailureListener {
    }
 
    @Override
+   public void transferConnection(RemotingConnection newConnection) {
+      synchronized (this) {
+         // Remove failure listeners from old connection
+         remotingConnection.removeFailureListener(this);
+         tempQueueCleannerUppers.values()
+                 .forEach(cleanerUpper -> {
+                    remotingConnection.removeCloseListener(cleanerUpper);
+                    remotingConnection.removeFailureListener(cleanerUpper);
+                 });
+
+         // Set the new connection
+         remotingConnection = newConnection;
+
+         // Add failure listeners to new connection
+         newConnection.addFailureListener(this);
+         tempQueueCleannerUppers.values()
+                 .forEach(cleanerUpper -> {
+                    newConnection.addCloseListener(cleanerUpper);
+                    newConnection.addFailureListener(cleanerUpper);
+                 });
+      }
+   }
+
+   @Override
    public String getSecurityDomain() {
       return securityDomain;
    }
@@ -1259,7 +1290,7 @@ public class ServerSessionImpl implements ServerSession, FailureListener {
       ServerConsumer consumer = locateConsumer(consumerID);
 
       if (consumer != null) {
-         consumer.individualCancel(messageID, failed, false);
+         consumer.individualCancel(messageID, failed);
       }
 
    }

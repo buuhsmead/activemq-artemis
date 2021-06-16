@@ -25,6 +25,7 @@ import org.apache.activemq.artemis.api.core.Pair;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.TopologyMember;
 import org.apache.activemq.artemis.core.config.Configuration;
+import org.apache.activemq.artemis.core.io.IOCriticalErrorListener;
 import org.apache.activemq.artemis.core.paging.PagingManager;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
 import org.apache.activemq.artemis.core.postoffice.PostOffice;
@@ -67,7 +68,7 @@ public final class SharedNothingBackupActivation extends Activation {
    private SharedNothingBackupQuorum backupQuorum;
    private final boolean attemptFailBack;
    private final Map<String, Object> activationParams;
-   private final ActiveMQServerImpl.ShutdownOnCriticalErrorListener shutdownOnCriticalIO;
+   private final IOCriticalErrorListener ioCriticalErrorListener;
    private String nodeID;
    ClusterControl clusterControl;
    private boolean closed;
@@ -79,13 +80,13 @@ public final class SharedNothingBackupActivation extends Activation {
    public SharedNothingBackupActivation(ActiveMQServerImpl activeMQServer,
                                         boolean attemptFailBack,
                                         Map<String, Object> activationParams,
-                                        ActiveMQServerImpl.ShutdownOnCriticalErrorListener shutdownOnCriticalIO,
+                                        IOCriticalErrorListener ioCriticalErrorListener,
                                         ReplicaPolicy replicaPolicy,
                                         NetworkHealthCheck networkHealthCheck) {
       this.activeMQServer = activeMQServer;
       this.attemptFailBack = attemptFailBack;
       this.activationParams = activationParams;
-      this.shutdownOnCriticalIO = shutdownOnCriticalIO;
+      this.ioCriticalErrorListener = ioCriticalErrorListener;
       this.replicaPolicy = replicaPolicy;
       backupSyncLatch.setCount(1);
       this.networkHealthCheck = networkHealthCheck;
@@ -95,7 +96,7 @@ public final class SharedNothingBackupActivation extends Activation {
       assert replicationEndpoint == null;
       activeMQServer.resetNodeManager();
       backupUpToDate = false;
-      replicationEndpoint = new ReplicationEndpoint(activeMQServer, shutdownOnCriticalIO, attemptFailBack, this);
+      replicationEndpoint = new ReplicationEndpoint(activeMQServer, ioCriticalErrorListener, attemptFailBack, this);
    }
 
    @Override
@@ -247,23 +248,31 @@ public final class SharedNothingBackupActivation extends Activation {
                   logger.trace("signal == FAIL_OVER, breaking the loop");
                }
                break;
-            } else if (signal == SharedNothingBackupQuorum.BACKUP_ACTIVATION.FAILURE_REPLICATING) {
+            } else if (signal == SharedNothingBackupQuorum.BACKUP_ACTIVATION.FAILURE_REPLICATING || signal == SharedNothingBackupQuorum.BACKUP_ACTIVATION.FAILURE_RETRY) {
                // something has gone badly run restart from scratch
                if (logger.isTraceEnabled()) {
                   logger.trace("Starting a new thread to stop the server!");
                }
+
+               final SharedNothingBackupQuorum.BACKUP_ACTIVATION signalToStop = signal;
 
                Thread startThread = new Thread(new Runnable() {
                   @Override
                   public void run() {
                      try {
                         if (logger.isTraceEnabled()) {
-                           logger.trace("Calling activeMQServer.stop() and start() to restart the server");
+                           logger.trace("Calling activeMQServer.stop() as initialization failed");
                         }
                         if (activeMQServer.getState() != ActiveMQServer.SERVER_STATE.STOPPED &&
                             activeMQServer.getState() != ActiveMQServer.SERVER_STATE.STOPPING) {
-                           activeMQServer.stop();
-                           activeMQServer.start();
+
+                           if (signalToStop == SharedNothingBackupQuorum.BACKUP_ACTIVATION.FAILURE_RETRY) {
+                              activeMQServer.stop(false);
+                              logger.trace("The server was shutdown for a network isolation, we keep retrying");
+                              activeMQServer.start();
+                           } else {
+                              activeMQServer.stop();
+                           }
                         }
                      } catch (Exception e) {
                         ActiveMQServerLogger.LOGGER.errorRestartingBackupServer(e, activeMQServer);

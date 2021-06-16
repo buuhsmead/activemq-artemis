@@ -61,6 +61,7 @@ actually from the bridge example):
    <user>foouser</user>
    <password>foopassword</password>
    <routing-type>PASS</routing-type>
+   <concurrency>1</concurrency>
    <static-connectors>
       <connector-ref>remote-connector</connector-ref>
    </static-connectors>
@@ -106,9 +107,9 @@ Let's take a look at all the parameters in turn:
   milliseconds between subsequent reconnection attempts, if the connection to
   the target server has failed. The default value is `2000`milliseconds.
 
-- `retry-interval-multiplier`. This optional parameter determines determines a
-  multiplier to apply to the time since the last retry to compute the time to
-  the next retry.
+- `retry-interval-multiplier`. This optional parameter determines a multiplier
+  to apply to the time since the last retry to compute the time to the next
+  retry.
 
   This allows you to implement an *exponential backoff* between retry
   attempts.
@@ -131,23 +132,6 @@ Let's take a look at all the parameters in turn:
   reconnect attempts the bridge will make before giving up and shutting down. A
   value of `-1` signifies an unlimited number of attempts. The default value is
   `-1`.
-
-- `failover-on-server-shutdown`. This optional parameter determines whether the
-  bridge will attempt to failover onto a backup server (if specified) when the
-  target server is cleanly shutdown rather than crashed.
-
-  The bridge connector can specify both a live and a backup server, if it
-  specifies a backup server and this parameter is set to `true` then if the
-  target server is *cleanly* shutdown the bridge connection will attempt to
-  failover onto its backup. If the bridge connector has no backup server
-  configured then this parameter has no effect.
-
-  Sometimes you want a bridge configured with a live and a backup target
-  server, but you don't want to failover to the backup if the live server is
-  simply taken down temporarily for maintenance, this is when this parameter
-  comes in handy.
-
-  The default value for this parameter is `false`.
 
 - `use-duplicate-detection`. This optional parameter determines whether the
   bridge will automatically insert a duplicate id property into each message
@@ -202,6 +186,14 @@ Let's take a look at all the parameters in turn:
   flexibility to deal with any situation. Valid values are `ANYCAST`,
   `MULTICAST`, `PASS`, & `STRIP`. The default is `PASS`.
 
+- `concurrency`. For bridging high latency networks, and particularly for destinations
+  with a high throughput, more workers might have to be commited to the bridge. This is 
+  done with the concurrency parameter. Increasing the concurrency will get reflected 
+  by more consumers and producers showing up on the bridged destination, allowing
+  for increased parallelism across high latency networks.
+
+  Default=1
+ 
 - `static-connectors` or `discovery-group-ref`. Pick either of these options to
   connect the bridge to the target server.
 

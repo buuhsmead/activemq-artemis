@@ -120,6 +120,10 @@ public final class PagingManagerImpl implements PagingManager {
       this.managementAddress = managementAddress;
    }
 
+   public long getMaxSize() {
+      return maxSize;
+   }
+
    public PagingManagerImpl(final PagingStoreFactory pagingSPI,
                             final HierarchicalRepository<AddressSettings> addressSettingsRepository) {
       this(pagingSPI, addressSettingsRepository, -1, null);
@@ -255,6 +259,14 @@ public final class PagingManagerImpl implements PagingManager {
       runWhenAvailable.run();
    }
 
+   @Override
+   public void checkStorage(Runnable runWhenAvailable) {
+      if (diskFull) {
+         memoryCallback.add(AtomicRunnable.checkAtomic(runWhenAvailable));
+         return;
+      }
+      runWhenAvailable.run();
+   }
 
    private void memoryReleased() {
       Runnable runnable;
@@ -336,14 +348,6 @@ public final class PagingManagerImpl implements PagingManager {
 
    @Override
    public void deletePageStore(final SimpleString storeName) throws Exception {
-      final AddressSettings addressSettings = addressSettingsRepository.getMatch(storeName.toString());
-      if (addressSettings != null && addressSettings.getPageStoreName() != null) {
-         if (logger.isTraceEnabled()) {
-            logger.tracev("not deleting potentially shared pageAddress {} match for {}", addressSettings.getPageStoreName(), storeName);
-         }
-         return;
-      }
-
       syncLock.readLock().lock();
       try {
          PagingStore store = stores.remove(storeName);
@@ -360,14 +364,9 @@ public final class PagingManagerImpl implements PagingManager {
     * This method creates a new store if not exist.
     */
    @Override
-   public PagingStore getPageStore(SimpleString storeName) throws Exception {
+   public PagingStore getPageStore(final SimpleString storeName) throws Exception {
       if (managementAddress != null && storeName.startsWith(managementAddress)) {
          return null;
-      }
-
-      final AddressSettings addressSettings = addressSettingsRepository.getMatch(storeName.toString());
-      if (addressSettings != null && addressSettings.getPageStoreName() != null) {
-         storeName = addressSettings.getPageStoreName();
       }
 
       PagingStore store = stores.get(storeName);

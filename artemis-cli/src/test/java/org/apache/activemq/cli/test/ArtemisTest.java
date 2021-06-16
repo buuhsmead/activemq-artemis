@@ -38,6 +38,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
@@ -59,6 +60,7 @@ import org.apache.activemq.artemis.cli.commands.ActionContext;
 import org.apache.activemq.artemis.cli.commands.Create;
 import org.apache.activemq.artemis.cli.commands.Mask;
 import org.apache.activemq.artemis.cli.commands.Run;
+import org.apache.activemq.artemis.cli.commands.PrintVersion;
 import org.apache.activemq.artemis.cli.commands.queue.StatQueue;
 import org.apache.activemq.artemis.cli.commands.user.AddUser;
 import org.apache.activemq.artemis.cli.commands.user.ListUser;
@@ -73,12 +75,14 @@ import org.apache.activemq.artemis.core.security.impl.SecurityStoreImpl;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.JournalType;
 import org.apache.activemq.artemis.core.server.management.ManagementContext;
+import org.apache.activemq.artemis.core.version.Version;
 import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
 import org.apache.activemq.artemis.jms.client.ActiveMQDestination;
 import org.apache.activemq.artemis.nativo.jlibaio.LibaioContext;
 import org.apache.activemq.artemis.utils.DefaultSensitiveStringCodec;
 import org.apache.activemq.artemis.utils.HashProcessor;
 import org.apache.activemq.artemis.utils.PasswordMaskingUtil;
+import org.apache.activemq.artemis.utils.SensitiveDataCodec;
 import org.apache.activemq.artemis.utils.StringUtil;
 import org.apache.activemq.artemis.utils.Wait;
 import org.apache.commons.configuration2.PropertiesConfiguration;
@@ -104,6 +108,9 @@ import static org.junit.Assert.fail;
  */
 public class ArtemisTest extends CliTestBase {
    private static final Logger log = Logger.getLogger(ArtemisTest.class);
+
+   // some tests will set this, as some security methods will need to know the server the CLI started
+   private ActiveMQServer server;
 
    @Before
    @Override
@@ -340,13 +347,23 @@ public class ArtemisTest extends CliTestBase {
    }
 
    @Test
-   public void testUserCommand() throws Exception {
+   public void testUserCommandJAAS() throws Exception {
+      testUserCommand(false);
+   }
+
+   @Test
+   public void testUserCommandBasic() throws Exception {
+      testUserCommand(true);
+   }
+
+   private void testUserCommand(boolean basic) throws Exception {
       Run.setEmbedded(true);
       File instance1 = new File(temporaryFolder.getRoot(), "instance_user");
       System.setProperty("java.security.auth.login.config", instance1.getAbsolutePath() + "/etc/login.config");
-      Artemis.main("create", instance1.getAbsolutePath(), "--silent", "--no-autotune", "--no-web", "--require-login");
+      Artemis.main("create", instance1.getAbsolutePath(), "--silent", "--no-autotune", "--no-web", "--require-login", "--security-manager", basic ? "basic" : "jaas");
       System.setProperty("artemis.instance", instance1.getAbsolutePath());
-      Artemis.internalExecute("run");
+      Object runResult = Artemis.internalExecute("run");
+      server = ((Pair<ManagementContext, ActiveMQServer>)runResult).getB();
 
       try {
          File userFile = new File(instance1.getAbsolutePath() + "/etc/artemis-users.properties");
@@ -363,7 +380,7 @@ public class ArtemisTest extends CliTestBase {
 
          //default only one user admin with role amq
          assertTrue(result.contains("\"admin\"(amq)"));
-         checkRole("admin", roleFile, "amq");
+         checkRole("admin", roleFile, basic, "amq");
 
          //add a simple user
          AddUser addCmd = new AddUser();
@@ -383,8 +400,8 @@ public class ArtemisTest extends CliTestBase {
          assertTrue(result.contains("\"admin\"(amq)"));
          assertTrue(result.contains("\"guest\"(admin)"));
 
-         checkRole("guest", roleFile, "admin");
-         assertTrue(checkPassword("guest", "guest123", userFile));
+         checkRole("guest", roleFile, basic, "admin");
+         assertTrue(checkPassword("guest", "guest123", userFile, basic));
 
          //add a user with 2 roles
          addCmd = new AddUser();
@@ -405,8 +422,8 @@ public class ArtemisTest extends CliTestBase {
          assertTrue(result.contains("\"guest\"(admin)"));
          assertTrue(result.contains("\"scott\"(admin,operator)"));
 
-         checkRole("scott", roleFile, "admin", "operator");
-         assertTrue(checkPassword("scott", "tiger", userFile));
+         checkRole("scott", roleFile, basic, "admin", "operator");
+         assertTrue(checkPassword("scott", "tiger", userFile, basic));
 
          //add an existing user
          addCmd = new AddUser();
@@ -504,24 +521,34 @@ public class ArtemisTest extends CliTestBase {
    }
 
    @Test
-   public void testUserCommandViaManagementPlaintext() throws Exception {
-      internalTestUserCommandViaManagement(true);
+   public void testUserCommandViaManagementPlaintextJAAS() throws Exception {
+      internalTestUserCommandViaManagement(true, false);
    }
 
    @Test
-   public void testUserCommandViaManagementHashed() throws Exception {
-      internalTestUserCommandViaManagement(false);
+   public void testUserCommandViaManagementHashedJAAS() throws Exception {
+      internalTestUserCommandViaManagement(false, false);
    }
 
-   private void internalTestUserCommandViaManagement(boolean plaintext) throws Exception {
+   @Test
+   public void testUserCommandViaManagementPlaintextBasic() throws Exception {
+      internalTestUserCommandViaManagement(true, true);
+   }
+
+   @Test
+   public void testUserCommandViaManagementHashedBasic() throws Exception {
+      internalTestUserCommandViaManagement(false, true);
+   }
+
+   private void internalTestUserCommandViaManagement(boolean plaintext, boolean basic) throws Exception {
       Run.setEmbedded(true);
       File instance1 = new File(temporaryFolder.getRoot(), "instance_user");
       System.setProperty("java.security.auth.login.config", instance1.getAbsolutePath() + "/etc/login.config");
-      Artemis.main("create", instance1.getAbsolutePath(), "--silent", "--no-autotune", "--no-web", "--no-amqp-acceptor", "--no-mqtt-acceptor", "--no-stomp-acceptor", "--no-hornetq-acceptor");
+      Artemis.main("create", instance1.getAbsolutePath(), "--silent", "--no-autotune", "--no-web", "--no-amqp-acceptor", "--no-mqtt-acceptor", "--no-stomp-acceptor", "--no-hornetq-acceptor", "--security-manager", basic ? "basic" : "jaas");
       System.setProperty("artemis.instance", instance1.getAbsolutePath());
       Object result = Artemis.internalExecute("run");
-      ActiveMQServer activeMQServer = ((Pair<ManagementContext, ActiveMQServer>)result).getB();
-      ActiveMQServerControl activeMQServerControl = activeMQServer.getActiveMQServerControl();
+      server = ((Pair<ManagementContext, ActiveMQServer>)result).getB();
+      ActiveMQServerControl activeMQServerControl = server.getActiveMQServerControl();
 
       File userFile = new File(instance1.getAbsolutePath() + "/etc/artemis-users.properties");
       File roleFile = new File(instance1.getAbsolutePath() + "/etc/artemis-roles.properties");
@@ -529,7 +556,7 @@ public class ArtemisTest extends CliTestBase {
       //default only one user admin with role amq
       String jsonResult = activeMQServerControl.listUser("");
       contains(JsonUtil.readJsonArray(jsonResult), "admin", "amq");
-      checkRole("admin", roleFile, "amq");
+      checkRole("admin", roleFile, basic, "amq");
 
       //add a simple user
       activeMQServerControl.addUser("guest", "guest123", "admin", plaintext);
@@ -537,9 +564,9 @@ public class ArtemisTest extends CliTestBase {
       //verify add
       jsonResult = activeMQServerControl.listUser("");
       contains(JsonUtil.readJsonArray(jsonResult), "guest", "admin");
-      checkRole("guest", roleFile, "admin");
-      assertTrue(checkPassword("guest", "guest123", userFile));
-      assertEquals(plaintext, !PasswordMaskingUtil.isEncMasked(getStoredPassword("guest", userFile)));
+      checkRole("guest", roleFile, basic, "admin");
+      assertTrue(checkPassword("guest", "guest123", userFile, basic));
+      assertEquals(plaintext, !PasswordMaskingUtil.isEncMasked(getStoredPassword("guest", userFile, basic)));
 
       //add a user with 2 roles
       activeMQServerControl.addUser("scott", "tiger", "admin,operator", plaintext);
@@ -548,9 +575,9 @@ public class ArtemisTest extends CliTestBase {
       jsonResult = activeMQServerControl.listUser("");
       contains(JsonUtil.readJsonArray(jsonResult), "scott", "admin");
       contains(JsonUtil.readJsonArray(jsonResult), "scott", "operator");
-      checkRole("scott", roleFile, "admin", "operator");
-      assertTrue(checkPassword("scott", "tiger", userFile));
-      assertEquals(plaintext, !PasswordMaskingUtil.isEncMasked(getStoredPassword("scott", userFile)));
+      checkRole("scott", roleFile, basic, "admin", "operator");
+      assertTrue(checkPassword("scott", "tiger", userFile, basic));
+      assertEquals(plaintext, !PasswordMaskingUtil.isEncMasked(getStoredPassword("scott", userFile, basic)));
 
       try {
          activeMQServerControl.addUser("scott", "password", "visitor", plaintext);
@@ -615,11 +642,20 @@ public class ArtemisTest extends CliTestBase {
    }
 
    @Test
-   public void testProperReloadWhenAddingUserViaManagement() throws Exception {
+   public void testProperReloadWhenAddingUserViaManagementJAAS() throws Exception {
+      testProperReloadWhenAddingUserViaManagement(false);
+   }
+
+   @Test
+   public void testProperReloadWhenAddingUserViaManagementBasic() throws Exception {
+      testProperReloadWhenAddingUserViaManagement(true);
+   }
+
+   private void testProperReloadWhenAddingUserViaManagement(boolean basic) throws Exception {
       Run.setEmbedded(true);
       File instance1 = new File(temporaryFolder.getRoot(), "instance_user");
       System.setProperty("java.security.auth.login.config", instance1.getAbsolutePath() + "/etc/login.config");
-      Artemis.main("create", instance1.getAbsolutePath(), "--silent", "--no-autotune", "--no-web", "--no-amqp-acceptor", "--no-mqtt-acceptor", "--no-stomp-acceptor", "--no-hornetq-acceptor", "--require-login");
+      Artemis.main("create", instance1.getAbsolutePath(), "--silent", "--no-autotune", "--no-web", "--no-amqp-acceptor", "--no-mqtt-acceptor", "--no-stomp-acceptor", "--no-hornetq-acceptor", "--require-login", "--security-manager", basic ? "basic" : "jaas");
       System.setProperty("artemis.instance", instance1.getAbsolutePath());
       Object result = Artemis.internalExecute("run");
       ActiveMQServer activeMQServer = ((Pair<ManagementContext, ActiveMQServer>)result).getB();
@@ -702,13 +738,23 @@ public class ArtemisTest extends CliTestBase {
    }
 
    @Test
-   public void testUserCommandReset() throws Exception {
+   public void testUserCommandResetJAAS() throws Exception {
+      testUserCommandReset(false);
+   }
+
+   @Test
+   public void testUserCommandResetBasic() throws Exception {
+      testUserCommandReset(true);
+   }
+
+   private void testUserCommandReset(boolean basic) throws Exception {
       Run.setEmbedded(true);
       File instance1 = new File(temporaryFolder.getRoot(), "instance_user");
       System.setProperty("java.security.auth.login.config", instance1.getAbsolutePath() + "/etc/login.config");
-      Artemis.main("create", instance1.getAbsolutePath(), "--silent", "--no-autotune", "--no-web", "--require-login");
+      Artemis.main("create", instance1.getAbsolutePath(), "--silent", "--no-autotune", "--no-web", "--require-login", "--security-manager", basic ? "basic" : "jaas");
       System.setProperty("artemis.instance", instance1.getAbsolutePath());
-      Artemis.internalExecute("run");
+      Object runResult = Artemis.internalExecute("run");
+      server = ((Pair<ManagementContext, ActiveMQServer>)runResult).getB();
 
       try {
          File userFile = new File(instance1.getAbsolutePath() + "/etc/artemis-users.properties");
@@ -754,7 +800,7 @@ public class ArtemisTest extends CliTestBase {
          addCmd.setUserCommandPassword("password1");
          addCmd.setRole("admin,manager");
          addCmd.execute(new TestActionContext());
-         assertTrue(checkPassword("user1", "password1", userFile));
+         assertTrue(checkPassword("user1", "password1", userFile, basic));
 
          addCmd.setUserCommandUser("user2");
          addCmd.setUserCommandPassword("password2");
@@ -787,7 +833,7 @@ public class ArtemisTest extends CliTestBase {
                        .matcher(result)
                        .find());
 
-         checkRole("user1", roleFile, "admin", "manager");
+         checkRole("user1", roleFile, basic, "admin", "manager");
 
          //reset password
          context = new TestActionContext();
@@ -798,16 +844,16 @@ public class ArtemisTest extends CliTestBase {
          resetCommand.setPassword("admin");
          resetCommand.execute(context);
 
-         checkRole("user1", roleFile, "admin", "manager");
-         assertFalse(checkPassword("user1", "password1", userFile));
-         assertTrue(checkPassword("user1", "newpassword1", userFile));
+         checkRole("user1", roleFile, basic, "admin", "manager");
+         assertFalse(checkPassword("user1", "password1", userFile, basic));
+         assertTrue(checkPassword("user1", "newpassword1", userFile, basic));
 
          //reset role
          resetCommand.setUserCommandUser("user2");
          resetCommand.setRole("manager,master,operator");
          resetCommand.execute(new TestActionContext());
 
-         checkRole("user2", roleFile, "manager", "master", "operator");
+         checkRole("user2", roleFile, basic, "manager", "master", "operator");
 
          //reset both
          resetCommand.setUserCommandUser("user3");
@@ -815,19 +861,28 @@ public class ArtemisTest extends CliTestBase {
          resetCommand.setRole("admin,system");
          resetCommand.execute(new ActionContext());
 
-         checkRole("user3", roleFile, "admin", "system");
-         assertTrue(checkPassword("user3", "newpassword3", userFile));
+         checkRole("user3", roleFile, basic, "admin", "system");
+         assertTrue(checkPassword("user3", "newpassword3", userFile, basic));
       } finally {
          stopServer();
       }
    }
 
    @Test
-   public void testConcurrentUserAdministration() throws Exception {
+   public void testConcurrentUserAdministrationJAAS() throws Exception {
+      testConcurrentUserAdministration(false);
+   }
+
+   @Test
+   public void testConcurrentUserAdministrationBasic() throws Exception {
+      testConcurrentUserAdministration(true);
+   }
+
+   private void testConcurrentUserAdministration(boolean basic) throws Exception {
       Run.setEmbedded(true);
       File instance1 = new File(temporaryFolder.getRoot(), "instance_user");
       System.setProperty("java.security.auth.login.config", instance1.getAbsolutePath() + "/etc/login.config");
-      Artemis.main("create", instance1.getAbsolutePath(), "--silent", "--no-autotune", "--no-web", "--require-login");
+      Artemis.main("create", instance1.getAbsolutePath(), "--silent", "--no-autotune", "--no-web", "--require-login", "--security-manager", basic ? "basic" : "jaas");
       System.setProperty("artemis.instance", instance1.getAbsolutePath());
       Artemis.internalExecute("run");
 
@@ -1057,8 +1112,9 @@ public class ArtemisTest extends CliTestBase {
       mask.setHash(true);
       result = (String) mask.execute(context);
       log.debug(context.getStdout());
-      DefaultSensitiveStringCodec codec = mask.getCodec();
-      codec.verify(password1.toCharArray(), result);
+      SensitiveDataCodec<String> codec = mask.getCodec();
+      Assert.assertEquals(DefaultSensitiveStringCodec.class, codec.getClass());
+      Assert.assertTrue(((DefaultSensitiveStringCodec)codec).verify(password1.toCharArray(), result));
 
       context = new TestActionContext();
       mask = new Mask();
@@ -1067,6 +1123,33 @@ public class ArtemisTest extends CliTestBase {
       result = (String) mask.execute(context);
       log.debug(context.getStdout());
       assertEquals(encrypt2, result);
+   }
+
+   @Test
+   public void testMaskCommandWithPasswordCodec() throws Exception {
+      File instanceWithPasswordCodec = new File(temporaryFolder.getRoot(), "instance_with_password_codec");
+      Files.createDirectories(Paths.get(instanceWithPasswordCodec.getAbsolutePath(), "etc"));
+      Files.copy(Paths.get(ArtemisTest.class.getClassLoader().getResource("broker-with-password-codec.xml").toURI()),
+                 Paths.get(instanceWithPasswordCodec.getAbsolutePath(), "etc", "broker.xml"));
+      System.setProperty("artemis.instance", instanceWithPasswordCodec.getAbsolutePath());
+
+      String password = "password";
+      String encrypt = "3a34fd21b82bf2a822fa49a8d8fa115d";
+
+      TestActionContext context = new TestActionContext();
+      Mask mask = new Mask();
+      mask.setPassword(password);
+      String result = (String) mask.execute(context);
+      assertEquals(DefaultSensitiveStringCodec.class, mask.getCodec().getClass());
+      assertEquals(encrypt, result);
+
+      context = new TestActionContext();
+      mask = new Mask();
+      mask.setPassword(password);
+      mask.setPasswordCodec(true);
+      result = (String) mask.execute(context);
+      assertEquals(TestPasswordCodec.class, mask.getCodec().getClass());
+      assertEquals(result, result);
    }
 
    @Test
@@ -1661,6 +1744,14 @@ public class ArtemisTest extends CliTestBase {
 
    }
 
+   @Test
+   public void testVersionCommand() throws Exception {
+      TestActionContext context = new TestActionContext();
+      PrintVersion printVersion = new PrintVersion();
+      Version result = (Version) printVersion.execute(context);
+      log.debug(context.getStdout());
+   }
+
    //read individual lines from byteStream
    public static ArrayList<String> getOutputLines(TestActionContext context, boolean errorOutput) throws IOException {
       byte[] bytes;
@@ -1711,28 +1802,52 @@ public class ArtemisTest extends CliTestBase {
    }
 
    private void checkRole(String user, File roleFile, String... roles) throws Exception {
-      Configurations configs = new Configurations();
-      FileBasedConfigurationBuilder<PropertiesConfiguration> roleBuilder = configs.propertiesBuilder(roleFile);
-      PropertiesConfiguration roleConfig = roleBuilder.getConfiguration();
+      checkRole(user, roleFile, false, roles);
+   }
 
-      for (String r : roles) {
-         String storedUsers = (String) roleConfig.getProperty(r);
+   private void checkRole(String user, File roleFile, boolean basicSecurityManager, String... roles) throws Exception {
+      if (basicSecurityManager) {
+         for (String r : roles) {
+            assertTrue(server.getStorageManager().getPersistedRoles().get(user).getRoles().contains(r));
+         }
+      } else {
+         Configurations configs = new Configurations();
+         FileBasedConfigurationBuilder<PropertiesConfiguration> roleBuilder = configs.propertiesBuilder(roleFile);
+         PropertiesConfiguration roleConfig = roleBuilder.getConfiguration();
 
-         log.debug("users in role: " + r + " ; " + storedUsers);
-         List<String> userList = StringUtil.splitStringList(storedUsers, ",");
-         assertTrue(userList.contains(user));
+         for (String r : roles) {
+            String storedUsers = (String) roleConfig.getProperty(r);
+
+            log.debug("users in role: " + r + " ; " + storedUsers);
+            List<String> userList = StringUtil.splitStringList(storedUsers, ",");
+            assertTrue(userList.contains(user));
+         }
       }
    }
 
    private String getStoredPassword(String user, File userFile) throws Exception {
-      Configurations configs = new Configurations();
-      FileBasedConfigurationBuilder<PropertiesConfiguration> userBuilder = configs.propertiesBuilder(userFile);
-      PropertiesConfiguration userConfig = userBuilder.getConfiguration();
-      return (String) userConfig.getProperty(user);
+      return getStoredPassword(user, userFile, false);
+   }
+
+   private String getStoredPassword(String user, File userFile, boolean basicSecurityManager) throws Exception {
+      String result;
+      if (basicSecurityManager) {
+         result = server.getStorageManager().getPersistedUsers().get(user).getPassword();
+      } else {
+         Configurations configs = new Configurations();
+         FileBasedConfigurationBuilder<PropertiesConfiguration> userBuilder = configs.propertiesBuilder(userFile);
+         PropertiesConfiguration userConfig = userBuilder.getConfiguration();
+         result = (String) userConfig.getProperty(user);
+      }
+      return result;
    }
 
    private boolean checkPassword(String user, String password, File userFile) throws Exception {
-      String storedPassword = getStoredPassword(user, userFile);
+      return checkPassword(user, password, userFile,false);
+   }
+
+   private boolean checkPassword(String user, String password, File userFile, boolean basicSecurityManager) throws Exception {
+      String storedPassword = getStoredPassword(user, userFile, basicSecurityManager);
       HashProcessor processor = PasswordMaskingUtil.getHashProcessor(storedPassword);
       return processor.compare(password.toCharArray(), storedPassword);
    }
@@ -1763,6 +1878,19 @@ public class ArtemisTest extends CliTestBase {
       } else {
          assertFalse("user " + username + " found", userFound);
          assertFalse("role " + role + " found", roleFound);
+      }
+   }
+
+   public static class TestPasswordCodec implements SensitiveDataCodec<String> {
+
+      @Override
+      public String decode(Object mask) throws Exception {
+         return mask.toString();
+      }
+
+      @Override
+      public String encode(Object secret) throws Exception {
+         return secret.toString();
       }
    }
 

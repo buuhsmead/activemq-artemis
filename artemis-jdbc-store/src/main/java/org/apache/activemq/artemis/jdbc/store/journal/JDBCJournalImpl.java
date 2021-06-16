@@ -41,6 +41,7 @@ import org.apache.activemq.artemis.core.journal.EncodingSupport;
 import org.apache.activemq.artemis.core.journal.IOCompletion;
 import org.apache.activemq.artemis.core.journal.Journal;
 import org.apache.activemq.artemis.core.journal.JournalLoadInformation;
+import org.apache.activemq.artemis.core.journal.JournalUpdateCallback;
 import org.apache.activemq.artemis.core.journal.LoaderCallback;
 import org.apache.activemq.artemis.core.persistence.Persister;
 import org.apache.activemq.artemis.core.journal.PreparedTransactionInfo;
@@ -61,6 +62,16 @@ public class JDBCJournalImpl extends AbstractJDBCDriver implements Journal {
 
    // Sync Delay in ms
    //private static final int SYNC_DELAY = 5;
+
+   @Override
+   public void setRemoveExtraFilesOnLoad(boolean removeExtraFilesOnLoad) {
+      // no op on JDBC
+   }
+
+   @Override
+   public boolean isRemoveExtraFilesOnLoad() {
+      return false;
+   }
 
    private long syncDelay;
 
@@ -108,6 +119,16 @@ public class JDBCJournalImpl extends AbstractJDBCDriver implements Journal {
       this.completeExecutor = completeExecutor;
       this.criticalIOErrorListener = criticalIOErrorListener;
       this.syncDelay = syncDelay;
+   }
+
+   @Override
+   public void appendAddEvent(long id,
+                              byte recordType,
+                              Persister persister,
+                              Object record,
+                              boolean sync,
+                              IOCompletion completionCallback) throws Exception {
+      // Nothing to be done
    }
 
    @Override
@@ -391,7 +412,7 @@ public class JDBCJournalImpl extends AbstractJDBCDriver implements Journal {
 
       // We actually only need the record ID in this instance.
       if (record.isTransactional()) {
-         RecordInfo info = new RecordInfo(record.getId(), record.getRecordType(), new byte[0], record.isUpdate(), record.getCompactCount());
+         RecordInfo info = new RecordInfo(record.getId(), record.getRecordType(), new byte[0], record.isUpdate(), false, record.getCompactCount());
          if (record.getRecordType() == JDBCJournalRecord.DELETE_RECORD_TX) {
             txHolder.recordsToDelete.add(info);
          } else {
@@ -477,9 +498,8 @@ public class JDBCJournalImpl extends AbstractJDBCDriver implements Journal {
    }
 
    @Override
-   public boolean tryAppendUpdateRecord(long id, byte recordType, byte[] record, boolean sync) throws Exception {
+   public void tryAppendUpdateRecord(long id, byte recordType, byte[] record, JournalUpdateCallback updateCallback, boolean sync, boolean replaceableRecord) throws Exception {
       appendUpdateRecord(id, recordType, record, sync);
-      return true;
    }
 
    @Override
@@ -498,9 +518,8 @@ public class JDBCJournalImpl extends AbstractJDBCDriver implements Journal {
    }
 
    @Override
-   public boolean tryAppendUpdateRecord(long id, byte recordType, Persister persister, Object record, boolean sync) throws Exception {
+   public void tryAppendUpdateRecord(long id, byte recordType, Persister persister, Object record, JournalUpdateCallback updateCallback, boolean sync, boolean replaceableUpdate) throws Exception {
       appendUpdateRecord(id, recordType, persister, record, sync);
-      return true;
    }
 
    @Override
@@ -528,14 +547,15 @@ public class JDBCJournalImpl extends AbstractJDBCDriver implements Journal {
 
 
    @Override
-   public boolean tryAppendUpdateRecord(long id,
+   public void tryAppendUpdateRecord(long id,
                                   byte recordType,
                                   Persister persister,
                                   Object record,
                                   boolean sync,
+                                  boolean replaceableUpdate,
+                                  JournalUpdateCallback updateCallback,
                                   IOCompletion completionCallback) throws Exception {
       appendUpdateRecord(id, recordType, persister, record, sync, completionCallback);
-      return true;
    }
 
 
@@ -554,9 +574,8 @@ public class JDBCJournalImpl extends AbstractJDBCDriver implements Journal {
    }
 
    @Override
-   public boolean tryAppendDeleteRecord(long id, boolean sync) throws Exception {
+   public void tryAppendDeleteRecord(long id, JournalUpdateCallback updateCallback, boolean sync) throws Exception {
       appendDeleteRecord(id, sync);
-      return true;
    }
 
    @Override
@@ -576,9 +595,8 @@ public class JDBCJournalImpl extends AbstractJDBCDriver implements Journal {
    }
 
    @Override
-   public boolean tryAppendDeleteRecord(long id, boolean sync, IOCompletion completionCallback) throws Exception {
+   public void tryAppendDeleteRecord(long id, boolean sync, JournalUpdateCallback updateCallback, IOCompletion completionCallback) throws Exception {
       appendDeleteRecord(id, sync, completionCallback);
-      return true;
    }
 
    @Override
@@ -956,10 +974,6 @@ public class JDBCJournalImpl extends AbstractJDBCDriver implements Journal {
    @Override
    public int getUserVersion() {
       return USER_VERSION;
-   }
-
-   @Override
-   public void runDirectJournalBlast() throws Exception {
    }
 
    @Override

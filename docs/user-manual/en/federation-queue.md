@@ -110,7 +110,7 @@ Let's take a look at all the `queue-policy` parameters in turn, in order of prio
 - `priority-adjustment` when a consumer attaches its priority is used to make the upstream consumer, 
 but with an adjustment by default -1, so that local consumers get load balanced first over remote, this enables this to be configurable should it be wanted/needed. 
 
-- `include-federated` by default this is false, we dont federate a federated consumer, this is to avoid issue, where in symmetric or any closed loop setup you could end up when no "real" consumers attached with messages flowing round and round endlessly. 
+- `include-federated` by default this is false, we don't federate a federated consumer, this is to avoid issue, where in symmetric or any closed loop setup you could end up when no "real" consumers attached with messages flowing round and round endlessly. 
 
     There is though a valid case that if you dont have a close loop setup e.g. three brokers in a chain (A->B->C) with producer at broker A and consumer at C, you would want broker B to re-federate the consumer onto A.
 
@@ -220,10 +220,10 @@ to the `downstream` broker to have it create an `upstream` connection back to th
 this is being able to configure everything for federation on one broker in some cases to make it easier, such
 as a hub and spoke topology.
 
-All of the same configuration options apply to to `downstream` as does `upstream` with the exception of one
+All of the same configuration options apply to `downstream` as does `upstream` with the exception of one
 extra configuration flag that needs to be set:
 
-  The `transport-connector-ref` is an element pointing to a
+  The `upstream-connector-ref` is an element pointing to a
   `connector` elements defined elsewhere. This ref is used to tell the downstream broker
   what connector to use to create a new upstream connection back to the downstream broker.
   
@@ -257,14 +257,14 @@ extra configuration flag that needs to be set:
           <static-connectors>
              <connector-ref>eu-east-connector1</connector-ref>
           </static-connectors>
-          <transport-connector-ref>netty-connector</transport-connector-ref>
+          <upstream-connector-ref>netty-connector</upstream-connector-ref>
           <policy ref="news-address-federation"/>
       </downstream>
       <downstream name="eu-west-1" >
          <static-connectors>
             <connector-ref>eu-west-connector1</connector-ref>
          </static-connectors>
-         <transport-connector-ref>netty-connector</transport-connector-ref>
+         <upstream-connector-ref>netty-connector</upstream-connector-ref>
          <policy ref="news-address-federation"/>
       </downstream>
 

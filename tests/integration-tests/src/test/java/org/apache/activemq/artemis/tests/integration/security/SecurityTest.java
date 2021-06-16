@@ -226,9 +226,14 @@ public class SecurityTest extends ActiveMQTestBase {
 
       server.getConfiguration().addAcceptorConfiguration(new TransportConfiguration(NETTY_ACCEPTOR_FACTORY, params));
 
+      // ensure advisory permission is still set for openwire to allow connection to succeed, alternative is url param jms.watchTopicAdvisories=false on the client connection factory
+      HashSet<Role> roles = new HashSet<>();
+      roles.add(new Role("programmers", false, true, false, false, true, true, false, false, true, false));
+      server.getConfiguration().putSecurityRoles("ActiveMQ.Advisory.#", roles);
+
       server.start();
 
-      ActiveMQSslConnectionFactory factory = new ActiveMQSslConnectionFactory("ssl://localhost:61616");
+      ActiveMQSslConnectionFactory factory = new ActiveMQSslConnectionFactory("ssl://localhost:61616?verifyHostName=false");
       factory.setTrustStore("client-side-truststore.jks");
       factory.setTrustStorePassword("secureexample");
       factory.setKeyStore("client-side-keystore.jks");
@@ -268,12 +273,13 @@ public class SecurityTest extends ActiveMQTestBase {
       server.getConfiguration().addAcceptorConfiguration(new TransportConfiguration(NETTY_ACCEPTOR_FACTORY, params));
       server.start();
 
-      ActiveMQSslConnectionFactory factory = new ActiveMQSslConnectionFactory("ssl://localhost:61616");
+      ActiveMQSslConnectionFactory factory = new ActiveMQSslConnectionFactory("ssl://localhost:61616?verifyHostName=false");
       factory.setUserName("test-user");
       factory.setTrustStore("client-side-truststore.jks");
       factory.setTrustStorePassword("secureexample");
       factory.setKeyStore("client-side-keystore.jks");
       factory.setKeyStorePassword("secureexample");
+      factory.setWatchTopicAdvisories(false);
 
       try (ActiveMQConnection connection = (ActiveMQConnection) factory.createConnection()) {
          Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
@@ -375,7 +381,7 @@ public class SecurityTest extends ActiveMQTestBase {
     * This test requires a client-side certificate that will be trusted by the server but whose dname will be rejected
     * by the CertLogin login module. I created this cert with the follow commands:
     *
-    * keytool -genkey -keystore bad-client-side-keystore.jks -storepass secureexample -keypass secureexample -dname "CN=Bad Client, OU=Artemis, O=ActiveMQ, L=AMQ, S=AMQ, C=AMQ"
+    * keytool -genkey -keystore bad-client-side-keystore.jks -storepass secureexample -keypass secureexample -dname "CN=Bad Client, OU=Artemis, O=ActiveMQ, L=AMQ, S=AMQ, C=AMQ" -keyalg RSA
     * keytool -export -keystore bad-client-side-keystore.jks -file activemq-jks.cer -storepass secureexample
     * keytool -import -keystore server-side-truststore.jks -file activemq-jks.cer -storepass secureexample -keypass secureexample -noprompt -alias bad
     */
@@ -583,6 +589,37 @@ public class SecurityTest extends ActiveMQTestBase {
       // client A CONSUME from queue B
       try {
          ClientConsumer consumer = aSession.createConsumer(QUEUE_B);
+         Assert.fail("should throw exception here");
+      } catch (ActiveMQException e) {
+         assertTrue(e instanceof ActiveMQSecurityException);
+      }
+   }
+
+   @Test
+   public void testFallbackConsumerAuthorization() throws Exception {
+      final SimpleString ADDRESS = new SimpleString("a.c.b");
+      final SimpleString QUEUE = new SimpleString("a.c.b");
+
+      ActiveMQJAASSecurityManager securityManager = new ActiveMQJAASSecurityManager("PropertiesLogin");
+      ActiveMQServer server = addServer(ActiveMQServers.newActiveMQServer(createDefaultInVMConfig().setSecurityEnabled(true), ManagementFactory.getPlatformMBeanServer(), securityManager, false));
+
+      Set<Role> aRoles = new HashSet<>();
+      aRoles.add(new Role("xyz", true, true, true, true, true, true, true, true, true, true));
+      server.getConfiguration().putSecurityRoles("a.*.b", aRoles);
+
+      Set<Role> bRoles = new HashSet<>();
+      bRoles.add(new Role("amq", true, true, true, true, true, true, true, true, true, true));
+      server.getConfiguration().putSecurityRoles("#", bRoles);
+
+      server.start();
+      server.addAddressInfo(new AddressInfo(ADDRESS, RoutingType.ANYCAST));
+      server.createQueue(new QueueConfiguration(QUEUE).setAddress(ADDRESS).setRoutingType(RoutingType.ANYCAST));
+
+      ClientSessionFactory cf = createSessionFactory(locator);
+      ClientSession session = addClientSession(cf.createSession("x", "x", false, true, true, false, 0));
+
+      try {
+         session.createConsumer(QUEUE);
          Assert.fail("should throw exception here");
       } catch (ActiveMQException e) {
          assertTrue(e instanceof ActiveMQSecurityException);

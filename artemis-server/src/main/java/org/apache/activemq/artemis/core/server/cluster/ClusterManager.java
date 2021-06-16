@@ -75,7 +75,7 @@ import org.jboss.logging.Logger;
  * {@link ClusterConnectionImpl}. As a node is discovered a new {@link org.apache.activemq.artemis.core.server.cluster.impl.ClusterConnectionBridge} is
  * deployed.
  */
-public final class ClusterManager implements ActiveMQComponent {
+public class ClusterManager implements ActiveMQComponent {
 
    private static final Logger logger = Logger.getLogger(ClusterManager.class);
 
@@ -101,6 +101,8 @@ public final class ClusterManager implements ActiveMQComponent {
 
    private final Configuration configuration;
 
+   private Set<String> protocolIgnoredAddresses = new HashSet<>();
+
    public QuorumManager getQuorumManager() {
       return clusterController.getQuorumManager();
    }
@@ -112,6 +114,7 @@ public final class ClusterManager implements ActiveMQComponent {
    public HAManager getHAManager() {
       return haManager;
    }
+
 
    public void addClusterChannelHandler(Channel channel,
                                         Acceptor acceptorUsed,
@@ -337,6 +340,8 @@ public final class ClusterManager implements ActiveMQComponent {
       state = State.STOPPED;
 
       clearClusterConnections();
+
+      protocolIgnoredAddresses.clear();
    }
 
    public void flushExecutor() {
@@ -475,16 +480,22 @@ public final class ClusterManager implements ActiveMQComponent {
 
       clusterLocators.add(serverLocator);
 
-      Bridge bridge = new BridgeImpl(serverLocator, config.getInitialConnectAttempts(), config.getReconnectAttempts(), config.getReconnectAttemptsOnSameNode(), config.getRetryInterval(), config.getRetryIntervalMultiplier(), config.getMaxRetryInterval(), nodeManager.getUUID(), new SimpleString(config.getName()), queue, executorFactory.getExecutor(), FilterImpl.createFilter(config.getFilterString()), SimpleString.toSimpleString(config.getForwardingAddress()), scheduledExecutor, transformer, config.isUseDuplicateDetection(), config.getUser(), config.getPassword(), server, config.getRoutingType());
+      for (int i = 0; i < config.getConcurrency(); i++) {
+         String name = config.getConcurrency() > 1 ? (config.getName() + "-" + i) : config.getName();
+         Bridge bridge = new BridgeImpl(serverLocator, config.getInitialConnectAttempts(), config.getReconnectAttempts(),
+               config.getReconnectAttemptsOnSameNode(), config.getRetryInterval(), config.getRetryIntervalMultiplier(),
+               config.getMaxRetryInterval(), nodeManager.getUUID(), new SimpleString(name), queue,
+               executorFactory.getExecutor(), FilterImpl.createFilter(config.getFilterString()),
+               SimpleString.toSimpleString(config.getForwardingAddress()), scheduledExecutor, transformer,
+               config.isUseDuplicateDetection(), config.getUser(), config.getPassword(), server,
+               config.getRoutingType());
+         bridges.put(name, bridge);
+         managementService.registerBridge(bridge, config);
+         bridge.start();
 
-      bridges.put(config.getName(), bridge);
-
-      managementService.registerBridge(bridge, config);
-
-      bridge.start();
-
-      if (server.hasBrokerBridgePlugins()) {
-         server.callBrokerBridgePlugins(plugin -> plugin.afterDeployBridge(bridge));
+         if (server.hasBrokerBridgePlugins()) {
+            server.callBrokerBridgePlugins(plugin -> plugin.afterDeployBridge(bridge));
+         }
       }
    }
 
@@ -568,6 +579,15 @@ public final class ClusterManager implements ActiveMQComponent {
       }
    }
 
+   public ClusterManager addProtocolIgnoredAddress(String ignoredAddress) {
+      protocolIgnoredAddresses.add(ignoredAddress);
+      return this;
+   }
+
+   public Collection<String> getProtocolIgnoredAddresses() {
+      return protocolIgnoredAddresses;
+   }
+
    // Private methods ----------------------------------------------------------------------------------------------------
 
    private void clearClusterConnections() {
@@ -609,7 +629,7 @@ public final class ClusterManager implements ActiveMQComponent {
 
          clusterConnection = new ClusterConnectionImpl(this, dg, connector, new SimpleString(config.getName()), new SimpleString(config.getAddress() != null ? config.getAddress() : ""), config.getMinLargeMessageSize(), config.getClientFailureCheckPeriod(), config.getConnectionTTL(), config.getRetryInterval(), config.getRetryIntervalMultiplier(), config.getMaxRetryInterval(), config.getInitialConnectAttempts(), config.getReconnectAttempts(), config.getCallTimeout(), config.getCallFailoverTimeout(), config.isDuplicateDetection(), config.getMessageLoadBalancingType(), config.getConfirmationWindowSize(), config.getProducerWindowSize(), executorFactory, server, postOffice, managementService, scheduledExecutor, config.getMaxHops(), nodeManager, server.getConfiguration().getClusterUser(), server.getConfiguration().getClusterPassword(), config.isAllowDirectConnectionsOnly(), config.getClusterNotificationInterval(), config.getClusterNotificationAttempts());
 
-         clusterController.addClusterConnection(clusterConnection.getName(), dg, config);
+         clusterController.addClusterConnection(clusterConnection.getName(), dg, config, connector);
       } else {
          TransportConfiguration[] tcConfigs = config.getTransportConfigurations(configuration);
 

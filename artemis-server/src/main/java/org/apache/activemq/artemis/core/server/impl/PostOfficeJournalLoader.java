@@ -167,7 +167,7 @@ public class PostOfficeJournalLoader implements JournalLoader {
          if (queueBindingInfo.getQueueStatusEncodings() != null) {
             for (QueueStatusEncoding encoding : queueBindingInfo.getQueueStatusEncodings()) {
                if (encoding.getStatus() == AddressQueueStatus.PAUSED)
-               queue.reloadPause(encoding.getId());
+                  queue.reloadPause(encoding.getId());
             }
          }
 
@@ -186,6 +186,7 @@ public class PostOfficeJournalLoader implements JournalLoader {
       for (AddressBindingInfo addressBindingInfo : addressBindingInfos) {
          AddressInfo addressInfo = new AddressInfo(addressBindingInfo.getName()).setRoutingTypes(addressBindingInfo.getRoutingTypes());
          addressInfo.setId(addressBindingInfo.getId());
+         addressInfo.setAutoCreated(addressBindingInfo.getAutoCreated());
          if (addressBindingInfo.getAddressStatusEncoding() != null && addressBindingInfo.getAddressStatusEncoding().getStatus() == AddressQueueStatus.PAUSED) {
             addressInfo.setStorageManager(storageManager);
             addressInfo.setPostOffice(postOffice);
@@ -288,10 +289,6 @@ public class PostOfficeJournalLoader implements JournalLoader {
          if (!queue.isPersistedPause()) {
             queue.resume();
          }
-      }
-
-      if (System.getProperty("org.apache.activemq.opt.directblast") != null) {
-         messageJournal.runDirectJournalBlast();
       }
    }
 

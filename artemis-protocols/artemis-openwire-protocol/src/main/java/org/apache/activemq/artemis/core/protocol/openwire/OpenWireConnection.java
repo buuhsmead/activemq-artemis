@@ -50,6 +50,7 @@ import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.client.ActiveMQClientLogger;
 import org.apache.activemq.artemis.core.io.IOCallback;
+import org.apache.activemq.artemis.core.persistence.CoreMessageObjectPools;
 import org.apache.activemq.artemis.core.persistence.OperationContext;
 import org.apache.activemq.artemis.core.postoffice.Binding;
 import org.apache.activemq.artemis.core.postoffice.Bindings;
@@ -130,7 +131,6 @@ import org.apache.activemq.openwire.OpenWireFormat;
 import org.apache.activemq.state.CommandVisitor;
 import org.apache.activemq.state.ConnectionState;
 import org.apache.activemq.state.ConsumerState;
-import org.apache.activemq.state.ProducerState;
 import org.apache.activemq.state.SessionState;
 import org.apache.activemq.transport.TransmitCallback;
 import org.apache.activemq.util.ByteSequence;
@@ -165,7 +165,9 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
 
    private final Map<SessionId, AMQSession> sessions = new ConcurrentHashMap<>();
 
-   private ConnectionState state;
+   private final CoreMessageObjectPools coreMessageObjectPools = new CoreMessageObjectPools();
+
+   private volatile ConnectionState state;
 
    private volatile boolean noLocal;
 
@@ -176,8 +178,6 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
     * This collection will hold nonXA transactions. Hopefully while they are in transit only.
     */
    private final Map<TransactionId, Transaction> txMap = new ConcurrentHashMap<>();
-
-   private volatile AMQSession advisorySession;
 
    private final ActiveMQServer server;
 
@@ -194,7 +194,7 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
    private ConnectionEntry connectionEntry;
    private boolean useKeepAlive;
    private long maxInactivityDuration;
-   private Actor<Command> openWireActor;
+   private volatile Actor<Command> openWireActor;
 
    private final Set<SimpleString> knownDestinations = new ConcurrentHashSet<>();
 
@@ -256,11 +256,7 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
       if (state == null) {
          return null;
       }
-      ConnectionInfo info = state.getInfo();
-      if (info == null) {
-         return null;
-      }
-      return info;
+      return state.getInfo();
    }
 
    //tells the connection that
@@ -289,7 +285,8 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
             traceBufferReceived(connectionID, command);
          }
 
-         if (openWireActor != null) {
+         final Actor<Command> localVisibleActor = openWireActor;
+         if (localVisibleActor != null) {
             openWireActor.act(command);
          } else {
             act(command);
@@ -308,6 +305,12 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
 
          if (AuditLogger.isAnyLoggingEnabled()) {
             AuditLogger.setRemoteAddress(getRemoteAddress());
+         }
+
+         if (this.protocolManager.invokeIncoming(command, this) != null) {
+            logger.debugf("Interceptor rejected OpenWire command: %s", command);
+            disconnect(true);
+            return;
          }
 
          boolean responseRequired = command.isResponseRequired();
@@ -495,6 +498,9 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
    }
 
    public void physicalSend(Command command) throws IOException {
+      if (this.protocolManager.invokeOutgoing(command, this) != null) {
+         return;
+      }
 
       if (logger.isTraceEnabled()) {
          tracePhysicalSend(transportConnection, command);
@@ -594,10 +600,6 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
             SessionState ss = state.getSessionState(id.getParentId());
             if (ss != null) {
                result.setProducerState(ss.getProducerState(id));
-               ProducerState producerState = ss.getProducerState(id);
-               if (producerState != null && producerState.getInfo() != null) {
-                  ProducerInfo info = producerState.getInfo();
-               }
             }
             producerExchanges.put(id, result);
          }
@@ -671,6 +673,9 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
             ActiveMQServerLogger.LOGGER.warn(e.getMessage(), e);
          }
       }
+      if (fail) {
+         shutdown(fail);
+      }
    }
 
    @Override
@@ -680,6 +685,10 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
 
    @Override
    public void fail(ActiveMQException me, String message) {
+
+      for (Transaction tx : txMap.values()) {
+         tx.tryRollback();
+      }
 
       if (me != null) {
          //filter it like the other protocols
@@ -709,14 +718,6 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
             ActiveMQServerLogger.LOGGER.warn("Cannot stop connection. This exception will be ignored.", t);
          }
       }
-   }
-
-   public void setAdvisorySession(AMQSession amqSession) {
-      this.advisorySession = amqSession;
-   }
-
-   public AMQSession getAdvisorySession() {
-      return this.advisorySession;
    }
 
    public AMQConnectionContext getContext() {
@@ -811,8 +812,6 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
 
       try {
          physicalSend(command);
-      } catch (Exception e) {
-         return false;
       } catch (Throwable t) {
          return false;
       }
@@ -944,15 +943,17 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
       this.useKeepAlive = useKeepAlive;
       this.maxInactivityDuration = inactivityDuration;
 
-      protocolManager.getScheduledPool().schedule(new Runnable() {
-         @Override
-         public void run() {
-            if (inactivityDuration >= 0) {
-               connectionEntry.ttl = inactivityDuration;
+      if (this.useKeepAlive) {
+         protocolManager.getScheduledPool().schedule(new Runnable() {
+            @Override
+            public void run() {
+               if (inactivityDuration >= 0) {
+                  connectionEntry.ttl = inactivityDuration;
+               }
             }
-         }
-      }, inactivityDurationInitialDelay, TimeUnit.MILLISECONDS);
-      checkInactivity();
+         }, inactivityDurationInitialDelay, TimeUnit.MILLISECONDS);
+         checkInactivity();
+      }
    }
 
    public void addKnownDestination(final SimpleString address) {
@@ -1032,21 +1033,13 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
 
    public void addSessions(Set<SessionId> sessionSet) {
       for (SessionId sid : sessionSet) {
-         addSession(getState().getSessionState(sid).getInfo(), true);
+         addSession(getState().getSessionState(sid).getInfo());
       }
    }
 
    public AMQSession addSession(SessionInfo ss) {
-      return addSession(ss, false);
-   }
-
-   public AMQSession addSession(SessionInfo ss, boolean internal) {
-      AMQSession amqSession = new AMQSession(getState().getInfo(), ss, server, this, protocolManager);
+      AMQSession amqSession = new AMQSession(getState().getInfo(), ss, server, this, protocolManager, coreMessageObjectPools);
       amqSession.initialize();
-
-      if (internal) {
-         amqSession.disableSecurity();
-      }
 
       sessions.put(ss.getSessionId(), amqSession);
       sessionIdMap.put(amqSession.getCoreSession().getName(), ss.getSessionId());
@@ -1807,4 +1800,7 @@ public class OpenWireConnection extends AbstractRemotingConnection implements Se
       return transportConnection.getLocalAddress();
    }
 
+   public CoreMessageObjectPools getCoreMessageObjectPools() {
+      return coreMessageObjectPools;
+   }
 }

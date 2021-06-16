@@ -223,6 +223,8 @@ public interface Message {
 
    /**
     * @deprecated do not use this, use through ICoreMessage or ClientMessage
+    * Warning: if you need to read the content of a message use getDataBuffer(). This method is intended for when you
+    *          want to make changes.
     */
    @Deprecated
    default ActiveMQBuffer getBodyBuffer() {
@@ -301,6 +303,11 @@ public interface Message {
 
    /** It will generate a new instance of the message encode, being a deep copy, new properties, new everything */
    Message copy(long newID);
+
+   /** It will generate a new instance of the message encode, being a deep copy, new properties, new everything */
+   default Message copy(long newID, boolean isExpiryOrDLQ) {
+      return copy(newID);
+   }
 
    default boolean acceptsConsumer(long uniqueConsumerID) {
       return true;
@@ -701,7 +708,15 @@ public interface Message {
     * @return Returns the message in Map form, useful when encoding to JSON
     */
    default Map<String, Object> toMap() {
-      Map map = toPropertyMap();
+      return toMap(-1);
+   }
+
+   /**
+    * @return Returns the message in Map form, useful when encoding to JSON
+    * @param valueSizeLimit that limits [] map values
+    */
+   default Map<String, Object> toMap(int valueSizeLimit) {
+      Map map = toPropertyMap(valueSizeLimit);
       map.put("messageID", getMessageID());
       Object userID = getUserID();
       if (getUserID() != null) {
@@ -721,6 +736,14 @@ public interface Message {
     * @return Returns the message properties in Map form, useful when encoding to JSON
     */
    default Map<String, Object> toPropertyMap() {
+      return toPropertyMap(-1);
+   }
+
+   /**
+    * @return Returns the message properties in Map form, useful when encoding to JSON
+    * @param valueSizeLimit that limits [] map values
+    */
+   default Map<String, Object> toPropertyMap(int valueSizeLimit) {
       Map map = new HashMap<>();
       for (SimpleString name : getPropertyNames()) {
          Object value = getObjectProperty(name.toString());
@@ -728,11 +751,11 @@ public interface Message {
          if (value instanceof SimpleString) {
             value = value.toString();
          }
+         value = JsonUtil.truncate(value, valueSizeLimit);
          map.put(name.toString(), value);
       }
       return map;
    }
-
 
    /** This should make you convert your message into Core format. */
    ICoreMessage toCore();
@@ -753,4 +776,11 @@ public interface Message {
     */
    long getPersistentSize() throws ActiveMQException;
 
+   Object getOwner();
+
+   void setOwner(Object object);
+
+   default String getStringBody() {
+      return null;
+   }
 }

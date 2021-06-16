@@ -19,6 +19,7 @@ package org.apache.activemq.artemis.core.persistence.impl.journal;
 
 import java.nio.ByteBuffer;
 
+import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
@@ -115,7 +116,7 @@ public class LargeBody {
    public synchronized void deleteFile() {
       try {
          validateFile();
-         releaseResources(false);
+         releaseResources(false, false);
          storageManager.deleteLargeMessageBody(message);
       } catch (Exception e) {
          storageManager.criticalError(e);
@@ -200,7 +201,7 @@ public class LargeBody {
             } else {
                SequentialFile tmpFile = createFile();
                bodySize = tmpFile.size();
-               tmpFile.close(false);
+               tmpFile.close(false, false);
             }
          }
          return bodySize;
@@ -273,7 +274,7 @@ public class LargeBody {
          throw new RuntimeException(e);
       } finally {
          try {
-            file.close(false);
+            file.close(false, false);
          } catch (Exception ignored) {
          }
       }
@@ -295,20 +296,27 @@ public class LargeBody {
       } finally {
          if (closeFile) {
             try {
-               file.close(false);
+               file.close(false, false);
             } catch (Exception ignored) {
             }
          }
       }
    }
 
-   public synchronized void releaseResources(boolean sync) {
+   /**
+    * sendEvent means it's a close happening from end of write largemessage.
+    * While reading the largemessage we don't need (and shouldn't inform the backup
+    */
+   public synchronized void releaseResources(boolean sync, boolean sendEvent) {
       if (file != null && file.isOpen()) {
          try {
             if (sync) {
                file.sync();
             }
-            file.close(false);
+            file.close(false, false);
+            if (sendEvent) {
+               storageManager.largeMessageClosed(message);
+            }
          } catch (Exception e) {
             ActiveMQServerLogger.LOGGER.largeMessageErrorReleasingResources(e);
          }
@@ -316,6 +324,10 @@ public class LargeBody {
    }
 
    public void copyInto(LargeServerMessage newMessage) throws Exception {
+      copyInto(newMessage, null, 0);
+   }
+
+   public void copyInto(LargeServerMessage newMessage, ByteBuf newHeader, int skipBytes) throws Exception {
       //clone a SequentialFile to avoid concurrent access
       SequentialFile cloneFile = getReadingFile();
 
@@ -328,8 +340,11 @@ public class LargeBody {
             cloneFile.open();
          }
 
-         cloneFile.position(0);
+         cloneFile.position(skipBytes);
 
+         if (newHeader != null) {
+            newMessage.addBytes(new ChannelBufferWrapper(newHeader), true);
+         }
          for (; ; ) {
             // The buffer is reused...
             // We need to make sure we clear the limits and the buffer before reusing it
@@ -380,7 +395,7 @@ public class LargeBody {
       public void open() throws ActiveMQException {
          try {
             if (cFile != null && cFile.isOpen()) {
-               cFile.close(false);
+               cFile.close(false, false);
             }
             cFile = getReadingFile();
             cFile.open();
@@ -407,7 +422,7 @@ public class LargeBody {
       public void close() throws ActiveMQException {
          try {
             if (cFile != null) {
-               cFile.close(false);
+               cFile.close(false, false);
                cFile = null;
             }
          } catch (Exception e) {

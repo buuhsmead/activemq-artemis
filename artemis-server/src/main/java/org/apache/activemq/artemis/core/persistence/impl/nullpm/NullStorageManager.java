@@ -49,7 +49,9 @@ import org.apache.activemq.artemis.core.persistence.AddressQueueStatus;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
 import org.apache.activemq.artemis.core.persistence.config.PersistedAddressSetting;
 import org.apache.activemq.artemis.core.persistence.config.PersistedDivertConfiguration;
-import org.apache.activemq.artemis.core.persistence.config.PersistedRoles;
+import org.apache.activemq.artemis.core.persistence.config.PersistedRole;
+import org.apache.activemq.artemis.core.persistence.config.PersistedSecuritySetting;
+import org.apache.activemq.artemis.core.persistence.config.PersistedUser;
 import org.apache.activemq.artemis.core.persistence.impl.PageCountPending;
 import org.apache.activemq.artemis.core.postoffice.Binding;
 import org.apache.activemq.artemis.core.postoffice.PostOffice;
@@ -63,6 +65,7 @@ import org.apache.activemq.artemis.core.server.impl.AddressInfo;
 import org.apache.activemq.artemis.core.server.impl.JournalLoader;
 import org.apache.activemq.artemis.core.transaction.ResourceManager;
 import org.apache.activemq.artemis.core.transaction.Transaction;
+import org.apache.activemq.artemis.utils.ArtemisCloseable;
 
 public class NullStorageManager implements StorageManager {
 
@@ -74,6 +77,13 @@ public class NullStorageManager implements StorageManager {
 
    public NullStorageManager(IOCriticalErrorListener ioCriticalErrorListener) {
       this.ioCriticalErrorListener = ioCriticalErrorListener;
+   }
+
+   private static final ArtemisCloseable dummy = () -> { };
+
+   @Override
+   public ArtemisCloseable closeableReadLock() {
+      return dummy;
    }
 
    public NullStorageManager() {
@@ -227,8 +237,7 @@ public class NullStorageManager implements StorageManager {
    }
 
    @Override
-   public boolean deleteMessage(final long messageID) throws Exception {
-      return true;
+   public void deleteMessage(final long messageID) throws Exception {
    }
 
    @Override
@@ -240,8 +249,7 @@ public class NullStorageManager implements StorageManager {
    }
 
    @Override
-   public boolean updateScheduledDeliveryTime(final MessageReference ref) throws Exception {
-      return true;
+   public void updateScheduledDeliveryTime(final MessageReference ref) throws Exception {
    }
 
    @Override
@@ -253,8 +261,7 @@ public class NullStorageManager implements StorageManager {
    }
 
    @Override
-   public boolean updateDeliveryCount(final MessageReference ref) throws Exception {
-      return true;
+   public void updateDeliveryCount(final MessageReference ref) throws Exception {
    }
 
    @Override
@@ -438,7 +445,7 @@ public class NullStorageManager implements StorageManager {
    }
 
    @Override
-   public List<PersistedRoles> recoverPersistedRoles() throws Exception {
+   public List<PersistedSecuritySetting> recoverSecuritySettings() throws Exception {
       return Collections.emptyList();
    }
 
@@ -456,7 +463,33 @@ public class NullStorageManager implements StorageManager {
    }
 
    @Override
-   public void storeSecurityRoles(final PersistedRoles persistedRoles) throws Exception {
+   public void storeUser(PersistedUser persistedUser) throws Exception {
+   }
+
+   @Override
+   public void deleteUser(String username) throws Exception {
+   }
+
+   @Override
+   public Map<String, PersistedUser> getPersistedUsers() {
+      return null;
+   }
+
+   @Override
+   public void storeRole(PersistedRole persistedRole) throws Exception {
+   }
+
+   @Override
+   public void deleteRole(String role) throws Exception {
+   }
+
+   @Override
+   public Map<String, PersistedRole> getPersistedRoles() {
+      return null;
+   }
+
+   @Override
+   public void storeSecuritySetting(final PersistedSecuritySetting persistedRoles) throws Exception {
    }
 
    @Override
@@ -464,7 +497,7 @@ public class NullStorageManager implements StorageManager {
    }
 
    @Override
-   public void deleteSecurityRoles(final SimpleString addressMatch) throws Exception {
+   public void deleteSecuritySetting(final SimpleString addressMatch) throws Exception {
    }
 
    @Override
@@ -580,6 +613,11 @@ public class NullStorageManager implements StorageManager {
    }
 
    @Override
+   public void largeMessageClosed(LargeServerMessage largeServerMessage) throws ActiveMQException {
+
+   }
+
+   @Override
    public boolean addToPage(PagingStore store,
                             Message msg,
                             Transaction tx,
@@ -646,16 +684,6 @@ public class NullStorageManager implements StorageManager {
 
    @Override
    public void storeID(final long journalID, final long id) throws Exception {
-      // no-op
-   }
-
-   @Override
-   public void readLock() {
-      // no-op
-   }
-
-   @Override
-   public void readUnLock() {
       // no-op
    }
 

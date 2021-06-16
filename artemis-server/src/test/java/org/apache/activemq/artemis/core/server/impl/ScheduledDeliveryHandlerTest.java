@@ -29,6 +29,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.ToLongFunction;
 
 import io.netty.buffer.ByteBuf;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
@@ -250,7 +251,7 @@ public class ScheduledDeliveryHandlerTest extends Assert {
                            long nextMessageID,
                            long nextScheduledTime,
                            boolean tail) {
-      MessageReferenceImpl refImpl = new MessageReferenceImpl(new FakeMessage(nextMessageID), null, null);
+      MessageReferenceImpl refImpl = new MessageReferenceImpl(new FakeMessage(nextMessageID), null);
       refImpl.setScheduledDeliveryTime(nextScheduledTime);
       handler.addInPlace(nextScheduledTime, refImpl, tail);
    }
@@ -260,7 +261,7 @@ public class ScheduledDeliveryHandlerTest extends Assert {
                                  long nextScheduledTime,
                                  boolean tail,
                                  Queue queue) {
-      MessageReferenceImpl refImpl = new MessageReferenceImpl(new FakeMessage(nextMessageID), queue, null);
+      MessageReferenceImpl refImpl = new MessageReferenceImpl(new FakeMessage(nextMessageID), queue);
       refImpl.setScheduledDeliveryTime(nextScheduledTime);
       handler.checkAndSchedule(refImpl, tail);
    }
@@ -809,6 +810,15 @@ public class ScheduledDeliveryHandlerTest extends Assert {
          return 0;
       }
 
+      @Override
+      public Object getOwner() {
+         return null;
+      }
+
+      @Override
+      public void setOwner(Object object) {
+      }
+
    }
 
    public class FakeQueueForScheduleUnitTest extends CriticalComponentImpl implements Queue {
@@ -846,6 +856,11 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       @Override
       public void refUp(MessageReference messageReference) {
 
+      }
+
+      @Override
+      public MessageReference removeWithSuppliedID(long id, ToLongFunction<MessageReference> idSupplier) {
+         return null;
       }
 
       @Override
@@ -989,8 +1004,8 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
-      public long getID() {
-         return 0;
+      public Long getID() {
+         return Long.valueOf(0L);
       }
 
       @Override
@@ -1211,7 +1226,7 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
-      public void cancel(MessageReference reference, long timeBase, boolean backInPlace) throws Exception {
+      public void cancel(MessageReference reference, long timeBase) throws Exception {
 
       }
 
@@ -1441,6 +1456,11 @@ public class ScheduledDeliveryHandlerTest extends Assert {
                                 SimpleString toAddress,
                                 boolean rejectDuplicates,
                                 Binding binding) throws Exception {
+         return 0;
+      }
+
+      @Override
+      public int moveReferences(int flushLimit, Filter filter, SimpleString toAddress, boolean rejectDuplicates, int messageCount, Binding binding) throws Exception {
          return 0;
       }
 

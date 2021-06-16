@@ -20,7 +20,7 @@
    <parent>
       <groupId>org.apache.activemq.tests</groupId>
       <artifactId>artemis-tests-pom</artifactId>
-      <version>2.16.0-SNAPSHOT</version>
+      <version>2.18.0-SNAPSHOT</version>
    </parent>
 
    <artifactId>compatibility-tests</artifactId>
@@ -164,7 +164,7 @@
       <dependency>
          <groupId>org.apache.activemq.rest</groupId>
          <artifactId>artemis-rest</artifactId>
-         <version>2.16.0-SNAPSHOT</version>
+         <version>2.18.0-SNAPSHOT</version>
       </dependency>
       <dependency>
          <groupId>org.codehaus.groovy</groupId>
@@ -187,6 +187,10 @@
                <groupId>org.apache.geronimo.specs</groupId>
                <artifactId>geronimo-jms_1.1_spec</artifactId>
             </exclusion>
+            <exclusion>
+               <groupId>org.apache.geronimo.specs</groupId>
+               <artifactId>geronimo-j2ee-management_1.1_spec</artifactId>
+            </exclusion>
          </exclusions>
       </dependency>
       <dependency>
@@ -199,21 +203,25 @@
          <artifactId>mqtt-client</artifactId>
       </dependency>
       <dependency>
-         <groupId>org.apache.geronimo.specs</groupId>
-         <artifactId>geronimo-json_1.0_spec</artifactId>
+         <groupId>jakarta.json</groupId>
+         <artifactId>jakarta.json-api</artifactId>
          <scope>test</scope>
       </dependency>
       <dependency>
-         <groupId>org.apache.geronimo.specs</groupId>
-         <artifactId>geronimo-j2ee-connector_1.5_spec</artifactId>
+         <groupId>jakarta.resource</groupId>
+         <artifactId>jakarta.resource-api</artifactId>
       </dependency>
       <dependency>
-         <groupId>org.apache.geronimo.specs</groupId>
-         <artifactId>geronimo-jta_1.1_spec</artifactId>
+         <groupId>jakarta.transaction</groupId>
+         <artifactId>jakarta.transaction-api</artifactId>
       </dependency>
       <dependency>
-         <groupId>org.apache.geronimo.specs</groupId>
-         <artifactId>geronimo-jms_2.0_spec</artifactId>
+         <groupId>jakarta.jms</groupId>
+         <artifactId>jakarta.jms-api</artifactId>
+      </dependency>
+      <dependency>
+         <groupId>jakarta.management.j2ee</groupId>
+         <artifactId>jakarta.management.j2ee-api</artifactId>
       </dependency>
       <dependency>
          <groupId>org.apache.johnzon</groupId>
@@ -334,6 +342,34 @@
                      </libList>
                      <variableName>ARTEMIS-SNAPSHOT</variableName>
                   </configuration>
+               </execution><!-- The executions of dependency-scan will calculate dependencies for each specific version used here on this testsuite. -->
+               <execution>
+                  <id>jakartaee</id>
+                  <phase>compile</phase>
+                  <goals>
+                     <goal>dependency-scan</goal>
+                  </goals>
+                  <configuration>
+                     <libListWithDeps>
+                        <arg>org.apache.activemq:artemis-core-client:${project.version}</arg>
+                        <arg>org.apache.activemq:artemis-commons:${project.version}</arg>
+                        <arg>org.apache.activemq:artemis-selector:${project.version}</arg>
+                        <arg>org.apache.activemq:artemis-server:${project.version}</arg>
+                        <arg>org.apache.activemq:artemis-journal:${project.version}</arg>
+                        <arg>org.apache.activemq:artemis-hornetq-protocol:${project.version}</arg>
+                        <arg>org.codehaus.groovy:groovy-all:pom:${groovy.version}</arg>
+                     </libListWithDeps>
+                     <libList>
+                        <arg>jakarta.jms:jakarta.jms-api:3.0.0</arg>
+                        <arg>jakarta.json:jakarta.json-api:2.0.0</arg>
+                        <arg>jakarta.transaction:jakarta.transaction-api:2.0.0</arg>
+                        <arg>org.apache.activemq:artemis-jakarta-server:${project.version}</arg>
+                        <arg>org.apache.activemq:artemis-jakarta-client:${project.version}</arg>
+                        <arg>org.apache.activemq:artemis-jakarta-service-extensions:${project.version}</arg>
+                        <arg>org.apache.activemq.tests:compatibility-tests:${project.version}</arg>
+                     </libList>
+                     <variableName>ARTEMIS-JAKARTAEE</variableName>
+                  </configuration>
                </execution>
                <execution>
                   <phase>compile</phase>
@@ -423,6 +459,7 @@
                         <arg>org.apache.activemq:artemis-hornetq-protocol:2.4.0</arg>
                         <arg>org.apache.activemq:artemis-amqp-protocol:2.4.0</arg>
                         <arg>org.apache.activemq:artemis-hornetq-protocol:2.4.0</arg>
+                        <arg>org.apache.qpid:qpid-jms-client:0.26.0</arg>
                         <arg>org.codehaus.groovy:groovy-all:pom:${groovy.version}</arg>
                      </libListWithDeps>
                      <libList>
@@ -447,6 +484,7 @@
                         <arg>org.apache.activemq:artemis-hornetq-protocol:2.1.0</arg>
                         <arg>org.apache.activemq:artemis-amqp-protocol:2.1.0</arg>
                         <arg>org.apache.activemq:artemis-hornetq-protocol:2.1.0</arg>
+                        <arg>org.apache.qpid:qpid-jms-client:0.22.0</arg>
                         <arg>org.codehaus.groovy:groovy-all:pom:${groovy.version}</arg>
                      </libListWithDeps>
                      <libList>
@@ -471,6 +509,7 @@
                         <arg>org.apache.activemq:artemis-hornetq-protocol:2.0.0</arg>
                         <arg>org.apache.activemq:artemis-amqp-protocol:2.0.0</arg>
                         <arg>org.apache.activemq:artemis-hornetq-protocol:2.0.0</arg>
+                        <arg>org.apache.qpid:qpid-jms-client:0.20.0</arg>
                         <arg>org.codehaus.groovy:groovy-all:pom:${groovy.version}</arg>
                      </libListWithDeps>
                      <libList>
@@ -636,6 +675,10 @@
                      <name>ARTEMIS-270</name>
                      <value>${ARTEMIS-270}</value>
                   </property>
+                  <property>
+                     <name>ARTEMIS-JAKARTAEE</name>
+                     <value>${ARTEMIS-JAKARTAEE}</value>
+                  </property>
                </systemProperties>
                <skipTests>${skipCompatibilityTests}</skipTests>
                <argLine>${modular.jdk.surefire.arg} -Djgroups.bind_addr=::1 ${activemq-surefire-argline}</argLine>
@@ -689,5 +732,25 @@
       </snapshotRepository>
    </distributionManagement>
 
+   <profiles>
+      <profile>
+         <!-- TODO: Changes so these tests can work? -->
+         <id>jdk16on</id>
+         <activation>
+            <jdk>[16,)</jdk>
+         </activation>
+         <build>
+            <plugins>
+               <plugin>
+                  <groupId>org.apache.maven.plugins</groupId>
+                  <artifactId>maven-surefire-plugin</artifactId>
+                  <configuration>
+                     <skip>true</skip>
+                  </configuration>
+               </plugin>
+            </plugins>
+         </build>
+      </profile>
+   </profiles>
 
 </project>

@@ -158,6 +158,11 @@ public class MessageInternalImpl implements MessageInternal {
       return message.copy(newID);
    }
 
+   @Override
+   public Message copy(long newID, boolean isDLQorExpiry) {
+      return message.copy(newID, isDLQorExpiry);
+   }
+
    /**
     * Returns the messageID.
     * <br>
@@ -702,6 +707,16 @@ public class MessageInternalImpl implements MessageInternal {
    @Override
    public long getPersistentSize() throws ActiveMQException {
       return message.getPersistentSize();
+   }
+
+   @Override
+   public Object getOwner() {
+      return message.getOwner();
+   }
+
+   @Override
+   public void setOwner(Object object) {
+      message.setOwner(object);
    }
 
 }

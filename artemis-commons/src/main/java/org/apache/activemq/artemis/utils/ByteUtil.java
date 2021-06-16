@@ -53,19 +53,27 @@ public class ByteUtil {
 
    public static void debugFrame(Logger logger, String message, ByteBuf byteIn) {
       if (logger.isTraceEnabled()) {
-         int location = byteIn.readerIndex();
-         // debugging
-         byte[] frame = new byte[byteIn.writerIndex()];
-         byteIn.readBytes(frame);
-
-         try {
-            logger.trace(message + "\n" + ByteUtil.formatGroup(ByteUtil.bytesToHex(frame), 8, 16));
-         } catch (Exception e) {
-            logger.warn(e.getMessage(), e);
-         }
-
-         byteIn.readerIndex(location);
+         outFrame(logger, message, byteIn, false);
       }
+   }
+
+   public static void outFrame(Logger logger, String message, ByteBuf byteIn, boolean info) {
+      int location = byteIn.readerIndex();
+      // debugging
+      byte[] frame = new byte[byteIn.writerIndex()];
+      byteIn.readBytes(frame);
+
+      try {
+         if (info) {
+            logger.info(message + "\n" + ByteUtil.formatGroup(ByteUtil.bytesToHex(frame), 8, 16));
+         } else {
+            logger.trace(message + "\n" + ByteUtil.formatGroup(ByteUtil.bytesToHex(frame), 8, 16));
+         }
+      } catch (Exception e) {
+         logger.warn(e.getMessage(), e);
+      }
+
+      byteIn.readerIndex(location);
    }
 
    public static String formatGroup(String str, int groupSize, int lineBreak) {
@@ -197,6 +205,17 @@ public class ByteUtil {
             | ((int) b[0] & 0xff) << 24;
    }
 
+   public static long bytesToLong(byte[] b) {
+      return ((long) b[7] & 0xff)
+         | ((long) b[6] & 0xff) << 8
+         | ((long) b[5] & 0xff) << 16
+         | ((long) b[4] & 0xff) << 24
+         | ((long) b[3] & 0xff) << 32
+         | ((long) b[2] & 0xff) << 40
+         | ((long) b[1] & 0xff) << 48
+         | ((long) b[0] & 0xff) << 56;
+   }
+
    public static byte[] longToBytes(long value) {
       byte[] output = new byte[8];
       longToBytes(value, output, 0);
@@ -204,13 +223,13 @@ public class ByteUtil {
    }
 
    public static void longToBytes(long x, byte[] output, int offset) {
-      output[offset] = (byte)(x >> 56);
-      output[offset + 1] = (byte)(x >> 48);
-      output[offset + 2] = (byte)(x >> 40);
-      output[offset + 3] = (byte)(x >> 32);
-      output[offset + 4] = (byte)(x >> 24);
-      output[offset + 5] = (byte)(x >> 16);
-      output[offset + 6] = (byte)(x >>  8);
+      output[offset] = (byte)(x >>> 56);
+      output[offset + 1] = (byte)(x >>> 48);
+      output[offset + 2] = (byte)(x >>> 40);
+      output[offset + 3] = (byte)(x >>> 32);
+      output[offset + 4] = (byte)(x >>> 24);
+      output[offset + 5] = (byte)(x >>> 16);
+      output[offset + 6] = (byte)(x >>>  8);
       output[offset + 7] = (byte)(x);
    }
 
@@ -265,6 +284,52 @@ public class ByteUtil {
       } catch (NumberFormatException e) {
          throw ActiveMQUtilBundle.BUNDLE.failedToParseLong(text);
       }
+   }
+
+   public static int hashCode(byte[] bytes) {
+      if (PlatformDependent.hasUnsafe() && PlatformDependent.isUnaligned()) {
+         return unsafeHashCode(bytes);
+      }
+      return Arrays.hashCode(bytes);
+   }
+
+   /**
+    * This hash code computation is borrowed by {@link io.netty.buffer.ByteBufUtil#hashCode(ByteBuf)}.
+    */
+   private static int unsafeHashCode(byte[] bytes) {
+      if (bytes == null) {
+         return 0;
+      }
+      final int len = bytes.length;
+      int hashCode = 1;
+      final int intCount = len >>> 2;
+      int arrayIndex = 0;
+      // reading in batch both help hash code computation data dependencies and save memory bandwidth
+      for (int i = 0; i < intCount; i++) {
+         hashCode = 31 * hashCode + PlatformDependent.getInt(bytes, arrayIndex);
+         arrayIndex += Integer.BYTES;
+      }
+      final byte remaining = (byte) (len & 3);
+      if (remaining > 0) {
+         hashCode = unsafeUnrolledHashCode(bytes, arrayIndex, remaining, hashCode);
+      }
+      return hashCode == 0 ? 1 : hashCode;
+   }
+
+   private static int unsafeUnrolledHashCode(byte[] bytes, int index, int bytesCount, int h) {
+      // there is still the hash data dependency but is more friendly
+      // then a plain loop, given that we know no loop is needed here
+      assert bytesCount > 0 && bytesCount < 4;
+      h = 31 * h + PlatformDependent.getByte(bytes, index);
+      if (bytesCount == 1) {
+         return h;
+      }
+      h = 31 * h + PlatformDependent.getByte(bytes, index + 1);
+      if (bytesCount == 2) {
+         return h;
+      }
+      h = 31 * h + PlatformDependent.getByte(bytes, index + 2);
+      return h;
    }
 
    public static boolean equals(final byte[] left, final byte[] right) {

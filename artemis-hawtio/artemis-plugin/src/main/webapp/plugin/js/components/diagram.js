@@ -27,22 +27,34 @@ var Artemis;
                         <span class="pficon pficon-help"></span>
                     </button>
                 </h1>
-                <pf-topology items="$ctrl.data.items" relations="$ctrl.data.relations" kinds="$ctrl.kinds" icons="$ctrl.data.icons" nodes="$ctrl.nodes" item-selected="$ctrl.itemSelected(item)" search-text="searchText" show-labels="$ctrl.showLabels" tooltip-function="$ctrl.tooltip(node)">
+                <!-- Inhibit the context menu of pf-topology for the its items -->
+                <style type="text/css">pf-topology .popup { visibility: hidden; }</style>
+                <pf-topology items="$ctrl.data.items" relations="$ctrl.data.relations" kinds="$ctrl.kinds" icons="$ctrl.data.icons" nodes="$ctrl.nodes" item-selected="$ctrl.itemSelected(item)" search-text="searchText" show-labels="$ctrl.showLabels" tooltip-function="$ctrl.tooltip(node)" chart-rendered="$ctrl.chartRendered(vertices, added)">
 
-                <label>Show labels:
+                <label style="margin-right: 1em">Show labels:
                     <input type="checkbox" ng-model="$ctrl.showLabels">
                 </label>
-                 <label>Show addresses:
+                 <label style="margin-right: 1em">Show addresses:
                     <input type="checkbox" ng-model="$ctrl.showAddresses">
                 </label>
-                <label>Show queues:
+                <label style="margin-right: 1em">Show queues:
                     <input type="checkbox" ng-model="$ctrl.showQueues">
                 </label>
-                <label>Show internal addresses:
+                <label style="margin-right: 1em">Show internal addresses:
                     <input type="checkbox" ng-model="$ctrl.showInternalAddresses">
                 </label>
-                <label>Show internal queues:
+                <label style="margin-right: 1em">Show internal queues:
                     <input type="checkbox" ng-model="$ctrl.showInternalQueues">
+                </label>
+
+                <label style="margin-right: 1em">Show Live Brokers:
+                    <input type="checkbox" ng-model="$ctrl.showLiveBrokers">
+                </label>
+                <label style="margin-right: 1em">Show Backup Brokers:
+                    <input type="checkbox" ng-model="$ctrl.showBackupBrokers">
+                </label>
+                <label style="margin-right: 1em">Show Connectors:
+                    <input type="checkbox" ng-model="$ctrl.showConnectors">
                 </label>
                 <button type="submit" class="btn btn-primary"
                     ng-click="$ctrl.refresh()">Refresh
@@ -81,33 +93,84 @@ var Artemis;
         ctrl.showQueues = true;
         ctrl.showInternalAddresses = false;
         ctrl.showInternalQueues = false;
-        $scope.$watch('$ctrl.showAddresses', function () {
+        ctrl.showLiveBrokers = true;
+        ctrl.showBackupBrokers = true;
+        ctrl.showConnectors = true;
+        ctrl.hiddenRelations = [];
+        function updateAddressKind() {
             if(ctrl.kinds.Address && !ctrl.showAddresses) {
                delete ctrl.kinds.Address;
             } else if (!ctrl.kinds.Address && ctrl.showAddresses) {
                 ctrl.kinds.Address = true;
             }
+        }
+        $scope.$watch('$ctrl.showAddresses', function () {
+            updateAddressKind();
         });
-        $scope.$watch('$ctrl.showQueues', function () {
+        function updateQueueKind() {
             if(ctrl.kinds.Queue && !ctrl.showQueues) {
                delete ctrl.kinds.Queue;
-            } else if (!ctrl.kinds.Queues && ctrl.showQueues) {
+            } else if (!ctrl.kinds.Queue && ctrl.showQueues) {
                 ctrl.kinds.Queue = true;
             }
+        }
+        $scope.$watch('$ctrl.showQueues', function () {
+            updateQueueKind();
         });
-        $scope.$watch('$ctrl.showInternalAddresses', function () {
+        function updateInternalAddressKind() {
             if(ctrl.kinds.InternalAddress && !ctrl.showInternalAddresses) {
                delete ctrl.kinds.InternalAddress;
             } else if (!ctrl.kinds.InternalAddress && ctrl.showInternalAddresses) {
                 ctrl.kinds.InternalAddress = true;
             }
+        }
+        $scope.$watch('$ctrl.showInternalAddresses', function () {
+            updateInternalAddressKind();
         });
-        $scope.$watch('$ctrl.showInternalQueues', function () {
+        function updateInternalQueueKind() {
             if(ctrl.kinds.InternalQueue && !ctrl.showInternalQueues) {
                delete ctrl.kinds.InternalQueue;
-            } else if (!ctrl.kinds.InternalQueues && ctrl.showInternalQueues) {
+            } else if (!ctrl.kinds.InternalQueue && ctrl.showInternalQueues) {
                 ctrl.kinds.InternalQueue = true;
             }
+        }
+        $scope.$watch('$ctrl.showInternalQueues', function () {
+            updateInternalQueueKind();
+        });
+        function updateLiveBrokerKind() {
+            if(ctrl.kinds.ThisBroker && !ctrl.showLiveBrokers) {
+               delete ctrl.kinds.ThisBroker;
+            } else if (!ctrl.kinds.ThisBroker && ctrl.showLiveBrokers) {
+                ctrl.kinds.ThisBroker = true;
+            }
+            if(ctrl.kinds.MasterBroker && !ctrl.showLiveBrokers) {
+               delete ctrl.kinds.MasterBroker;
+            } else if (!ctrl.kinds.MasterBroker && ctrl.showLiveBrokers) {
+                ctrl.kinds.MasterBroker = true;
+            }
+        }
+        $scope.$watch('$ctrl.showLiveBrokers', function () {
+            updateLiveBrokerKind();
+        });
+        function updateBackupBrokerKind() {
+            if(ctrl.kinds.SlaveBroker && !ctrl.showBackupBrokers) {
+               delete ctrl.kinds.SlaveBroker;
+            } else if (!ctrl.kinds.SlaveBroker && ctrl.showBackupBrokers) {
+                ctrl.kinds.SlaveBroker = true;
+            }
+        }
+        $scope.$watch('$ctrl.showBackupBrokers', function () {
+            updateBackupBrokerKind();
+        });
+        function updateConnectors() {
+            if(!ctrl.showConnectors) {
+                ctrl.data.relations = [];
+            } else {
+                ctrl.data.relations = ctrl.hiddenRelations;
+            }
+        }
+        $scope.$watch('$ctrl.showConnectors', function () {
+            updateConnectors();
         });
         ctrl.datasets = [];
         //icons can be found at https://www.patternfly.org/v3/styles/icons/index.html
@@ -157,7 +220,7 @@ var Artemis;
         };
 
         load();
-
+        ctrl.hiddenRelations = ctrl.relations;
         function load() {
             ctrl.items = {};
 
@@ -253,6 +316,15 @@ var Artemis;
                 showCheckboxes: false
             };
             ctrl.showAttributes = false;
+
+            updateAddressKind();
+            updateQueueKind();
+            updateInternalAddressKind();
+            updateInternalQueueKind();
+            updateLiveBrokerKind();
+            updateBackupBrokerKind();
+            updateConnectors();
+
             loadThisBroker();
             Core.$apply($scope);
         }
@@ -283,6 +355,10 @@ var Artemis;
                 'Type: ' + node.item.brokerKind
             ];
             return status;
+        }
+        ctrl.chartRendered = function (vertices, added) {
+            // Inhibit the dblclick handler of pf-topology for the its items.
+            added.each(function (d) { d.url = "javascript:void(0)"; });
         }
         ctrl.refresh = function () {
             ctrl.datasets = [];

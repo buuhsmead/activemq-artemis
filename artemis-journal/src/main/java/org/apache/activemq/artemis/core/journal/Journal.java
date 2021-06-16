@@ -16,6 +16,7 @@
  */
 package org.apache.activemq.artemis.core.journal;
 
+import java.io.File;
 import java.util.List;
 import java.util.Map;
 
@@ -58,6 +59,14 @@ public interface Journal extends ActiveMQComponent {
       LOADED;
    }
 
+   void setRemoveExtraFilesOnLoad(boolean removeExtraFilesOnLoad);
+
+   boolean isRemoveExtraFilesOnLoad();
+
+   default boolean isHistory() {
+      return false;
+   }
+
    // Non transactional operations
 
    void appendAddRecord(long id, byte recordType, byte[] record, boolean sync) throws Exception;
@@ -66,9 +75,22 @@ public interface Journal extends ActiveMQComponent {
       appendAddRecord(id, recordType, EncoderPersister.getInstance(), record, sync);
    }
 
+   default Journal setHistoryFolder(File historyFolder, long maxBytes, long period) throws Exception {
+      return this;
+   }
+
    void appendAddRecord(long id, byte recordType, Persister persister, Object record, boolean sync) throws Exception;
 
    void appendAddRecord(long id,
+                        byte recordType,
+                        Persister persister,
+                        Object record,
+                        boolean sync,
+                        IOCompletion completionCallback) throws Exception;
+
+   /** An event is data recorded on the journal, but it won't have any weight or deletes. It's always ready to be removed.
+    *  It is useful on recovery data while in use with backup history journal. */
+   void appendAddEvent(long id,
                         byte recordType,
                         Persister persister,
                         Object record,
@@ -83,21 +105,24 @@ public interface Journal extends ActiveMQComponent {
       appendAddRecord(id, recordType, EncoderPersister.getInstance(), record, sync, completionCallback);
    }
 
+   default void replaceableRecord(byte recordType) {
+   }
+
    void appendUpdateRecord(long id, byte recordType, byte[] record, boolean sync) throws Exception;
 
-   boolean tryAppendUpdateRecord(long id, byte recordType, byte[] record, boolean sync) throws Exception;
+   void tryAppendUpdateRecord(long id, byte recordType, byte[] record, JournalUpdateCallback updateCallback, boolean sync, boolean replaceableRecord) throws Exception;
 
    default void appendUpdateRecord(long id, byte recordType, EncodingSupport record, boolean sync) throws Exception {
       appendUpdateRecord(id, recordType, EncoderPersister.getInstance(), record, sync);
    }
 
-   default boolean tryAppendUpdateRecord(long id, byte recordType, EncodingSupport record, boolean sync) throws Exception {
-      return tryAppendUpdateRecord(id, recordType, EncoderPersister.getInstance(), record, sync);
+   default void tryAppendUpdateRecord(long id, byte recordType, EncodingSupport record, JournalUpdateCallback updateCallback, boolean sync, boolean replaceableRecord) throws Exception {
+      tryAppendUpdateRecord(id, recordType, EncoderPersister.getInstance(), record, updateCallback, sync, replaceableRecord);
    }
 
    void appendUpdateRecord(long id, byte recordType, Persister persister, Object record, boolean sync) throws Exception;
 
-   boolean tryAppendUpdateRecord(long id, byte recordType, Persister persister, Object record, boolean sync) throws Exception;
+   void tryAppendUpdateRecord(long id, byte recordType, Persister persister, Object record, JournalUpdateCallback updateCallback, boolean sync, boolean replaceableUpdate) throws Exception;
 
    default void appendUpdateRecord(long id,
                                    byte recordType,
@@ -107,12 +132,14 @@ public interface Journal extends ActiveMQComponent {
       appendUpdateRecord(id, recordType, EncoderPersister.getInstance(), record, sync, completionCallback);
    }
 
-   default boolean tryAppendUpdateRecord(long id,
+   default void tryAppendUpdateRecord(long id,
                                    byte recordType,
                                    EncodingSupport record,
                                    boolean sync,
+                                   boolean replaceableUpdate,
+                                   JournalUpdateCallback updateCallback,
                                    IOCompletion completionCallback) throws Exception {
-      return tryAppendUpdateRecord(id, recordType, EncoderPersister.getInstance(), record, sync, completionCallback);
+      tryAppendUpdateRecord(id, recordType, EncoderPersister.getInstance(), record, sync, replaceableUpdate, updateCallback, completionCallback);
    }
 
    void appendUpdateRecord(long id,
@@ -122,20 +149,22 @@ public interface Journal extends ActiveMQComponent {
                            boolean sync,
                            IOCompletion callback) throws Exception;
 
-   boolean tryAppendUpdateRecord(long id,
+   void tryAppendUpdateRecord(long id,
                            byte recordType,
                            Persister persister,
                            Object record,
                            boolean sync,
+                           boolean replaceableUpdate,
+                           JournalUpdateCallback updateCallback,
                            IOCompletion callback) throws Exception;
 
    void appendDeleteRecord(long id, boolean sync) throws Exception;
 
-   boolean tryAppendDeleteRecord(long id, boolean sync) throws Exception;
+   void tryAppendDeleteRecord(long id, JournalUpdateCallback updateCallback, boolean sync) throws Exception;
 
    void appendDeleteRecord(long id, boolean sync, IOCompletion completionCallback) throws Exception;
 
-   boolean tryAppendDeleteRecord(long id, boolean sync, IOCompletion completionCallback) throws Exception;
+   void tryAppendDeleteRecord(long id, boolean sync, JournalUpdateCallback updateCallback, IOCompletion completionCallback) throws Exception;
 
    // Transactional operations
 
@@ -250,8 +279,6 @@ public interface Journal extends ActiveMQComponent {
 
    int getUserVersion();
 
-   void runDirectJournalBlast() throws Exception;
-
    /**
     * Reserves journal file IDs, creates the necessary files for synchronization, and places
     * references to these (reserved for sync) files in the map.
@@ -279,6 +306,17 @@ public interface Journal extends ActiveMQComponent {
     */
    void synchronizationUnlock();
 
+   /**
+    * It will rename temporary files and place them on the copy folder, by resotring the original file name.
+    */
+   default void processBackup() {
+   }
+
+   /**
+    * It will check max files and max days on files and remove extra files.
+    */
+   default void processBackupCleanup() {
+   }
    /**
     * Force the usage of a new {@link JournalFile}.
     *

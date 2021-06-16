@@ -753,8 +753,13 @@ public final class PageSubscriptionImpl implements PageSubscription {
          for (PagePosition pos : recoveredACK) {
             lastAckedPosition = pos;
             PageCursorInfo pageInfo = getPageInfo(pos);
+            PageCache cache = null;
 
-            if (pageInfo == null) {
+            if (pageInfo != null) {
+               cache = pageInfo.getValidCache();
+            }
+
+            if (cache == null || pos.getMessageNr() >= 0 && cache.getMessage(pos) == null) {
                ActiveMQServerLogger.LOGGER.pageNotFound(pos);
                if (txDeleteCursorOnReload == -1) {
                   txDeleteCursorOnReload = store.generateID();
@@ -933,32 +938,34 @@ public final class PageSubscriptionImpl implements PageSubscription {
       }
 
       PageCursorInfo info = getPageInfo(position);
-      PageCache cache = info.getCache();
-      if (cache != null) {
-         final long size;
-         if (persistentSize < 0) {
-            //cache.getMessage is potentially expensive depending
-            //on the current cache size and which message is queried
-            size = getPersistentSize(cache.getMessage(position));
-         } else {
-            size = persistentSize;
+      if (info != null) {
+         PageCache cache = info.getCache();
+         if (cache != null) {
+            final long size;
+            if (persistentSize < 0) {
+               //cache.getMessage is potentially expensive depending
+               //on the current cache size and which message is queried
+               size = getPersistentSize(cache.getMessage(position));
+            } else {
+               size = persistentSize;
+            }
+            position.setPersistentSize(size);
          }
-         position.setPersistentSize(size);
+
+         logger.tracef("InstallTXCallback looking up pagePosition %s, result=%s", position, info);
+
+         info.remove(position);
+
+         PageCursorTX cursorTX = (PageCursorTX) tx.getProperty(TransactionPropertyIndexes.PAGE_CURSOR_POSITIONS);
+
+         if (cursorTX == null) {
+            cursorTX = new PageCursorTX();
+            tx.putProperty(TransactionPropertyIndexes.PAGE_CURSOR_POSITIONS, cursorTX);
+            tx.addOperation(cursorTX);
+         }
+
+         cursorTX.addPositionConfirmation(this, position);
       }
-
-      logger.tracef("InstallTXCallback looking up pagePosition %s, result=%s", position, info);
-
-      info.remove(position);
-
-      PageCursorTX cursorTX = (PageCursorTX) tx.getProperty(TransactionPropertyIndexes.PAGE_CURSOR_POSITIONS);
-
-      if (cursorTX == null) {
-         cursorTX = new PageCursorTX();
-         tx.putProperty(TransactionPropertyIndexes.PAGE_CURSOR_POSITIONS, cursorTX);
-         tx.addOperation(cursorTX);
-      }
-
-      cursorTX.addPositionConfirmation(this, position);
 
    }
 
@@ -1177,17 +1184,27 @@ public final class PageSubscriptionImpl implements PageSubscription {
       private int getNumberOfMessagesFromPageCache() {
          // if the page was live at any point, we need to
          // get the number of messages from the page-cache
-         PageCache localCache = this.cache.get();
-         if (localCache == null) {
-            localCache = cursorProvider.getPageCache(pageId);
-            this.cache = new WeakReference<>(localCache);
-         }
+         PageCache localCache = getValidCache();
+         if (localCache == null) return 0;
          int numberOfMessage = localCache.getNumberOfMessages();
          if (!localCache.isLive()) {
             //to avoid further "live" queries
             this.numberOfMessages = numberOfMessage;
          }
          return numberOfMessage;
+      }
+
+      public PageCache getValidCache() {
+         PageCache localCache = this.cache.get();
+         if (localCache == null) {
+            localCache = cursorProvider.getPageCache(pageId);
+            // this could happen if the file does not exist any more, after cleanup
+            if (localCache == null) {
+               return null;
+            }
+            this.cache = new WeakReference<>(localCache);
+         }
+         return localCache;
       }
 
       private int getNumberOfMessages() {
@@ -1417,10 +1434,11 @@ public final class PageSubscriptionImpl implements PageSubscription {
                }
 
                if (valid) {
-                  match = match(message.getMessage());
-
-                  if (!browsing && !match) {
-                     processACK(message.getPosition());
+                  if (browsing) {
+                     match = match(message.getMessage());
+                  } else {
+                     // if not browsing, we will just trust the routing on the queue
+                     match = true;
                   }
                } else if (!browsing && ignored) {
                   positionIgnored(message.getPosition());

@@ -33,7 +33,7 @@ import java.util.Set;
 /**
  * Logger Code 60
  *
- * each message id must be 6 digits long starting with 22, the 3rd digit donates the level so
+ * each message id must be 6 digits long starting with 60, the 3rd digit donates the level so
  *
  * INF0  1
  * WARN  2
@@ -2428,8 +2428,8 @@ public interface AuditLogger extends BasicLogger {
    void logCoreSendMessage(String user, String messageToString, Object context);
 
    //hot path log using a different logger
-   static void coreConsumeMessage(String queue) {
-      MESSAGE_LOGGER.consumeMessage(getCaller(), queue);
+   static void coreConsumeMessage(Subject user, String queue) {
+      MESSAGE_LOGGER.consumeMessage(getCaller(user), queue);
    }
 
    @LogMessage(level = Logger.Level.INFO)
@@ -2753,4 +2753,84 @@ public interface AuditLogger extends BasicLogger {
    @LogMessage(level = Logger.Level.INFO)
    @Message(id = 601737, value = "User {0} is getting authorization cache size on target resource: {1} {2}", format = Message.Format.MESSAGE_FORMAT)
    void getAuthorizationCacheSize(String user, Object source, Object... args);
+
+   static void listBrokerConnections() {
+      LOGGER.listBrokerConnections(getCaller());
+   }
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 601738, value = "User {0} is requesting a list of broker connections", format = Message.Format.MESSAGE_FORMAT)
+   void listBrokerConnections(String user);
+
+   static void stopBrokerConnection(String name) {
+      LOGGER.stopBrokerConnection(getCaller(), name);
+   }
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 601739, value = "User {0} is requesting to stop broker connection {1}", format = Message.Format.MESSAGE_FORMAT)
+   void stopBrokerConnection(String user, String name);
+
+   static void startBrokerConnection(String name) {
+      LOGGER.startBrokerConnection(getCaller(), name);
+   }
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 601740, value = "User {0} is requesting to start broker connection {1}", format = Message.Format.MESSAGE_FORMAT)
+   void startBrokerConnection(String user, String name);
+
+   static void getAddressCount(Object source) {
+      LOGGER.getAddressCount(getCaller(), source);
+   }
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 601741, value = "User {0} is getting address count on target resource: {1} {2}", format = Message.Format.MESSAGE_FORMAT)
+   void getAddressCount(String user, Object source, Object... args);
+
+   static void getQueueCount(Object source) {
+      LOGGER.getQueueCount(getCaller(), source);
+   }
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 601742, value = "User {0} is getting the queue count on target resource: {1} {2}", format = Message.Format.MESSAGE_FORMAT)
+   void getQueueCount(String user, Object source, Object... args);
+
+   static void lastValueKey(Object source) {
+      LOGGER.lastValueKey(getCaller(), source);
+   }
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 601743, value = "User {0} is getting last-value-key property on target resource: {1} {2}", format = Message.Format.MESSAGE_FORMAT)
+   void lastValueKey(String user, Object source, Object... args);
+
+   static void consumersBeforeDispatch(Object source) {
+      LOGGER.consumersBeforeDispatch(getCaller(), source);
+   }
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 601744, value = "User {0} is getting consumers-before-dispatch property on target resource: {1} {2}", format = Message.Format.MESSAGE_FORMAT)
+   void consumersBeforeDispatch(String user, Object source, Object... args);
+
+   static void delayBeforeDispatch(Object source) {
+      LOGGER.delayBeforeDispatch(getCaller(), source);
+   }
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 601745, value = "User {0} is getting delay-before-dispatch property on target resource: {1} {2}", format = Message.Format.MESSAGE_FORMAT)
+   void delayBeforeDispatch(String user, Object source, Object... args);
+
+   static void isInternal(Object source) {
+      LOGGER.isInternal(getCaller(), source);
+   }
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 601746, value = "User {0} is getting internal property on target resource: {1} {2}", format = Message.Format.MESSAGE_FORMAT)
+   void isInternal(String user, Object source, Object... args);
+
+   static void isAutoCreated(Object source) {
+      LOGGER.isAutoCreated(getCaller(), source);
+   }
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 601747, value = "User {0} is getting auto-created property on target resource: {1} {2}", format = Message.Format.MESSAGE_FORMAT)
+   void isAutoCreated(String user, Object source, Object... args);
 }

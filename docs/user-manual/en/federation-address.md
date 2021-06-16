@@ -36,7 +36,7 @@ If `max-hops` is not configured correctly, consumers will get multiple copies of
 ![Address Federation](images/federation-address-complete-graph.png)
 Figure 3. Address Federation - Full Mesh
 
-If not already spotted, the setup is identical to symemtric but simply where all brokers are symmetrically federating each other, creating a full mesh.
+If not already spotted, the setup is identical to symmetric but simply where all brokers are symmetrically federating each other, creating a full mesh.
 
 As illustrated, a publisher and consumer are connected to each broker. 
 Queues and thus consumers on those queues, can receive messages published by either publisher.
@@ -254,10 +254,10 @@ to the `downstream` broker to have it create an `upstream` connection back to th
 this is being able to configure everything for federation on one broker in some cases to make it easier, such
 as a hub and spoke topology
 
-All of the same configuration options apply to to `downstream` as does `upstream` with the exception of one
+All of the same configuration options apply to `downstream` as does `upstream` with the exception of one
 extra configuration flag that needs to be set:
 
-  The `transport-connector-ref` is an element pointing to a
+  The `upstream-connector-ref` is an element pointing to a
   `connector` elements defined elsewhere. This ref is used to tell the downstream broker
   what connector to use to create a new upstream connection back to the downstream broker.
   
@@ -290,14 +290,14 @@ Sample Downstream Address Federation setup:
           <static-connectors>
              <connector-ref>eu-east-connector1</connector-ref>
           </static-connectors>
-          <transport-connector-ref>netty-connector</transport-connector-ref>
+          <upstream-connector-ref>netty-connector</upstream-connector-ref>
           <policy ref="news-address-federation"/>
       </downstream>
       <downstream name="eu-west-1" >
          <static-connectors>
             <connector-ref>eu-west-connector1</connector-ref>
          </static-connectors>
-         <transport-connector-ref>netty-connector</transport-connector-ref>
+         <upstream-connector-ref>netty-connector</upstream-connector-ref>
          <policy ref="news-address-federation"/>
       </downstream>
 

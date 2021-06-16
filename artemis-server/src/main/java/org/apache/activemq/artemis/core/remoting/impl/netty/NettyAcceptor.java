@@ -92,6 +92,8 @@ import org.apache.activemq.artemis.spi.core.protocol.ProtocolManager;
 import org.apache.activemq.artemis.spi.core.remoting.BufferHandler;
 import org.apache.activemq.artemis.spi.core.remoting.Connection;
 import org.apache.activemq.artemis.spi.core.remoting.ServerConnectionLifeCycleListener;
+import org.apache.activemq.artemis.spi.core.remoting.ssl.OpenSSLContextFactoryProvider;
+import org.apache.activemq.artemis.spi.core.remoting.ssl.SSLContextConfig;
 import org.apache.activemq.artemis.spi.core.remoting.ssl.SSLContextFactoryProvider;
 import org.apache.activemq.artemis.utils.ActiveMQThreadFactory;
 import org.apache.activemq.artemis.utils.ConfigurationHelper;
@@ -106,10 +108,10 @@ public class NettyAcceptor extends AbstractAcceptor {
    private static final Logger logger = Logger.getLogger(NettyAcceptor.class);
 
 
-   public static String INVM_ACCEPTOR_TYPE = "IN-VM";
-   public static String NIO_ACCEPTOR_TYPE = "NIO";
-   public static String EPOLL_ACCEPTOR_TYPE = "EPOLL";
-   public static String KQUEUE_ACCEPTOR_TYPE = "KQUEUE";
+   public static final String INVM_ACCEPTOR_TYPE = "IN-VM";
+   public static final String NIO_ACCEPTOR_TYPE = "NIO";
+   public static final String EPOLL_ACCEPTOR_TYPE = "EPOLL";
+   public static final String KQUEUE_ACCEPTOR_TYPE = "KQUEUE";
 
    static {
       // Disable default Netty leak detection if the Netty leak detection level system properties are not in use
@@ -154,6 +156,8 @@ public class NettyAcceptor extends AbstractAcceptor {
 
    private final String keyStoreProvider;
 
+   private final String keyStoreType;
+
    // non-final for testing purposes
    private String keyStorePath;
 
@@ -161,11 +165,15 @@ public class NettyAcceptor extends AbstractAcceptor {
 
    private final String trustStoreProvider;
 
+   private final String trustStoreType;
+
    private final String trustStorePath;
 
    private final String trustStorePassword;
 
    private final String crlPath;
+
+   private SSLContextConfig sslContextConfig;
 
    private final String enabledCipherSuites;
 
@@ -227,14 +235,13 @@ public class NettyAcceptor extends AbstractAcceptor {
 
    private final long connectionsAllowed;
 
-   private Map<String, Object> extraConfigs;
-
    private final boolean autoStart;
-
 
    final AtomicBoolean warningPrinted = new AtomicBoolean(false);
 
    final Executor failureExecutor;
+
+   private volatile Object providerAgnosticSslContext;
 
    public NettyAcceptor(final String name,
                         final ClusterConnection clusterConnection,
@@ -282,13 +289,23 @@ public class NettyAcceptor extends AbstractAcceptor {
       host = ConfigurationHelper.getStringProperty(TransportConstants.HOST_PROP_NAME, TransportConstants.DEFAULT_HOST, configuration);
       port = ConfigurationHelper.getIntProperty(TransportConstants.PORT_PROP_NAME, TransportConstants.DEFAULT_PORT, configuration);
       if (sslEnabled) {
-         keyStoreProvider = ConfigurationHelper.getStringProperty(TransportConstants.KEYSTORE_PROVIDER_PROP_NAME, TransportConstants.DEFAULT_KEYSTORE_PROVIDER, configuration);
+         Pair<String, String> keyStoreCompat = SSLSupport.getValidProviderAndType(ConfigurationHelper.getStringProperty(TransportConstants.KEYSTORE_PROVIDER_PROP_NAME, TransportConstants.DEFAULT_KEYSTORE_PROVIDER, configuration),
+                                                                                  ConfigurationHelper.getStringProperty(TransportConstants.KEYSTORE_TYPE_PROP_NAME, TransportConstants.DEFAULT_KEYSTORE_TYPE, configuration));
+
+         keyStoreProvider = keyStoreCompat.getA();
+
+         keyStoreType = keyStoreCompat.getB();
 
          keyStorePath = ConfigurationHelper.getStringProperty(TransportConstants.KEYSTORE_PATH_PROP_NAME, TransportConstants.DEFAULT_KEYSTORE_PATH, configuration);
 
          keyStorePassword = ConfigurationHelper.getPasswordProperty(TransportConstants.KEYSTORE_PASSWORD_PROP_NAME, TransportConstants.DEFAULT_KEYSTORE_PASSWORD, configuration, ActiveMQDefaultConfiguration.getPropMaskPassword(), ActiveMQDefaultConfiguration.getPropPasswordCodec());
 
-         trustStoreProvider = ConfigurationHelper.getStringProperty(TransportConstants.TRUSTSTORE_PROVIDER_PROP_NAME, TransportConstants.DEFAULT_TRUSTSTORE_PROVIDER, configuration);
+         Pair<String, String> trustStoreCompat = SSLSupport.getValidProviderAndType(ConfigurationHelper.getStringProperty(TransportConstants.TRUSTSTORE_PROVIDER_PROP_NAME, TransportConstants.DEFAULT_TRUSTSTORE_PROVIDER, configuration),
+                                                                                    ConfigurationHelper.getStringProperty(TransportConstants.TRUSTSTORE_TYPE_PROP_NAME, TransportConstants.DEFAULT_TRUSTSTORE_TYPE, configuration));
+
+         trustStoreProvider = trustStoreCompat.getA();
+
+         trustStoreType = trustStoreCompat.getB();
 
          trustStorePath = ConfigurationHelper.getStringProperty(TransportConstants.TRUSTSTORE_PATH_PROP_NAME, TransportConstants.DEFAULT_TRUSTSTORE_PATH, configuration);
 
@@ -311,11 +328,27 @@ public class NettyAcceptor extends AbstractAcceptor {
          sniHost = ConfigurationHelper.getStringProperty(TransportConstants.SNIHOST_PROP_NAME, TransportConstants.DEFAULT_SNIHOST_CONFIG, configuration);
 
          trustManagerFactoryPlugin = ConfigurationHelper.getStringProperty(TransportConstants.TRUST_MANAGER_FACTORY_PLUGIN_PROP_NAME, TransportConstants.DEFAULT_TRUST_MANAGER_FACTORY_PLUGIN, configuration);
+
+         sslContextConfig = SSLContextConfig.builder()
+            .keystoreProvider(keyStoreProvider)
+            .keystorePath(keyStorePath)
+            .keystoreType(keyStoreType)
+            .keystorePassword(keyStorePassword)
+            .truststoreProvider(trustStoreProvider)
+            .truststorePath(trustStorePath)
+            .truststoreType(trustStoreType)
+            .truststorePassword(trustStorePassword)
+            .trustManagerFactoryPlugin(trustManagerFactoryPlugin)
+            .crlPath(crlPath)
+            .build();
+         providerAgnosticSslContext = loadSSLContext();
       } else {
          keyStoreProvider = TransportConstants.DEFAULT_KEYSTORE_PROVIDER;
+         keyStoreType = TransportConstants.DEFAULT_KEYSTORE_TYPE;
          keyStorePath = TransportConstants.DEFAULT_KEYSTORE_PATH;
          keyStorePassword = TransportConstants.DEFAULT_KEYSTORE_PASSWORD;
          trustStoreProvider = TransportConstants.DEFAULT_TRUSTSTORE_PROVIDER;
+         trustStoreType = TransportConstants.DEFAULT_TRUSTSTORE_TYPE;
          trustStorePath = TransportConstants.DEFAULT_TRUSTSTORE_PATH;
          trustStorePassword = TransportConstants.DEFAULT_TRUSTSTORE_PASSWORD;
          crlPath = TransportConstants.DEFAULT_CRL_PATH;
@@ -345,6 +378,20 @@ public class NettyAcceptor extends AbstractAcceptor {
       connectionsAllowed = ConfigurationHelper.getLongProperty(TransportConstants.CONNECTIONS_ALLOWED, TransportConstants.DEFAULT_CONNECTIONS_ALLOWED, configuration);
 
       autoStart = ConfigurationHelper.getBooleanProperty(TransportConstants.AUTO_START, TransportConstants.DEFAULT_AUTO_START, configuration);
+   }
+
+   private Object loadSSLContext() {
+      checkSSLConfiguration();
+      try {
+         if (TransportConstants.OPENSSL_PROVIDER.equals(sslProvider)) {
+            return OpenSSLContextFactoryProvider.getOpenSSLContextFactory().getServerSslContext(sslContextConfig, configuration);
+         } else {
+            return SSLContextFactoryProvider.getSSLContextFactory().getSSLContext(sslContextConfig, configuration);
+         }
+      } catch (Exception e) {
+         IllegalStateException ise = new IllegalStateException("Unable to create NettyAcceptor for " + host + ":" + port, e);
+         throw ise;
+      }
    }
 
    @Override
@@ -410,10 +457,20 @@ public class NettyAcceptor extends AbstractAcceptor {
          @Override
          public void initChannel(Channel channel) throws Exception {
             ChannelPipeline pipeline = channel.pipeline();
-            Pair<String, Integer> peerInfo = getPeerInfo(channel);
             if (sslEnabled) {
-               pipeline.addLast("ssl", getSslHandler(channel.alloc(), peerInfo.getA(), peerInfo.getB()));
-               pipeline.addLast("sslHandshakeExceptionHandler", new SslHandshakeExceptionHandler());
+               final Pair<String, Integer> peerInfo = getPeerInfo(channel);
+               try {
+                  pipeline.addLast("ssl", getSslHandler(channel.alloc(), peerInfo.getA(), peerInfo.getB()));
+                  pipeline.addLast("sslHandshakeExceptionHandler", new SslHandshakeExceptionHandler());
+               } catch (Exception e) {
+                  Throwable rootCause = getRootCause(e);
+                  ActiveMQServerLogger.LOGGER.gettingSslHandlerFailed(channel.remoteAddress().toString(), rootCause.getClass().getName() + ": " + rootCause.getMessage());
+
+                  if (ActiveMQServerLogger.LOGGER.isDebugEnabled()) {
+                     ActiveMQServerLogger.LOGGER.debug("Getting SSL handler failed", e);
+                  }
+                  throw e;
+               }
             }
             pipeline.addLast(protocolHandler.getProtocolDecoder());
          }
@@ -491,10 +548,19 @@ public class NettyAcceptor extends AbstractAcceptor {
       return connections;
    }
 
+   // Only for testing purposes
+   public ProtocolHandler getProtocolHandler() {
+      return protocolHandler;
+   }
+
    // only for testing purposes
    public void setKeyStorePath(String keyStorePath) {
       this.keyStorePath = keyStorePath;
       this.configuration.put(TransportConstants.KEYSTORE_PATH_PROP_NAME, keyStorePath);
+      sslContextConfig = SSLContextConfig.builder()
+         .from(sslContextConfig)
+         .keystorePath(keyStorePath)
+         .build();
    }
 
    /**
@@ -520,10 +586,14 @@ public class NettyAcceptor extends AbstractAcceptor {
 
       serverChannelGroup.clear();
 
+      if (sslEnabled) {
+         providerAgnosticSslContext = loadSSLContext();
+      }
+
       startServerChannels();
    }
 
-   public synchronized SslHandler getSslHandler(ByteBufAllocator alloc, String peerHost, int peerPort) throws Exception {
+   public SslHandler getSslHandler(ByteBufAllocator alloc, String peerHost, int peerPort) throws Exception {
       SSLEngine engine;
       if (TransportConstants.OPENSSL_PROVIDER.equals(sslProvider)) {
          engine = loadOpenSslEngine(alloc, peerHost, peerPort);
@@ -598,17 +668,7 @@ public class NettyAcceptor extends AbstractAcceptor {
    }
 
    private SSLEngine loadJdkSslEngine(String peerHost, int peerPort) throws Exception {
-      final SSLContext context;
-      try {
-         checkSSLConfiguration();
-         context =  SSLContextFactoryProvider.getSSLContextFactory().getSSLContext(configuration,
-                 keyStoreProvider, keyStorePath, keyStorePassword,
-                 trustStoreProvider, trustStorePath, trustStorePassword,
-                 crlPath, trustManagerFactoryPlugin, TransportConstants.DEFAULT_TRUST_ALL);
-      } catch (Exception e) {
-         IllegalStateException ise = new IllegalStateException("Unable to create NettyAcceptor for " + host + ":" + port, e);
-         throw ise;
-      }
+      final SSLContext context = (SSLContext) providerAgnosticSslContext;
       Subject subject = null;
       if (kerb5Config != null) {
          LoginContext loginContext = new LoginContext(kerb5Config);
@@ -633,29 +693,13 @@ public class NettyAcceptor extends AbstractAcceptor {
       if (configuration.containsKey(TransportConstants.SSL_CONTEXT_PROP_NAME)) {
          return;
       }
-      if (kerb5Config == null && keyStorePath == null && TransportConstants.DEFAULT_TRUSTSTORE_PROVIDER.equals(keyStoreProvider)) {
-         throw new IllegalArgumentException("If \"" + TransportConstants.SSL_ENABLED_PROP_NAME + "\" is true then \"" + TransportConstants.KEYSTORE_PATH_PROP_NAME + "\" must be non-null " + "unless an alternative \"" + TransportConstants.KEYSTORE_PROVIDER_PROP_NAME + "\" has been specified.");
+      if (kerb5Config == null && keyStorePath == null && TransportConstants.DEFAULT_KEYSTORE_PROVIDER.equals(keyStoreProvider)) {
+         throw new IllegalArgumentException("If \"" + TransportConstants.SSL_ENABLED_PROP_NAME + "\" is true then \"" + TransportConstants.KEYSTORE_PATH_PROP_NAME + "\" must be non-null unless an alternative \"" + TransportConstants.KEYSTORE_PROVIDER_PROP_NAME + "\" has been specified.");
       }
    }
 
    private SSLEngine loadOpenSslEngine(ByteBufAllocator alloc, String peerHost, int peerPort) throws Exception {
-      final SslContext context;
-      try {
-         checkSSLConfiguration();
-         context = new SSLSupport()
-            .setKeystoreProvider(keyStoreProvider)
-            .setKeystorePath(keyStorePath)
-            .setKeystorePassword(keyStorePassword)
-            .setTruststoreProvider(trustStoreProvider)
-            .setTruststorePath(trustStorePath)
-            .setTruststorePassword(trustStorePassword)
-            .setSslProvider(sslProvider)
-            .setTrustManagerFactoryPlugin(trustManagerFactoryPlugin)
-            .createNettyContext();
-      } catch (Exception e) {
-         IllegalStateException ise = new IllegalStateException("Unable to create NettyAcceptor for " + host + ":" + port, e);
-         throw ise;
-      }
+      final SslContext context = (SslContext) providerAgnosticSslContext;
       Subject subject = null;
       if (kerb5Config != null) {
          LoginContext loginContext = new LoginContext(kerb5Config);
@@ -859,18 +903,12 @@ public class NettyAcceptor extends AbstractAcceptor {
       return this;
    }
 
-   private static String getProtocols(Map<String, ProtocolManager> protocolManager) {
-      StringBuilder sb = new StringBuilder();
-      if (protocolManager != null) {
-         Set<String> strings = protocolManager.keySet();
-         for (String string : strings) {
-            if (sb.length() > 0) {
-               sb.append(",");
-            }
-            sb.append(string);
-         }
+   private static String getProtocols(final Map<String, ProtocolManager> protocolManagers) {
+      if (protocolManagers == null || protocolManagers.isEmpty()) {
+         return "";
       }
-      return sb.toString();
+
+      return String.join(",", protocolManagers.keySet());
    }
 
    // Inner classes -----------------------------------------------------------------------------
@@ -1011,15 +1049,15 @@ public class NettyAcceptor extends AbstractAcceptor {
             }
          }
       }
+   }
 
-      private Throwable getRootCause(Throwable throwable) {
-         List<Throwable> list = new ArrayList<>();
-         while (throwable != null && list.contains(throwable) == false) {
-            list.add(throwable);
-            throwable = throwable.getCause();
-         }
-         return (list.size() < 2 ? throwable : list.get(list.size() - 1));
+   private Throwable getRootCause(Throwable throwable) {
+      List<Throwable> list = new ArrayList<>();
+      while (throwable != null && list.contains(throwable) == false) {
+         list.add(throwable);
+         throwable = throwable.getCause();
       }
+      return (list.size() < 2 ? throwable : list.get(list.size() - 1));
    }
 
    public boolean isAutoStart() {

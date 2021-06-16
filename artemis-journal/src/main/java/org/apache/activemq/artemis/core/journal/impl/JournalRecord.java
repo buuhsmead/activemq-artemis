@@ -42,9 +42,11 @@ public class JournalRecord {
       addFile.incPosCount();
 
       addFile.addSize(size);
+
+      addFile.incAddRecord();
    }
 
-   void addUpdateFile(final JournalFile updateFile, final int bytes) {
+   void addUpdateFile(final JournalFile updateFile, final int bytes, boolean replaceableUpdate) {
       checkNotDeleted();
       if (bytes == 0) {
          return;
@@ -64,6 +66,9 @@ public class JournalRecord {
       fileUpdates.add(updateFile, bytes, 1);
       updateFile.incPosCount();
       updateFile.addSize(bytes);
+      if (replaceableUpdate) {
+         updateFile.incReplaceableCount();
+      }
    }
 
    void delete(final JournalFile file) {

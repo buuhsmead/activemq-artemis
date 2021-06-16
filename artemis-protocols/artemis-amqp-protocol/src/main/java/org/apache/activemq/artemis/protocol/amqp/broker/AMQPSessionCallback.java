@@ -36,6 +36,7 @@ import org.apache.activemq.artemis.core.paging.PagingManager;
 import org.apache.activemq.artemis.core.paging.PagingStore;
 import org.apache.activemq.artemis.core.persistence.OperationContext;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
+import org.apache.activemq.artemis.core.postoffice.Bindings;
 import org.apache.activemq.artemis.core.security.CheckType;
 import org.apache.activemq.artemis.core.security.SecurityAuth;
 import org.apache.activemq.artemis.core.server.AddressQueryResult;
@@ -46,6 +47,7 @@ import org.apache.activemq.artemis.core.server.ServerConsumer;
 import org.apache.activemq.artemis.core.server.ServerProducer;
 import org.apache.activemq.artemis.core.server.ServerSession;
 import org.apache.activemq.artemis.core.server.impl.AddressInfo;
+import org.apache.activemq.artemis.core.settings.impl.AddressFullMessagePolicy;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.core.transaction.Transaction;
 import org.apache.activemq.artemis.protocol.amqp.exceptions.ActiveMQAMQPException;
@@ -137,6 +139,10 @@ public class AMQPSessionCallback implements SessionCallback {
       return coreMessageObjectPools;
    }
 
+   public ProtonProtocolManager getProtocolManager() {
+      return manager;
+   }
+
    @Override
    public boolean isWritable(ReadyListener callback, Object protocolContext) {
       ProtonServerSenderContext senderContext = (ProtonServerSenderContext) protocolContext;
@@ -201,12 +207,21 @@ public class AMQPSessionCallback implements SessionCallback {
          }
       }
 
-      serverSession = manager.getServer().createSession(name, user, passcode, ActiveMQClient.DEFAULT_MIN_LARGE_MESSAGE_SIZE, protonSPI.getProtonConnectionDelegate(), // RemotingConnection remotingConnection,
-                                                        false, // boolean autoCommitSends
-                                                        false, // boolean autoCommitAcks,
-                                                        false, // boolean preAcknowledge,
-                                                        true, //boolean xa,
-                                                        (String) null, this, true, operationContext, manager.getPrefixes(), manager.getSecurityDomain());
+      if (connection.isBridgeConnection())  {
+         serverSession = manager.getServer().createInternalSession(name, ActiveMQClient.DEFAULT_MIN_LARGE_MESSAGE_SIZE, protonSPI.getProtonConnectionDelegate(), // RemotingConnection remotingConnection,
+                                                           false, // boolean autoCommitSends
+                                                           false, // boolean autoCommitAcks,
+                                                           false, // boolean preAcknowledge,
+                                                           true, //boolean xa,
+                                                           (String) null, this, true, operationContext, manager.getPrefixes(), manager.getSecurityDomain());
+      } else {
+         serverSession = manager.getServer().createSession(name, user, passcode, ActiveMQClient.DEFAULT_MIN_LARGE_MESSAGE_SIZE, protonSPI.getProtonConnectionDelegate(), // RemotingConnection remotingConnection,
+                                                           false, // boolean autoCommitSends
+                                                           false, // boolean autoCommitAcks,
+                                                           false, // boolean preAcknowledge,
+                                                           true, //boolean xa,
+                                                           (String) null, this, true, operationContext, manager.getPrefixes(), manager.getSecurityDomain());
+      }
    }
 
    @Override
@@ -346,7 +361,11 @@ public class AMQPSessionCallback implements SessionCallback {
          }
       } else if (routingType == RoutingType.ANYCAST) {
          if (manager.getServer().locateQueue(unPrefixedAddress) == null) {
-            if (addressSettings.isAutoCreateQueues()) {
+            Bindings bindings = manager.getServer().getPostOffice().lookupBindingsForAddress(address);
+            if (bindings != null) {
+               // this means the address has another queue with a different name, which is fine, we just ignore it on this case
+               result = true;
+            } else if (addressSettings.isAutoCreateQueues()) {
                try {
                   serverSession.createQueue(new QueueConfiguration(address).setRoutingType(routingType).setAutoCreated(true));
                } catch (ActiveMQQueueExistsException e) {
@@ -388,7 +407,7 @@ public class AMQPSessionCallback implements SessionCallback {
 
    public void closeSender(final Object brokerConsumer) throws Exception {
       final ServerConsumer consumer = ((ServerConsumer) brokerConsumer);
-      consumer.close(false, true);
+      consumer.close(false);
       consumer.getQueue().recheckRefCount(serverSession.getSessionContext());
    }
 
@@ -430,7 +449,7 @@ public class AMQPSessionCallback implements SessionCallback {
    public void cancel(Object brokerConsumer, Message message, boolean updateCounts) throws Exception {
       OperationContext oldContext = recoverContext();
       try {
-         ((ServerConsumer) brokerConsumer).individualCancel(message.getMessageID(), updateCounts, true);
+         ((ServerConsumer) brokerConsumer).individualCancel(message.getMessageID(), updateCounts);
          ((ServerConsumer) brokerConsumer).getQueue().forceDelivery();
       } finally {
          resetContext(oldContext);
@@ -466,8 +485,10 @@ public class AMQPSessionCallback implements SessionCallback {
 
       RoutingType routingType = null;
       if (address != null) {
-         // Fixed-address producer
-         message.setAddress(address);
+         // set Fixed-address producer if the message.properties.to address differs from the producer
+         if (!address.toString().equals(message.getAddress())) {
+            message.setAddress(address);
+         }
          routingType = context.getDefRoutingType();
       } else {
          // Anonymous-relay producer, message must carry a To value
@@ -596,10 +617,17 @@ public class AMQPSessionCallback implements SessionCallback {
    public void flow(final SimpleString address,
                     Runnable runnable) {
       try {
-         PagingManager pagingManager = manager.getServer().getPagingManager();
 
          if (address == null) {
-            pagingManager.checkMemory(runnable);
+            PagingManager pagingManager = manager.getServer().getPagingManager();
+            if (manager != null && manager.getServer() != null &&
+                manager.getServer().getAddressSettingsRepository() != null &&
+                manager.getServer().getAddressSettingsRepository().getMatch("#").getAddressFullMessagePolicy().equals(AddressFullMessagePolicy.PAGE)) {
+               // If it's paging, we only check for disk full
+               pagingManager.checkStorage(runnable);
+            } else {
+               pagingManager.checkMemory(runnable);
+            }
          } else {
             final PagingStore store = manager.getServer().getPagingManager().getPageStore(address);
             if (store != null) {

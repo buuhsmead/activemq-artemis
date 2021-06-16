@@ -27,6 +27,7 @@ import org.apache.activemq.artemis.dto.JMXConnectorDTO;
 import org.apache.activemq.artemis.dto.ManagementContextDTO;
 import org.apache.activemq.artemis.dto.MatchDTO;
 import org.apache.activemq.artemis.core.server.management.JMXAccessControlList;
+import org.apache.activemq.artemis.spi.core.security.ActiveMQSecurityManager;
 import org.apache.activemq.artemis.utils.FactoryFinder;
 
 import java.io.IOException;
@@ -60,7 +61,7 @@ public class ManagementFactory {
       return createJmxAclConfiguration(new URI(configuration), artemisHome, artemisInstance, artemisURIInstance);
    }
 
-   public static ManagementContext create(ManagementContextDTO config) throws Exception {
+   public static ManagementContext create(ManagementContextDTO config, ActiveMQSecurityManager securityManager) throws Exception {
       ManagementContext context = new ManagementContext();
 
       if (config.getAuthorisation() != null) {
@@ -111,6 +112,9 @@ public class ManagementFactory {
          if (jmxConnector.getKeyStoreProvider() != null) {
             jmxConnectorConfiguration.setKeyStoreProvider(jmxConnector.getKeyStoreProvider());
          }
+         if (jmxConnector.getKeyStoreType() != null) {
+            jmxConnectorConfiguration.setKeyStoreType(jmxConnector.getKeyStoreType());
+         }
          if (jmxConnector.getKeyStorePassword() != null) {
             jmxConnectorConfiguration.setKeyStorePassword(jmxConnector.getKeyStorePassword());
          }
@@ -119,6 +123,9 @@ public class ManagementFactory {
          }
          if (jmxConnector.getTrustStoreProvider() != null) {
             jmxConnectorConfiguration.setTrustStoreProvider(jmxConnector.getTrustStoreProvider());
+         }
+         if (jmxConnector.getTrustStoreType() != null) {
+            jmxConnectorConfiguration.setTrustStoreType(jmxConnector.getTrustStoreType());
          }
          if (jmxConnector.getTrustStorePassword() != null) {
             jmxConnectorConfiguration.setTrustStorePassword(jmxConnector.getTrustStorePassword());
@@ -130,7 +137,10 @@ public class ManagementFactory {
             jmxConnectorConfiguration.setSecured(jmxConnector.isSecured());
          }
          context.setJmxConnectorConfiguration(jmxConnectorConfiguration);
+         context.setSecurityManager(securityManager);
       }
+
+      context.init();
 
       return context;
    }

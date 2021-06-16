@@ -47,6 +47,8 @@ public final class SimpleString implements CharSequence, Serializable, Comparabl
    // Cache the string
    private transient String str;
 
+   private transient String[] paths;
+
    // Static
    // ----------------------------------------------------------------------
 
@@ -281,6 +283,34 @@ public final class SimpleString implements CharSequence, Serializable, Comparabl
       return str;
    }
 
+   /**
+    * note the result of the first use is cached, the separator is configured on
+    * the postoffice so will be static for the duration of a server instance.
+    * calling with different separator values could give invalid results
+    *
+    * @param separator value from wildcardConfiguration
+    * @return String[] reference to the split paths or the cached value if previously called
+    */
+   public String[] getPaths(final char separator) {
+      if (paths != null) {
+         return paths;
+      }
+      List<String> pathsList = new ArrayList<>();
+      StringBuilder pathAccumulator = new StringBuilder();
+      for (char c : toString().toCharArray()) {
+         if (c == separator) {
+            pathsList.add(pathAccumulator.toString());
+            pathAccumulator.delete(0, pathAccumulator.length());
+         } else {
+            pathAccumulator.append(c);
+         }
+      }
+      pathsList.add(pathAccumulator.toString());
+
+      paths = pathsList.toArray(new String[0]);
+      return paths;
+   }
+
    @Override
    public boolean equals(final Object other) {
       if (this == other) {
@@ -441,6 +471,25 @@ public final class SimpleString implements CharSequence, Serializable, Comparabl
 
       for (int i = 0; i + 1 < data.length; i += 2) {
          if (data[i] == low && data[i + 1] == high) {
+            return true;
+         }
+      }
+      return false;
+   }
+
+   public boolean containsEitherOf(final char c, final char d) {
+      if (this.str != null) {
+         return this.str.indexOf(c) != -1 || this.str.indexOf(d) != -1;
+      }
+      final byte lowc = (byte) (c & 0xFF); // low byte
+      final byte highc = (byte) (c >> 8 & 0xFF); // high byte
+
+      final byte lowd = (byte) (d & 0xFF); // low byte
+      final byte highd = (byte) (d >> 8 & 0xFF); // high byte
+
+      for (int i = 0; i + 1 < data.length; i += 2) {
+         if ( data[i] == lowc && data[i + 1] == highc ||
+            data[i] == lowd && data[i + 1] == highd ) {
             return true;
          }
       }

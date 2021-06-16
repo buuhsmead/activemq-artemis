@@ -291,6 +291,9 @@ public final class ActiveMQDefaultConfiguration {
    // The minimal number of data files before we can start compacting
    private static int DEFAULT_JOURNAL_COMPACT_MIN_FILES = 10;
 
+   // The maximal number of data files before we can start deleting corrupted files instead of moving them to attic.
+   private static int DEFAULT_JOURNAL_MAX_ATTIC_FILES = 10;
+
    // Interval to log server specific information (e.g. memory usage etc)
    private static long DEFAULT_SERVER_DUMP_INTERVAL = -1;
 
@@ -623,6 +626,12 @@ public final class ActiveMQDefaultConfiguration {
    private static final boolean DEFAULT_JVM_THREAD_METRICS = false;
 
    public static final String DEFAULT_TEMPORARY_QUEUE_NAMESPACE = "";
+
+   // Number of concurrent workers for a core bridge
+   public static int DEFAULT_BRIDGE_CONCURRENCY = 1;
+
+   // Whether or not to report Netty pool metrics
+   private static final boolean DEFAULT_NETTY_POOL_METRICS = false;
 
    /**
     * If true then the ActiveMQ Artemis Server will make use of any Protocol Managers that are in available on the classpath. If false then only the core protocol will be available, unless in Embedded mode where users can inject their own Protocol Managers.
@@ -996,6 +1005,13 @@ public final class ActiveMQDefaultConfiguration {
     */
    public static int getDefaultJournalCompactMinFiles() {
       return DEFAULT_JOURNAL_COMPACT_MIN_FILES;
+   }
+
+   /**
+    * how many journal files to be stored in the attic.
+    */
+   public static int getDefaultJournalMaxAtticFiles() {
+      return DEFAULT_JOURNAL_MAX_ATTIC_FILES;
    }
 
    /**
@@ -1703,5 +1719,16 @@ public final class ActiveMQDefaultConfiguration {
 
    public static String getDefaultTemporaryQueueNamespace() {
       return DEFAULT_TEMPORARY_QUEUE_NAMESPACE;
+   }
+
+   public static int getDefaultBridgeConcurrency() {
+      return DEFAULT_BRIDGE_CONCURRENCY;
+   }
+
+   /**
+    * Whether or not to report Netty pool metrics
+    */
+   public static Boolean getDefaultNettyPoolMetrics() {
+      return DEFAULT_NETTY_POOL_METRICS;
    }
 }

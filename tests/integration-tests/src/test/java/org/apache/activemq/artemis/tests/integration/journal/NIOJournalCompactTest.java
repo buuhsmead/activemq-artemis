@@ -37,6 +37,7 @@ import org.apache.activemq.artemis.core.io.IOCallback;
 import org.apache.activemq.artemis.core.io.SequentialFile;
 import org.apache.activemq.artemis.core.io.SequentialFileFactory;
 import org.apache.activemq.artemis.core.io.nio.NIOSequentialFileFactory;
+import org.apache.activemq.artemis.core.journal.EncoderPersister;
 import org.apache.activemq.artemis.core.journal.PreparedTransactionInfo;
 import org.apache.activemq.artemis.core.journal.RecordInfo;
 import org.apache.activemq.artemis.core.journal.impl.AbstractJournalUpdateTask;
@@ -44,6 +45,7 @@ import org.apache.activemq.artemis.core.journal.impl.JournalCompactor;
 import org.apache.activemq.artemis.core.journal.impl.JournalFile;
 import org.apache.activemq.artemis.core.journal.impl.JournalFileImpl;
 import org.apache.activemq.artemis.core.journal.impl.JournalImpl;
+import org.apache.activemq.artemis.core.journal.impl.dataformat.ByteArrayEncoding;
 import org.apache.activemq.artemis.core.message.impl.CoreMessage;
 import org.apache.activemq.artemis.core.persistence.impl.journal.JournalStorageManager;
 import org.apache.activemq.artemis.core.persistence.impl.journal.OperationContextImpl;
@@ -549,6 +551,10 @@ public class NIOJournalCompactTest extends JournalImplTestBase {
          }
       }
 
+      for (int i = 0; i < 10; i++) {
+         journal.appendAddEvent(idGenerator.generateID(), (byte) 0, EncoderPersister.getInstance(), new ByteArrayEncoding(new byte[10]), false, null);
+      }
+
       if (pendingTransactions) {
          for (long i = 0; i < 100; i++) {
             long recordID = idGenerator.generateID();
@@ -844,7 +850,7 @@ public class NIOJournalCompactTest extends JournalImplTestBase {
          journal.testCompact();
          journal.testCompact();
          journal.testCompact();
-         logger.info("going to commit");
+         logger.debug("going to commit");
          commit(tx);
       }
 
@@ -1198,6 +1204,10 @@ public class NIOJournalCompactTest extends JournalImplTestBase {
          if (!(i % 10 == 0)) {
             delete(i);
          }
+      }
+
+      for (int i = 0; i < 10; i++) {
+         journal.appendAddEvent(idGenerator.generateID(), (byte) 0, EncoderPersister.getInstance(), new ByteArrayEncoding(new byte[10]), false, null);
       }
 
       journal.forceMoveNextFile();
@@ -1737,14 +1747,14 @@ public class NIOJournalCompactTest extends JournalImplTestBase {
 
                      survivingMsgs.add(message.getMessageID());
 
-                     logger.info("Going to store " + message);
+                     logger.debug("Going to store " + message);
                      // This one will stay here forever
                      storage.storeMessage(message);
-                     logger.info("message storeed " + message);
+                     logger.debug("message stored " + message);
 
-                     logger.info("Going to commit " + tx);
+                     logger.debug("Going to commit " + tx);
                      storage.commit(tx);
-                     logger.info("Committed " + tx);
+                     logger.debug("Committed " + tx);
 
                      ctx.executeOnCompletion(new IOCallback() {
                         @Override

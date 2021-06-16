@@ -58,6 +58,25 @@ public class ActiveMQServerControlUsingCoreTest extends ActiveMQServerControlTes
    @Override
    protected ActiveMQServerControl createManagementControl() throws Exception {
       return new ActiveMQServerControl() {
+         @Override
+         public String listBrokerConnections() {
+            try {
+               return (String) proxy.invokeOperation("listBrokerConnections");
+            } catch (Throwable throwable) {
+               throwable.printStackTrace();
+               return null;
+            }
+         }
+
+         @Override
+         public void startBrokerConnection(String name) throws Exception {
+            proxy.invokeOperation("startBrokerConnection", name);
+         }
+
+         @Override
+         public void stopBrokerConnection(String name) throws Exception {
+            proxy.invokeOperation("stopBrokerConnection", name);
+         }
 
          @Override
          public String updateAddress(String name, String routingTypes) throws Exception {
@@ -357,8 +376,18 @@ public class ActiveMQServerControlUsingCoreTest extends ActiveMQServerControlTes
          }
 
          @Override
+         public int getAddressCount() {
+            return (Integer) proxy.retrieveAttributeValue("addressCount", Integer.class);
+         }
+
+         @Override
          public String[] getAddressNames() {
             return (String[]) proxy.retrieveAttributeValue("addressNames", String.class);
+         }
+
+         @Override
+         public int getQueueCount() {
+            return (Integer) proxy.retrieveAttributeValue("queueCount", Integer.class);
          }
 
          @Override
@@ -415,6 +444,11 @@ public class ActiveMQServerControlUsingCoreTest extends ActiveMQServerControlTes
          @Override
          public void resetUser(String username, String password, String roles, boolean plaintext) throws Exception {
             proxy.invokeOperation("resetUser", username, password, roles, plaintext);
+         }
+
+         @Override
+         public void reloadConfigurationFile() throws Exception {
+            proxy.invokeOperation("reloadConfigurationFile");
          }
 
          @Override
@@ -711,6 +745,11 @@ public class ActiveMQServerControlUsingCoreTest extends ActiveMQServerControlTes
          @Override
          public int getJournalBufferSize() {
             return (Integer) proxy.retrieveAttributeValue("JournalBufferSize", Integer.class);
+         }
+
+         @Override
+         public int getJournalPoolFiles() {
+            return (Integer) proxy.retrieveAttributeValue("JournalPoolFiles", Integer.class);
          }
 
          @Override
@@ -1520,6 +1559,11 @@ public class ActiveMQServerControlUsingCoreTest extends ActiveMQServerControlTes
                                   String user,
                                   String password) throws Exception {
             proxy.invokeOperation("createBridge", name, queueName, forwardingAddress, filterString, transformerClassName, retryInterval, retryIntervalMultiplier, initialConnectAttempts, reconnectAttempts, useDuplicateDetection, confirmationWindowSize, clientFailureCheckPeriod, connectorNames, useDiscovery, ha, user, password);
+         }
+
+         @Override
+         public void createBridge(String bridgeConfiguration) throws Exception {
+            proxy.invokeOperation("createBridge", bridgeConfiguration);
          }
 
          @Override

@@ -32,10 +32,11 @@ import org.apache.activemq.artemis.core.remoting.impl.netty.NettyServerConnectio
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.management.Notification;
 import org.apache.activemq.artemis.core.server.management.NotificationListener;
-import org.apache.activemq.artemis.jms.client.ActiveMQDestination;
+import org.apache.activemq.artemis.protocol.amqp.client.ProtonClientProtocolManager;
 import org.apache.activemq.artemis.protocol.amqp.proton.AMQPConnectionContext;
 import org.apache.activemq.artemis.protocol.amqp.proton.AMQPConstants;
 import org.apache.activemq.artemis.protocol.amqp.proton.AmqpSupport;
+import org.apache.activemq.artemis.protocol.amqp.sasl.ClientSASLFactory;
 import org.apache.activemq.artemis.protocol.amqp.sasl.MechanismFinder;
 import org.apache.activemq.artemis.spi.core.protocol.AbstractProtocolManager;
 import org.apache.activemq.artemis.spi.core.protocol.ConnectionEntry;
@@ -45,6 +46,7 @@ import org.apache.activemq.artemis.spi.core.remoting.Acceptor;
 import org.apache.activemq.artemis.spi.core.remoting.Connection;
 
 import io.netty.channel.ChannelPipeline;
+import org.apache.activemq.artemis.utils.DestinationUtil;
 import org.jboss.logging.Logger;
 
 /**
@@ -55,6 +57,8 @@ public class ProtonProtocolManager extends AbstractProtocolManager<AMQPMessage, 
    private static final Logger logger = Logger.getLogger(ProtonProtocolManager.class);
 
    private static final List<String> websocketRegistryNames = Arrays.asList("amqp");
+
+   public static final String MIRROR_ADDRESS = "$ACTIVEMQ_ARTEMIS_MIRROR";
 
    private final List<AmqpInterceptor> incomingInterceptors = new ArrayList<>();
    private final List<AmqpInterceptor> outgoingInterceptors = new ArrayList<>();
@@ -84,7 +88,7 @@ public class ProtonProtocolManager extends AbstractProtocolManager<AMQPMessage, 
 
    private int initialRemoteMaxFrameSize = 4 * 1024;
 
-   private String[] saslMechanisms = MechanismFinder.getKnownMechanisms();
+   private String[] saslMechanisms = MechanismFinder.getDefaultMechanisms();
 
    private String saslLoginConfigScope = "amqp-sasl-gssapi";
 
@@ -97,8 +101,7 @@ public class ProtonProtocolManager extends AbstractProtocolManager<AMQPMessage, 
    * used when you want to treat senders as a subscription on an address rather than consuming from the actual queue for
    * the address. This can be changed on the acceptor.
    * */
-   // TODO fix this
-   private String pubSubPrefix = ActiveMQDestination.TOPIC_QUALIFIED_PREFIX;
+   private String pubSubPrefix = DestinationUtil.TOPIC_QUALIFIED_PREFIX;
 
    private int maxFrameSize = AmqpSupport.MAX_FRAME_SIZE_DEFAULT;
 
@@ -173,8 +176,28 @@ public class ProtonProtocolManager extends AbstractProtocolManager<AMQPMessage, 
       return this;
    }
 
+   /** for outgoing */
+   public ProtonClientProtocolManager createClientManager() {
+      ProtonClientProtocolManager clientOutgoing = new ProtonClientProtocolManager(factory, server);
+      return clientOutgoing;
+   }
+
    @Override
    public ConnectionEntry createConnectionEntry(Acceptor acceptorUsed, Connection remotingConnection) {
+      return internalConnectionEntry(remotingConnection, false, null);
+   }
+
+   /** This method is not part of the ProtocolManager interface because it only makes sense on AMQP.
+    *  More specifically on AMQP Bridges */
+   public ConnectionEntry createOutgoingConnectionEntry(Connection remotingConnection) {
+      return internalConnectionEntry(remotingConnection, true, null);
+   }
+
+   public ConnectionEntry createOutgoingConnectionEntry(Connection remotingConnection, ClientSASLFactory saslFactory) {
+      return internalConnectionEntry(remotingConnection, true, saslFactory);
+   }
+
+   private ConnectionEntry internalConnectionEntry(Connection remotingConnection, boolean outgoing, ClientSASLFactory saslFactory) {
       AMQPConnectionCallback connectionCallback = new AMQPConnectionCallback(this, remotingConnection, server.getExecutorFactory().getExecutor(), server);
       long ttl = ActiveMQClient.DEFAULT_CONNECTION_TTL;
 
@@ -192,18 +215,18 @@ public class ProtonProtocolManager extends AbstractProtocolManager<AMQPMessage, 
 
       String id = server.getConfiguration().getName();
       boolean useCoreSubscriptionNaming = server.getConfiguration().isAmqpUseCoreSubscriptionNaming();
-      AMQPConnectionContext amqpConnection = new AMQPConnectionContext(this, connectionCallback, id, (int) ttl, getMaxFrameSize(), AMQPConstants.Connection.DEFAULT_CHANNEL_MAX, useCoreSubscriptionNaming, server.getScheduledPool(), true, null, null);
+      AMQPConnectionContext amqpConnection = new AMQPConnectionContext(this, connectionCallback, id, (int) ttl, getMaxFrameSize(), AMQPConstants.Connection.DEFAULT_CHANNEL_MAX, useCoreSubscriptionNaming, server.getScheduledPool(), true, saslFactory, null, outgoing);
 
       Executor executor = server.getExecutorFactory().getExecutor();
 
-      ActiveMQProtonRemotingConnection delegate = new ActiveMQProtonRemotingConnection(this, amqpConnection, remotingConnection, executor);
-      delegate.addFailureListener(connectionCallback);
-      delegate.addCloseListener(connectionCallback);
+      ActiveMQProtonRemotingConnection protonRemotingConnection = new ActiveMQProtonRemotingConnection(this, amqpConnection, remotingConnection, executor);
+      protonRemotingConnection.addFailureListener(connectionCallback);
+      protonRemotingConnection.addCloseListener(connectionCallback);
 
-      connectionCallback.setProtonConnectionDelegate(delegate);
+      connectionCallback.setProtonConnectionDelegate(protonRemotingConnection);
 
       // connection entry only understands -1 otherwise we would see disconnects for no reason
-      ConnectionEntry entry = new ConnectionEntry(delegate, executor, System.currentTimeMillis(), ttl <= 0 ? -1 : ttl);
+      ConnectionEntry entry = new ConnectionEntry(protonRemotingConnection, executor, System.currentTimeMillis(), ttl <= 0 ? -1 : ttl);
 
       return entry;
    }

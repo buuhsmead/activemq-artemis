@@ -55,6 +55,7 @@ import org.apache.activemq.artemis.core.journal.EncodingSupport;
 import org.apache.activemq.artemis.core.journal.IOCompletion;
 import org.apache.activemq.artemis.core.journal.Journal;
 import org.apache.activemq.artemis.core.journal.JournalLoadInformation;
+import org.apache.activemq.artemis.core.journal.JournalUpdateCallback;
 import org.apache.activemq.artemis.core.journal.LoaderCallback;
 import org.apache.activemq.artemis.core.journal.PreparedTransactionInfo;
 import org.apache.activemq.artemis.core.journal.RecordInfo;
@@ -71,6 +72,7 @@ import org.apache.activemq.artemis.core.persistence.OperationContext;
 import org.apache.activemq.artemis.core.persistence.Persister;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
 import org.apache.activemq.artemis.core.persistence.impl.journal.JournalStorageManager;
+import org.apache.activemq.artemis.core.persistence.impl.journal.LargeServerMessageImpl;
 import org.apache.activemq.artemis.core.persistence.impl.journal.OperationContextImpl;
 import org.apache.activemq.artemis.core.protocol.core.CoreRemotingConnection;
 import org.apache.activemq.artemis.core.protocol.core.Packet;
@@ -78,6 +80,7 @@ import org.apache.activemq.artemis.core.replication.ReplicatedJournal;
 import org.apache.activemq.artemis.core.replication.ReplicationManager;
 import org.apache.activemq.artemis.core.server.ActiveMQComponent;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
+import org.apache.activemq.artemis.core.server.LargeServerMessage;
 import org.apache.activemq.artemis.core.server.cluster.ClusterController;
 import org.apache.activemq.artemis.core.server.impl.ActiveMQServerImpl;
 import org.apache.activemq.artemis.core.settings.HierarchicalRepository;
@@ -539,6 +542,29 @@ public final class ReplicationTest extends ActiveMQTestBase {
       Assert.assertEquals(0, manager.getActiveTokens().size());
    }
 
+   @Test
+   public void testReplicationLargeMessageFileClose() throws Exception {
+      setupServer(true);
+
+      JournalStorageManager storage = getStorage();
+
+      manager = liveServer.getReplicationManager();
+      waitForComponent(manager);
+
+      CoreMessage msg = new CoreMessage().initBuffer(1024).setMessageID(1);
+      LargeServerMessage largeMsg = liveServer.getStorageManager().createLargeMessage(500, msg);
+      largeMsg.addBytes(new byte[1024]);
+      largeMsg.releaseResources(true, true);
+
+      blockOnReplication(storage, manager);
+
+      LargeServerMessageImpl message1 = (LargeServerMessageImpl) backupServer.getReplicationEndpoint().getLargeMessages().get(Long.valueOf(500));
+
+      Assert.assertNotNull(message1);
+      Assert.assertFalse(largeMsg.getAppendFile().isOpen());
+      Assert.assertFalse(message1.getAppendFile().isOpen());
+   }
+
    class FakeData implements EncodingSupport {
 
       @Override
@@ -623,6 +649,26 @@ public final class ReplicationTest extends ActiveMQTestBase {
    static final class FakeJournal implements Journal {
 
       @Override
+      public void setRemoveExtraFilesOnLoad(boolean removeExtraFilesOnLoad) {
+
+      }
+
+      @Override
+      public void appendAddEvent(long id,
+                                 byte recordType,
+                                 Persister persister,
+                                 Object record,
+                                 boolean sync,
+                                 IOCompletion completionCallback) throws Exception {
+
+      }
+
+      @Override
+      public boolean isRemoveExtraFilesOnLoad() {
+         return false;
+      }
+
+      @Override
       public void appendAddRecord(long id,
                                   byte recordType,
                                   Persister persister,
@@ -651,12 +697,12 @@ public final class ReplicationTest extends ActiveMQTestBase {
       }
 
       @Override
-      public boolean tryAppendUpdateRecord(long id,
+      public void tryAppendUpdateRecord(long id,
                                            byte recordType,
                                            Persister persister,
-                                           Object record,
-                                           boolean sync) throws Exception {
-         return true;
+                                           Object record, JournalUpdateCallback updateCallback,
+                                           boolean sync,
+                                           boolean repalceableUpdate) throws Exception {
       }
 
       @Override
@@ -670,13 +716,12 @@ public final class ReplicationTest extends ActiveMQTestBase {
       }
 
       @Override
-      public boolean tryAppendUpdateRecord(long id,
+      public void tryAppendUpdateRecord(long id,
                                            byte recordType,
                                            Persister persister,
                                            Object record,
-                                           boolean sync,
+                                           boolean sync, boolean replaceableUpdate, JournalUpdateCallback updateCallback,
                                            IOCompletion callback) throws Exception {
-         return true;
       }
 
       @Override
@@ -750,8 +795,7 @@ public final class ReplicationTest extends ActiveMQTestBase {
       }
 
       @Override
-      public boolean tryAppendDeleteRecord(long id, boolean sync) throws Exception {
-         return true;
+      public void tryAppendDeleteRecord(long id, JournalUpdateCallback updateConsumer, boolean sync) throws Exception {
       }
 
       @Override
@@ -801,8 +845,7 @@ public final class ReplicationTest extends ActiveMQTestBase {
       }
 
       @Override
-      public boolean tryAppendUpdateRecord(long id, byte recordType, byte[] record, boolean sync) throws Exception {
-         return true;
+      public void tryAppendUpdateRecord(long id, byte recordType, byte[] record, JournalUpdateCallback updateCallback, boolean sync, boolean replaceable) throws Exception {
       }
 
       @Override
@@ -906,8 +949,7 @@ public final class ReplicationTest extends ActiveMQTestBase {
       }
 
       @Override
-      public boolean tryAppendDeleteRecord(long id, boolean sync, IOCompletion completionCallback) throws Exception {
-         return true;
+      public void tryAppendDeleteRecord(long id, boolean sync, JournalUpdateCallback updateCallback, IOCompletion completionCallback) throws Exception {
       }
 
       @Override
@@ -932,10 +974,6 @@ public final class ReplicationTest extends ActiveMQTestBase {
       }
 
       public void sync(final IOCompletion callback) {
-      }
-
-      @Override
-      public void runDirectJournalBlast() throws Exception {
       }
 
       @Override

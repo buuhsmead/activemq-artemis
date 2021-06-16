@@ -185,6 +185,9 @@ public abstract class FailoverTestBase extends ActiveMQTestBase {
       return new InVMNodeManager(true, backupConfig.getJournalLocation());
    }
 
+   protected boolean supportsRetention() {
+      return true;
+   }
 
    protected void createReplicatedConfigs() throws Exception {
       final TransportConfiguration liveConnector = getConnectorTransportConfiguration(true);
@@ -206,6 +209,11 @@ public abstract class FailoverTestBase extends ActiveMQTestBase {
       liveConfig.clearAcceptorConfigurations().addAcceptorConfiguration(getAcceptorTransportConfiguration(true));
 
       liveServer = createTestableServer(liveConfig);
+
+      if (supportsRetention()) {
+         liveServer.getServer().getConfiguration().setJournalRetentionDirectory(getJournalDir(0, false) + "_retention");
+         backupServer.getServer().getConfiguration().setJournalRetentionDirectory(getJournalDir(0, true) + "_retention");
+      }
    }
 
    protected void setupHAPolicyConfiguration() {
@@ -293,7 +301,7 @@ public abstract class FailoverTestBase extends ActiveMQTestBase {
    protected abstract TransportConfiguration getConnectorTransportConfiguration(boolean live);
 
    protected ServerLocatorInternal getServerLocator() throws Exception {
-      return (ServerLocatorInternal) addServerLocator(ActiveMQClient.createServerLocatorWithHA(getConnectorTransportConfiguration(true), getConnectorTransportConfiguration(false))).setRetryInterval(50);
+      return (ServerLocatorInternal) addServerLocator(ActiveMQClient.createServerLocatorWithHA(getConnectorTransportConfiguration(true), getConnectorTransportConfiguration(false))).setRetryInterval(50).setInitialConnectAttempts(50);
    }
 
    protected void crash(final ClientSession... sessions) throws Exception {

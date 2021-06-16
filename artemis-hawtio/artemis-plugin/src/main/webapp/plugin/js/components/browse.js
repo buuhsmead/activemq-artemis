@@ -33,7 +33,7 @@ var Artemis;
                         <form class="toolbar-pf-actions">
                             <div class="form-group toolbar-pf-filter">
                                 <div class="input-group">
-                                    <input type="text" class="form-control" ng-model="$ctrl.filter.values.value" placeholder="Filter..." autocomplete="off" id="filterInput">
+                                    <input type="text" class="form-control" ng-model="$ctrl.filter" placeholder="Filter..." autocomplete="off" id="filterInput">
                                     <div class="input-group-btn">
                                         <button class="btn btn-link btn-find" ng-click="$ctrl.refresh()" type="button">
                                             &nbsp;&nbsp;<span class="fa fa-search"></span>&nbsp;&nbsp;
@@ -65,6 +65,11 @@ var Artemis;
                                         ng-disabled="$ctrl.retryDisabled"
                                         ng-click="$ctrl.openRetryDialog()">Retry Messages
                                     </button>
+                                    <button class="btn btn-default primary-action ng-binding ng-scope"
+                                        type="button"
+                                        title=""
+                                        ng-click="$ctrl.showColumns = true">Columns
+                                    </button>
                             </div>
                         </form>
                     </div>
@@ -72,23 +77,35 @@ var Artemis;
                 <pf-table-view config="$ctrl.tableConfig"
                     columns="$ctrl.tableColumns"
                     items="$ctrl.messages"
-                    dt-options="$ctrl.tableDtOptions"
+                    dt-options="$ctrl.dtOptions"
                     action-buttons="$ctrl.tableMenuActions">
                 </pf-table-view>
                 <div ng-include="'plugin/artemispagination.html'"></div>
 
             </div>
             <div class="form-group" ng-show="$ctrl.showMessageDetails">
-                <button class="btn btn-primary" ng-click="$ctrl.showMessageDetails = false">Back</button>
-                <h2>MessageID: {{$ctrl.currentMessage.messageID}}</h2>
-                <h2>Headers</h2>
+                <button class="btn btn-primary" ng-click="$ctrl.currentMessage.selected = false;$ctrl.showMessageDetails = false">Back</button>
+                <button class="btn btn-primary" ng-click="$ctrl.currentMessage.selected = true;$ctrl.actionText = 'You are about to move message ID=' + $ctrl.currentMessage.messageID;$ctrl.moveDialog = true">Move</button>
+                <button class="btn btn-primary" ng-click="$ctrl.currentMessage.selected = true;$ctrl.actionText = 'You are about to delete this message ID=' + $ctrl.currentMessage.messageID;$ctrl.deleteDialog = true">Delete</button>
+                <button class="btn btn-primary" title="First Page"  ng-disabled="$ctrl.pagination.pageNumber == 1" ng-click="$ctrl.firstPage()"><i class="fa fa-fast-backward" aria-hidden="true"/></button>
+                <button class="btn btn-primary" title="Previous Page" ng-disabled="$ctrl.pagination.pageNumber == 1" ng-click="$ctrl.previousPage()"><i class="fa fa-step-backward" aria-hidden="true"/></button>
+                <button class="btn btn-primary" title="Previous Message" ng-disabled="$ctrl.pagination.pageNumber == 1 && $ctrl.currentMessage.idx == 0" ng-click="$ctrl.previousMessage()"><i class="fa fa-backward" aria-hidden="true"/></button>
+                <button class="btn btn-primary" title="Next Message" ng-disabled="$ctrl.pagination.pageNumber == $ctrl.pagination.pages && $ctrl.currentMessage.idx >= ($ctrl.messages.length - 1)" ng-click="$ctrl.nextMessage()"><i class="fa fa-forward" aria-hidden="true"/></button>
+                <button class="btn btn-primary" title="Next Page" ng-disabled="$ctrl.pagination.pageNumber == $ctrl.pagination.pages" ng-click="$ctrl.nextPage()"><i class="fa fa-step-forward" aria-hidden="true"/></button>
+                <button class="btn btn-primary" title="Last Page" ng-disabled="$ctrl.pagination.pageNumber == $ctrl.pagination.pages" ng-click="$ctrl.lastPage()"><i class="fa fa-fast-forward" aria-hidden="true"/></button>
+                <h4>Message ID: {{$ctrl.currentMessage.messageID}}</h4>
+
+                <h4>Displaying body as <span ng-bind="$ctrl.currentMessage.textMode"></span></h4>
+                <div hawtio-editor="$ctrl.currentMessage.bodyText" read-only="true" mode='mode'></div>
+
+                <h4>Headers</h4>
                 <pf-toolbar config="$ctrl.messageToolbarConfig"></pf-toolbar>
                 <pf-table-view config="$ctrl.messageTableConfig"
                     columns="$ctrl.messageTableColumns"
                     items="$ctrl.currentMessage.headers">
                 </pf-table-view>
 
-                <h2>Properties</h2>
+                <h4>Properties</h4>
                 <div ng-show="$ctrl.showMessageDetails">
                     <pf-toolbar config="$ctrl.messagePToolbarConfig"></pf-toolbar>
                     <pf-table-view config="$ctrl.messagePTableConfig"
@@ -96,9 +113,6 @@ var Artemis;
                         items="$ctrl.currentMessage.properties">
                     </pf-table-view>
                 </div>
-
-                <h3>Displaying body as <span ng-bind="$ctrl.currentMessage.textMode"></span></h3>
-                <div hawtio-editor="$ctrl.currentMessage.bodyText" read-only="true" mode='mode'></div>
             </div>
 
             <div hawtio-confirm-dialog="$ctrl.deleteDialog" title="Delete messages?"
@@ -146,6 +160,20 @@ var Artemis;
                     <p>{{$ctrl.actionText}}</p>
                 </div>
             </div>
+            <div hawtio-confirm-dialog="$ctrl.showColumns"
+              title="Column Selector"
+              cancel-button-text="Close"
+              on-cancel="$ctrl.updateColumns()"
+              show-ok-button="false">
+                <div class="dialog-body ng-non-bindable" >
+                    <table class="table-view-container table table-striped table-bordered table-hover dataTable ng-scope ng-isolate-scope no-footer">
+                        <tr ng-repeat="col in $ctrl.dtOptions.columns">
+                            <td>{{ col.name }}</td>
+                            <td><input type="checkbox" ng-model="col.visible" placeholder="Name" autocomplete="off" id="name"></td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
             <script type="text/ng-template" id="browse-instructions.html">
               <div>
                 <p>
@@ -156,7 +184,8 @@ var Artemis;
                 <p>
                     Clicking on the <code>show</code> buton will show the messages details in more detail including, headers, properties
                     and the body if viewable. Clicking on the <code>resend</code> button will navigate to the <code>Send Message</code>
-                    tab and copy the message details so a copy of the message can be resent.
+                    tab and copy the message details so a copy of the message can be resent. You can also use the cassette
+                    buttons to move to the next/previous message, next/previous page or first/last page.
                 </p>
               </div>
             </script>
@@ -173,6 +202,7 @@ var Artemis;
         ctrl.moveDisabled = true;
         ctrl.retryDisabled = true;
         ctrl.pagination = pagination;
+        ctrl.pagination.reset();
         ctrl.filter = '';
         ctrl.actionText = '';
 
@@ -193,10 +223,48 @@ var Artemis;
         Artemis.log.debug("loading table" + artemisExpiryQueue);
         if (objName) {
             ctrl.dlq = false;
-            var queueName = jolokia.getAttribute(objName, "Name");
-            if (queueName == artemisDLQ || queueName == artemisExpiryQueue) {
+            var addressName = jolokia.getAttribute(objName, "Address");
+            if (addressName == artemisDLQ || addressName == artemisExpiryQueue) {
                 ctrl.dlq = true;
             }
+        }
+
+        ctrl.dtOptions = {
+           // turn of ordering as we do it ourselves
+           ordering: false,
+           columns: [
+                {name: "Select", visible: true},
+                {name: "Message ID", visible: true},
+                {name: "Type", visible: true},
+                {name: "Durable", visible: true},
+                {name: "Priority", visible: true},
+                {name: "Timestamp", visible: true},
+                {name: "Expires", visible: true},
+                {name: "Redelivered", visible: true},
+                {name: "Large", visible: true},
+                {name: "Persistent Size", visible: true},
+                {name: "User ID", visible: true},
+                {name: "Validated User", visible: true},
+                {name: "Original Queue (Expiry/DLQ's only)", visible: true}
+           ]
+        };
+
+        Artemis.log.debug('sessionStorage: browseColumnDefs =', localStorage.getItem('browseColumnDefs'));
+        if (localStorage.getItem('browseColumnDefs')) {
+            loadedDefs = JSON.parse(localStorage.getItem('browseColumnDefs'));
+            //sanity check to make sure columns havent been added
+            if(loadedDefs.length === ctrl.dtOptions.columns.length) {
+                ctrl.dtOptions.columns = loadedDefs;
+            }
+        }
+
+        ctrl.updateColumns = function () {
+            var attributes = [];
+            ctrl.dtOptions.columns.forEach(function (column) {
+                attributes.push({name: column.name, visible: column.visible});
+            });
+            Artemis.log.debug("saving columns " + JSON.stringify(attributes));
+            localStorage.setItem('browseColumnDefs', JSON.stringify(attributes));
         }
 
         ctrl.tableConfig = {
@@ -207,7 +275,7 @@ var Artemis;
         ctrl.tableColumns = [
             {
                 itemField: 'messageID',
-                header: 'messageID'
+                header: 'Message ID'
             },
             {
                 itemField: 'type',
@@ -267,6 +335,17 @@ var Artemis;
 
         ];
 
+        if (ctrl.dlq) {
+            origQueue = {
+                itemField: 'StringProperties',
+                header: 'Original Queue',
+                templateFn: function(value) {
+                    return value._AMQ_ORIG_QUEUE;
+                }
+            };
+            ctrl.tableColumns.push(origQueue);
+        }
+
         var resendConfig = {
             name: 'Resend',
             title: 'Resend message',
@@ -300,9 +379,6 @@ var Artemis;
 
         ctrl.tableMenuActions = [ showConfig, resendConfig ];
 
-        ctrl.tableDtOptions = {
-          order: [[0, "asc"]]
-        };
         ctrl.sysprops = [];
 
         Artemis.log.debug("loaded browse 5" + Artemis.browseQueueModule);
@@ -321,7 +397,7 @@ var Artemis;
         ctrl.retryDialog = false;
         ctrl.showMessageDetails = false;
 
-        var ignoreColumns = ["PropertiesText", "bodyText", "BodyPreview", "text", "headers", "properties", "textMode"];
+        var ignoreColumns = ["PropertiesText", "bodyText", "BodyPreview", "text", "headers", "properties", "textMode", "idx"];
         var flattenColumns = ["BooleanProperties", "ByteProperties", "ShortProperties", "IntProperties", "LongProperties", "FloatProperties", "DoubleProperties", "StringProperties"];
 
         function openMessageDialog(action, item) {
@@ -330,6 +406,53 @@ var Artemis;
             ctrl.currentMessage.properties = createProperties(ctrl.currentMessage);
             ctrl.currentMessage.bodyText = createBodyText(ctrl.currentMessage);
             ctrl.showMessageDetails = true;
+        };
+
+        ctrl.previousMessage = function() {
+            ctrl.currentMessage.selected = false;
+            nextIdx = ctrl.currentMessage.idx - 1;
+            if (nextIdx < 0) {
+                ctrl.pagination.previousPage();
+                ctrl.loadPrevousPage = true;
+                //we return here and let the next table load in and move to message idx 0
+                return;
+            }
+            nextMessage =  ctrl.messages.find(tree => tree.idx == nextIdx);
+            ctrl.currentMessage = nextMessage;
+            ctrl.currentMessage.headers = createHeaders(ctrl.currentMessage)
+            ctrl.currentMessage.properties = createProperties(ctrl.currentMessage);
+            ctrl.currentMessage.bodyText = createBodyText(ctrl.currentMessage);
+        };
+
+        ctrl.nextMessage = function() {
+            ctrl.currentMessage.selected = false;
+            nextIdx = ctrl.currentMessage.idx + 1;
+            if (nextIdx == ctrl.pagination.pageSize) {
+                ctrl.pagination.nextPage();
+                //we return here and let the next table load in and move to messae idx 0
+                return;
+            }
+            nextMessage =  ctrl.messages.find(tree => tree.idx == nextIdx);
+            ctrl.currentMessage = nextMessage;
+            ctrl.currentMessage.headers = createHeaders(ctrl.currentMessage)
+            ctrl.currentMessage.properties = createProperties(ctrl.currentMessage);
+            ctrl.currentMessage.bodyText = createBodyText(ctrl.currentMessage);
+        };
+
+        ctrl.previousPage = function() {
+            ctrl.pagination.previousPage();
+        };
+
+        ctrl.nextPage = function() {
+            ctrl.pagination.nextPage();
+        };
+
+        ctrl.firstPage = function() {
+            ctrl.pagination.firstPage();
+        };
+
+        ctrl.lastPage = function() {
+            ctrl.pagination.lastPage();
         };
 
         var MS_PER_SEC  = 1000;
@@ -342,33 +465,37 @@ var Artemis;
         }
 
         function formatExpires(timestamp) {
-            if (isNaN(timestamp)) {
+             if (isNaN(timestamp)) {
                 return timestamp;
-            }
-            var expiresIn = timestamp - Date.now();
-            if (Math.abs(expiresIn) < MS_PER_DAY) {
+             }
+             if (timestamp == 0) {
+                return "never";
+             }
+             var expiresIn = timestamp - Date.now();
+             if (Math.abs(expiresIn) < MS_PER_DAY) {
                 var duration = expiresIn < 0 ? -expiresIn : expiresIn;
                 var hours = pad2(Math.floor((duration / MS_PER_HOUR) % 24));
                 var mins  = pad2(Math.floor((duration / MS_PER_MIN) % 60));
                 var secs  = pad2(Math.floor((duration / MS_PER_SEC) % 60));
                 if (expiresIn < 0) {
-                // "HH:mm:ss ago"
-                    return hours + ":" + mins + ":" + secs + " ago";
+                   // "HH:mm:ss ago"
+                   return hours + ":" + mins + ":" + secs + " ago";
                 }
                 // "in HH:mm:ss ago"
                 return "in " + hours + ":" + mins + ":" + secs;
-            }
-            return formatTimestamp(timestamp);
-        }
+             }
+             return formatTimestamp(timestamp);
+          }
 
-        function formatTimestamp(timestamp) {
-            if (isNaN(timestamp)) {
+          function formatTimestamp(timestamp) {
+             if (isNaN(timestamp)) {
                 return timestamp;
-            }
-            var d = new Date(timestamp);
-            // "yyyy-MM-dd HH:mm:ss"
-            return d.getFullYear() + "-" + pad2(d.getMonth()) + "-" + pad2(d.getDay()) + " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds());
-        }
+             }
+             var d = new Date(timestamp);
+             // "yyyy-MM-dd HH:mm:ss"
+             //add 1 to month as getmonth returns the position not the actual month
+             return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) + " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds());
+          }
 
         var typeLabels = ["default", "1", "object", "text", "bytes", "map", "stream", "embedded"];
         function formatType(type) {
@@ -379,7 +506,7 @@ var Artemis;
         }
 
         ctrl.refresh = function() {
-            Artemis.log.info(ctrl.filter)
+            Artemis.log.debug(ctrl.filter)
             ctrl.pagination.load();
         }
 
@@ -527,8 +654,23 @@ var Artemis;
             } else {
                 ctrl.allMessages = data;
             }
+            idx = 0;
             angular.forEach(ctrl.allMessages, function(message) {
                 message.bodyText = createBodyText(message);
+                if (idx == 0 && !ctrl.loadPrevousPage) {
+                //always load n the first message for paination when viewing message details
+                    ctrl.currentMessage = message;
+                    ctrl.currentMessage.headers = createHeaders(ctrl.currentMessage)
+                    ctrl.currentMessage.properties = createProperties(ctrl.currentMessage);
+                }
+                else if (idx == (pagination.pageSize - 1) && ctrl.loadPrevousPage) {
+                    delete ctrl.loadPrevousPage;
+                    ctrl.currentMessage = message;
+                    ctrl.currentMessage.headers = createHeaders(ctrl.currentMessage)
+                    ctrl.currentMessage.properties = createProperties(ctrl.currentMessage);
+                }
+                message.idx = idx;
+                idx++;
             });
             ctrl.messages = ctrl.allMessages;
             ctrl.isLoading = false;
@@ -597,7 +739,7 @@ var Artemis;
                     var bytesArr = [];
                     var textArr = [];
                     message.BodyPreview.forEach(function(b) {
-                        if (code === 1 || code === 2) {
+                        if (code === 1 || code === 2 || code === 16) {
                             // text
                             textArr.push(String.fromCharCode(b));
                         }
@@ -622,6 +764,12 @@ var Artemis;
                         var lenTxt = "" + textArr.length;
                         body = "bytes:\n" + bytesData + "\n\ntext:\n" + textData;
                         message.textMode = "bytes (" + len + " bytes) and text (" + lenTxt + " chars)";
+                    } else if (code === 16) {
+                        // text only
+                        var len = message.BodyPreview.length;
+                        var lenTxt = "" + textArr.length;
+                        body = "text:\n" + textData;
+                        message.textMode = "text (" + lenTxt + " chars)";
                     } else {
                         // bytes only
                         var len = message.BodyPreview.length;
@@ -675,11 +823,11 @@ var Artemis;
             }
             if (objName) {
                 ctrl.dlq = false;
-                var queueName = jolokia.getAttribute(objName, "Name");
+                var addressName = jolokia.getAttribute(objName, "Address");
                 var artemisDLQ = localStorage['artemisDLQ'] || "DLQ";
                 var artemisExpiryQueue = localStorage['artemisExpiryQueue'] || "ExpiryQueue";
                 Artemis.log.debug("loading table" + artemisExpiryQueue);
-                if (queueName == artemisDLQ || queueName == artemisExpiryQueue) {
+                if (addressName == artemisDLQ || addressName == artemisExpiryQueue) {
                     onDlq(true);
                 } else {
                     onDlq(false);

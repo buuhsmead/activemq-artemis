@@ -204,6 +204,15 @@
             <producer-window-size>555k</producer-window-size>
             <discovery-group-ref discovery-group-name="dg1"/>
          </bridge>
+         <bridge name="bridge4">
+            <queue-name>queue3</queue-name>
+            <forwarding-address>bridge-forwarding-address2</forwarding-address>
+            <confirmation-window-size>-1</confirmation-window-size>
+            <producer-window-size>-1</producer-window-size>
+            <static-connectors>
+               <connector-ref>connector1</connector-ref>
+            </static-connectors>
+         </bridge>
       </bridges>
       <federations>
          <federation name="federation1">
@@ -317,6 +326,7 @@
          <jvm-memory>false</jvm-memory>
          <jvm-gc>true</jvm-gc>
          <jvm-threads>true</jvm-threads>
+         <netty-pool>true</netty-pool>
          <plugin class-name="org.apache.activemq.artemis.core.server.metrics.plugins.SimpleMetricsPlugin">
             <property key="foo" value="x"/>
             <property key="bar" value="y"/>
@@ -372,6 +382,21 @@
             <discovery-group-ref discovery-group-name="dg1"/>
          </cluster-connection>
       </cluster-connections>
+      <broker-connections>
+         <amqp-connection uri="tcp://test1:111" name="test1" retry-interval="333" reconnect-attempts="33" user="testuser" password="testpassword">
+            <sender address-match="TEST-SENDER"  />
+            <receiver address-match="TEST-RECEIVER" />
+            <peer address-match="TEST-PEER"/>
+            <receiver queue-name="TEST-WITH-QUEUE-NAME"/>
+            <mirror message-acknowledgements="false" queue-creation="false" source-mirror-address="TEST-REPLICA" queue-removal="false"/>
+         </amqp-connection>
+         <amqp-connection uri="tcp://test2:222" name="test2">
+            <mirror/>
+         </amqp-connection>
+         <amqp-connection uri="tcp://false" name="auto-start-false" auto-start="false">
+            <mirror/>
+         </amqp-connection>
+      </broker-connections>
       <grouping-handler name="gh1">
          <type>LOCAL</type>
          <address>jms</address>
@@ -382,6 +407,7 @@
       <page-max-concurrent-io>17</page-max-concurrent-io>
       <read-whole-page>true</read-whole-page>
       <journal-directory>somedir2</journal-directory>
+      <journal-retention-directory unit="DAYS" period="365" storage-limit="10G">history</journal-retention-directory>
       <create-journal-dir>false</create-journal-dir>
       <journal-type>NIO</journal-type>
       <journal-buffer-timeout>1000</journal-buffer-timeout>
@@ -433,6 +459,7 @@
             <slow-consumer-threshold>10</slow-consumer-threshold>
             <slow-consumer-check-period>5</slow-consumer-check-period>
             <slow-consumer-policy>NOTIFY</slow-consumer-policy>
+            <slow-consumer-threshold-measurement-unit>MESSAGES_PER_HOUR</slow-consumer-threshold-measurement-unit>
             <auto-create-jms-queues>true</auto-create-jms-queues>
             <auto-delete-jms-queues>true</auto-delete-jms-queues>
             <auto-create-jms-topics>true</auto-create-jms-topics>
@@ -463,6 +490,7 @@
             <message-counter-history-day-limit>8</message-counter-history-day-limit>
             <slow-consumer-threshold>20</slow-consumer-threshold>
             <slow-consumer-check-period>15</slow-consumer-check-period>
+            <slow-consumer-threshold-measurement-unit>MESSAGES_PER_DAY</slow-consumer-threshold-measurement-unit>
             <slow-consumer-policy>KILL</slow-consumer-policy>
             <auto-create-jms-queues>false</auto-create-jms-queues>
             <auto-delete-jms-queues>false</auto-delete-jms-queues>
@@ -481,7 +509,8 @@
             <default-consumer-window-size>10000</default-consumer-window-size>
             <retroactive-message-count>10</retroactive-message-count>
             <enable-metrics>false</enable-metrics>
-            <page-store-name>a2.shared</page-store-name>
+            <management-browse-page-size>400</management-browse-page-size>
+            <management-message-attribute-size-limit>265</management-message-attribute-size-limit>
          </address-setting>
       </address-settings>
       <resource-limit-settings>

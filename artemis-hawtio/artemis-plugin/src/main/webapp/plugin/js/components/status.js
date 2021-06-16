@@ -17,7 +17,7 @@
  /// <reference path="tree.component.ts"/>
 var Artemis;
 (function (Artemis) {
-    Artemis.log.info("loading status");
+    Artemis.log.debug("loading status");
     Artemis._module.component('artemisStatus', {
         template:
                `<h1>Current Status
@@ -30,7 +30,7 @@ var Artemis;
                 <div class="container-fluid">
                      <div class="row">
                         <div class="col-md-3 text-center">
-                            <label>'Address Memory Used'</label>
+                            <label>Address Memory Used</label>
                             <p class="text-left">
                             <pf-donut-pct-chart config="$ctrl.addressMemoryConfig" data="$ctrl.addressMemoryData" center-label="$ctrl.addressMemoryLabel"></pf-donut-pct-chart>
                             </p>
@@ -62,7 +62,7 @@ var Artemis;
         controller: StatusController
     })
     .name;
-    Artemis.log.info("loaded address " + Artemis.addressModule);
+    Artemis.log.debug("loaded address " + Artemis.addressModule);
 
     function StatusController($scope, workspace, jolokia, localStorage, $interval) {
         var ctrl = this;

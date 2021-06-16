@@ -16,7 +16,6 @@
  */
 package org.apache.activemq.artemis.core.protocol.openwire.amq;
 
-import java.io.IOException;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
@@ -28,6 +27,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 
 import org.apache.activemq.advisory.AdvisorySupport;
 import org.apache.activemq.artemis.api.core.ActiveMQQueueExistsException;
@@ -59,17 +59,15 @@ import org.apache.activemq.command.MessagePull;
 import org.apache.activemq.command.RemoveInfo;
 
 public class AMQConsumer {
-   private static final String AMQ_NOTIFICATIONS_DESTINATION = "activemq.notifications";
    private final AMQSession session;
    private final org.apache.activemq.command.ActiveMQDestination openwireDestination;
-   private final boolean hasNotificationDestination;
    private final ConsumerInfo info;
    private final ScheduledExecutorService scheduledPool;
    private ServerConsumer serverConsumer;
 
    private int prefetchSize;
    private final AtomicInteger currentWindow;
-   private int deliveredAcks;
+   private int deliveredAcksCreditExtension = 0;
    private long messagePullSequence = 0;
    private final AtomicReference<MessagePullHandler> messagePullHandler = new AtomicReference<>(null);
    //internal means we don't expose
@@ -84,12 +82,10 @@ public class AMQConsumer {
                       boolean internalAddress) {
       this.session = amqSession;
       this.openwireDestination = d;
-      this.hasNotificationDestination = d.toString().contains(AMQ_NOTIFICATIONS_DESTINATION);
       this.info = info;
       this.scheduledPool = scheduledPool;
       this.prefetchSize = info.getPrefetchSize();
       this.currentWindow = new AtomicInteger(prefetchSize);
-      this.deliveredAcks = 0;
       if (prefetchSize == 0) {
          messagePullHandler.set(new MessagePullHandler());
       }
@@ -132,7 +128,7 @@ public class AMQConsumer {
             preAck = true;
          }
          String id = info.getClientId() != null ? info.getClientId() : this.getId().getConnectionId();
-         String noLocalSelector = MessageUtil.CONNECTION_ID_PROPERTY_NAME.toString() + "<>'" + id + "'";
+         String noLocalSelector = MessageUtil.CONNECTION_ID_PROPERTY_NAME + "<>'" + id + "'";
          if (selector == null) {
             selector = new SimpleString(noLocalSelector);
          } else {
@@ -250,7 +246,7 @@ public class AMQConsumer {
       }
    }
 
-   public int handleDeliver(MessageReference reference, ICoreMessage message, int deliveryCount) {
+   public int handleDeliver(MessageReference reference, ICoreMessage message) {
       MessageDispatch dispatch;
       try {
          MessagePullHandler pullHandler = messagePullHandler.get();
@@ -264,15 +260,12 @@ public class AMQConsumer {
             message.removeProperty(MessageUtil.CONNECTION_ID_PROPERTY_NAME);
          }
          //handleDeliver is performed by an executor (see JBPAPP-6030): any AMQConsumer can share the session.wireFormat()
-         dispatch = OpenWireMessageConverter.createMessageDispatch(reference, message, session.wireFormat(), this);
+         dispatch = OpenWireMessageConverter.createMessageDispatch(reference, message, session.wireFormat(), this, session.getCoreServer().getNodeManager().getUUID());
          int size = dispatch.getMessage().getSize();
          reference.setProtocolData(dispatch.getMessage().getMessageId());
          session.deliverMessage(dispatch);
          currentWindow.decrementAndGet();
          return size;
-      } catch (IOException e) {
-         ActiveMQServerLogger.LOGGER.warn("Error during message dispatch", e);
-         return 0;
       } catch (Throwable t) {
          ActiveMQServerLogger.LOGGER.warn("Error during message dispatch", t);
          return 0;
@@ -288,76 +281,77 @@ public class AMQConsumer {
 
    /**
     * The acknowledgement in openwire is done based on intervals.
-    * We will iterate through the list of delivering messages at {@link ServerConsumer#getDeliveringReferencesBasedOnProtocol(boolean, Object, Object)}
+    * We will iterate through the list of delivering messages at {@link ServerConsumer#scanDeliveringReferences(boolean, Function, Function)}
     * and add those to the Transaction.
     * Notice that we will start a new transaction on the cases where there is no transaction.
     */
    public void acknowledge(MessageAck ack) throws Exception {
 
-      MessageId first = ack.getFirstMessageId();
-      MessageId last = ack.getLastMessageId();
-
-      if (first == null) {
-         first = last;
+      if (ack.isRedeliveredAck()) {
+         // we don't mind if the client thinks it is a redelivery
+         return;
       }
 
-      boolean removeReferences = !serverConsumer.isBrowseOnly(); // if it's browse only, nothing to be acked, we just remove the lists
-      if (serverConsumer.getQueue().isNonDestructive()) {
-         removeReferences = false;
-      }
-      if (ack.isRedeliveredAck() || ack.isDeliveredAck() || ack.isExpiredAck()) {
-         removeReferences = false;
-      }
-
-      List<MessageReference> ackList = serverConsumer.getDeliveringReferencesBasedOnProtocol(removeReferences, first, last);
-
-      if (removeReferences && (ack.isIndividualAck() || ack.isStandardAck() || ack.isPoisonAck())) {
-         if (deliveredAcks < ackList.size()) {
-            acquireCredit(ackList.size() - deliveredAcks);
-            deliveredAcks = 0;
-         } else {
-            deliveredAcks -= ackList.size();
-         }
-      } else {
-         if (ack.isDeliveredAck()) {
-            this.deliveredAcks += ack.getMessageCount();
-         }
-
-         acquireCredit(ack.getMessageCount());
+      final int ackMessageCount = ack.getMessageCount();
+      if (ack.isDeliveredAck()) {
+         acquireCredit(ackMessageCount);
+         deliveredAcksCreditExtension += ackMessageCount;
+         // our work is done
+         return;
       }
 
-      if (removeReferences) {
+      final MessageId lastID = ack.getLastMessageId();
+      final MessageId startID = ack.getFirstMessageId() == null ? lastID : ack.getFirstMessageId();
 
-         Transaction originalTX = session.getCoreSession().getCurrentTransaction();
-         Transaction transaction;
+      // if it's browse only, nothing to be acked
+      final boolean removeReferences = !serverConsumer.isBrowseOnly() && !serverConsumer.getQueue().isNonDestructive();
+      final List<MessageReference> ackList = serverConsumer.scanDeliveringReferences(removeReferences, reference -> startID.equals(reference.getProtocolData()), reference -> lastID.equals(reference.getProtocolData()));
 
-         if (originalTX == null) {
-            transaction = session.getCoreSession().newTransaction();
-         } else {
-            transaction = originalTX;
-         }
+      if (!ackList.isEmpty() || !removeReferences || serverConsumer.getQueue().isTemporary()) {
 
-         if (ack.isIndividualAck() || ack.isStandardAck()) {
-            for (MessageReference ref : ackList) {
-               ref.acknowledge(transaction, serverConsumer);
+         // valid match in delivered or browsing or temp - deal with credit
+         acquireCredit(ackMessageCount);
+
+         // some sort of real ack, rebalance deliveredAcksCreditExtension
+         if (deliveredAcksCreditExtension > 0) {
+            deliveredAcksCreditExtension -= ackMessageCount;
+            if (deliveredAcksCreditExtension >= 0) {
+               currentWindow.addAndGet(-ackMessageCount);
             }
-         } else if (ack.isPoisonAck()) {
+         }
+
+         if (ack.isExpiredAck()) {
             for (MessageReference ref : ackList) {
-               Throwable poisonCause = ack.getPoisonCause();
-               if (poisonCause != null) {
-                  ref.getMessage().putStringProperty(OpenWireMessageConverter.AMQ_MSG_DLQ_DELIVERY_FAILURE_CAUSE_PROPERTY, new SimpleString(poisonCause.toString()));
+               ref.getQueue().expire(ref, serverConsumer);
+            }
+         } else if (removeReferences) {
+
+            Transaction originalTX = session.getCoreSession().getCurrentTransaction();
+            Transaction transaction;
+
+            if (originalTX == null) {
+               transaction = session.getCoreSession().newTransaction();
+            } else {
+               transaction = originalTX;
+            }
+
+            if (ack.isIndividualAck() || ack.isStandardAck()) {
+               for (MessageReference ref : ackList) {
+                  ref.acknowledge(transaction, serverConsumer);
                }
-               ref.getQueue().sendToDeadLetterAddress(transaction, ref);
+            } else if (ack.isPoisonAck()) {
+               for (MessageReference ref : ackList) {
+                  Throwable poisonCause = ack.getPoisonCause();
+                  if (poisonCause != null) {
+                     ref.getMessage().putStringProperty(OpenWireMessageConverter.AMQ_MSG_DLQ_DELIVERY_FAILURE_CAUSE_PROPERTY, new SimpleString(poisonCause.toString()));
+                  }
+                  ref.getQueue().sendToDeadLetterAddress(transaction, ref);
+               }
             }
-         }
 
-         if (originalTX == null) {
-            transaction.commit(true);
-         }
-      }
-      if (ack.isExpiredAck()) {
-         for (MessageReference ref : ackList) {
-            ref.getQueue().expire(ref, serverConsumer);
+            if (originalTX == null) {
+               transaction.commit(true);
+            }
          }
       }
    }
@@ -391,9 +385,6 @@ public class AMQConsumer {
       serverConsumer.close(false);
    }
 
-   public boolean hasNotificationDestination() {
-      return hasNotificationDestination;
-   }
 
    public org.apache.activemq.command.ActiveMQDestination getOpenwireDestination() {
       return openwireDestination;
@@ -480,12 +471,11 @@ public class AMQConsumer {
       }
    }
 
-   public boolean removeRolledback(MessageReference messageReference) {
+   public void removeRolledback(MessageReference messageReference) {
       final Set<MessageReference> rolledbackMessageRefs = getRolledbackMessageRefs();
-      if (rolledbackMessageRefs == null) {
-         return false;
+      if (rolledbackMessageRefs != null) {
+         rolledbackMessageRefs.remove(messageReference);
       }
-      return rolledbackMessageRefs.remove(messageReference);
    }
 
    public void addRolledback(MessageReference messageReference) {

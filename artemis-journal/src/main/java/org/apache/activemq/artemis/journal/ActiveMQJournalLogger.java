@@ -85,6 +85,10 @@ public interface ActiveMQJournalLogger extends BasicLogger {
    @Message(id = 141009, value = "A Free File is less than the maximum data", format = Message.Format.MESSAGE_FORMAT)
    void fileTooSmall();
 
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 141010, value = "Initialising JDBC data source {0} with properties {1}", format = Message.Format.MESSAGE_FORMAT)
+   void initializingJdbcDataSource(String dataSourceClassName, String dataSourceProperties);
+
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 142000, value = "You have a native library with a different version than expected", format = Message.Format.MESSAGE_FORMAT)
    void incompatibleNativeLibrary();
@@ -128,7 +132,7 @@ public interface ActiveMQJournalLogger extends BasicLogger {
    void couldNotRemoveFile(JournalFile file);
 
    @LogMessage(level = Logger.Level.WARN)
-   @Message(id = 142009, value = "Deleting {0} as it does not have the configured size",
+   @Message(id = 142009, value = "*******************************************************************************************************************************\nThe File Storage Attic is full, as the file {0}  does not have the configured size, and the file will be removed\n*******************************************************************************************************************************",
       format = Message.Format.MESSAGE_FORMAT)
    void deletingFile(JournalFile file);
 
@@ -277,4 +281,11 @@ public interface ActiveMQJournalLogger extends BasicLogger {
    @Message(id = 144007, value = "Ignoring journal file {0}: file is shorter then minimum header size. This file is being removed.", format = Message.Format.MESSAGE_FORMAT)
    void ignoringShortFile(String fileName);
 
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 144008, value = "*******************************************************************************************************************************\nFile {0}: was moved under attic, please review it and remove it.\n*******************************************************************************************************************************", format = Message.Format.MESSAGE_FORMAT)
+   void movingFileToAttic(String fileName);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 144009, value = "Could not get a file in {0} seconds, System will retry the open but you may see increased latency in your system", format = Message.Format.MESSAGE_FORMAT)
+   void cantOpenFileTimeout(long timeout);
 }

@@ -57,18 +57,13 @@ public final class LargeServerMessageImpl extends CoreMessage implements CoreLar
       }
    }
 
-   @Override
-   public void finishParse() throws Exception {
-
-   }
-
    private static Message asLargeMessage(Message message, StorageManager storageManager) throws Exception {
       ICoreMessage coreMessage = message.toCore();
       LargeServerMessage lsm = storageManager.createLargeMessage(storageManager.generateID(), coreMessage);
       ActiveMQBuffer buffer = coreMessage.getReadOnlyBodyBuffer();
       final int readableBytes = buffer.readableBytes();
       lsm.addBytes(buffer);
-      lsm.releaseResources(true);
+      lsm.releaseResources(true, true);
       lsm.toMessage().putLongProperty(Message.HDR_LARGE_BODY_SIZE, readableBytes);
       return lsm.toMessage();
    }
@@ -176,7 +171,7 @@ public final class LargeServerMessageImpl extends CoreMessage implements CoreLar
    }
 
    @Override
-   public void addBytes(final ActiveMQBuffer bytes) throws Exception {
+   public void addBytes(final ActiveMQBuffer bytes, boolean initialHeader) throws Exception {
       synchronized (largeBody) {
          largeBody.addBytes(bytes);
       }
@@ -259,9 +254,9 @@ public final class LargeServerMessageImpl extends CoreMessage implements CoreLar
    }
 
    @Override
-   public void releaseResources(boolean sync) {
+   public void releaseResources(boolean sync, boolean sendEvent) {
       synchronized (largeBody) {
-         largeBody.releaseResources(sync);
+         largeBody.releaseResources(sync, sendEvent);
       }
    }
 
@@ -298,8 +293,7 @@ public final class LargeServerMessageImpl extends CoreMessage implements CoreLar
       try {
          LargeServerMessage newMessage = storageManager.createLargeMessage(newID, this);
          largeBody.copyInto(newMessage);
-         newMessage.finishParse();
-         newMessage.releaseResources(true);
+         newMessage.releaseResources(true, true);
          return newMessage.toMessage();
 
       } catch (Exception e) {

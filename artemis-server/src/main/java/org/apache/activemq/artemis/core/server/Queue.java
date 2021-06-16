@@ -20,6 +20,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
+import java.util.function.ToLongFunction;
 
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.Message;
@@ -44,7 +45,7 @@ public interface Queue extends Bindable,CriticalComponent {
 
    SimpleString getName();
 
-   long getID();
+   Long getID();
 
    Filter getFilter();
 
@@ -72,6 +73,11 @@ public interface Queue extends Bindable,CriticalComponent {
 
    void refDown(MessageReference messageReference);
 
+   /** Remove item with a supplied non-negative {@literal (>= 0) } ID.
+    *  If the idSupplier returns {@literal < 0} the ID is considered a non value (null) and it will be ignored.
+    *
+    *  @see org.apache.activemq.artemis.utils.collections.LinkedList#setIDSupplier(ToLongFunction) */
+   MessageReference removeWithSuppliedID(long id, ToLongFunction<MessageReference> idSupplier);
 
    /**
     * The queue definition could be durable, but the messages could eventually be considered non durable.
@@ -164,6 +170,13 @@ public interface Queue extends Bindable,CriticalComponent {
 
    long getRingSize();
 
+   default boolean isMirrorController() {
+      return false;
+   }
+
+   default void setMirrorController(boolean mirrorController) {
+   }
+
     /**
     * This will set a reference counter for every consumer present on the queue.
     * The ReferenceCounter will know what to do when the counter became zeroed.
@@ -207,8 +220,7 @@ public interface Queue extends Bindable,CriticalComponent {
 
    void cancel(Transaction tx, MessageReference ref, boolean ignoreRedeliveryCheck);
 
-   /** @param sorted it should use the messageID as a reference to where to add it in the queue */
-   void cancel(MessageReference reference, long timeBase, boolean sorted) throws Exception;
+   void cancel(MessageReference reference, long timeBase) throws Exception;
 
    void deliverAsync();
 
@@ -346,7 +358,18 @@ public interface Queue extends Bindable,CriticalComponent {
                       boolean rejectDuplicates,
                       Binding binding) throws Exception;
 
+   int moveReferences(int flushLimit,
+                      Filter filter,
+                      SimpleString toAddress,
+                      boolean rejectDuplicates,
+                      int messageCount,
+                      Binding binding) throws Exception;
+
    int retryMessages(Filter filter) throws Exception;
+
+   default int retryMessages(Filter filter, Integer expectedHits) throws Exception {
+      return retryMessages(filter);
+   }
 
    void addRedistributor(long delay);
 
@@ -376,7 +399,7 @@ public interface Queue extends Bindable,CriticalComponent {
    Pair<Boolean, Boolean> checkRedelivery(MessageReference ref, long timeBase, boolean ignoreRedeliveryDelay) throws Exception;
 
    /**
-    * It will iterate thorugh memory only (not paging)
+    * It will iterate through memory only (not paging)
     *
     * @return
     */

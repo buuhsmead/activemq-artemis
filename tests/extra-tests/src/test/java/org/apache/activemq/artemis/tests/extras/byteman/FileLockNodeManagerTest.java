@@ -45,7 +45,8 @@ public class FileLockNodeManagerTest {
 
    @Test
    @BMRules(
-         rules = {@BMRule(
+         rules = {
+            @BMRule(
                name = "throw IOException during activation",
                targetClass = "org.apache.activemq.artemis.core.server.impl.FileLockNodeManager",
                targetMethod = "tryLock",
@@ -78,7 +79,7 @@ public class FileLockNodeManagerTest {
          manager.awaitLiveNode();
       } catch (Exception e) {
          long stop = System.currentTimeMillis();
-         if (!"timed out waiting for lock".equals(e.getMessage())) {
+         if (!"timed out waiting for lock".equals(e.getCause().getMessage())) {
             throw e;
          }
          return stop - start;

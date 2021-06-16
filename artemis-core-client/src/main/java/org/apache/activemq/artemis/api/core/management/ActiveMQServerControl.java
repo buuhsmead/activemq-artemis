@@ -29,7 +29,7 @@ public interface ActiveMQServerControl {
    String TOTAL_CONNECTION_COUNT_DESCRIPTION = "Number of clients which have connected to this server since it was started";
    String ADDRESS_MEMORY_USAGE_DESCRIPTION = "Memory used by all the addresses on broker for in-memory messages";
    String ADDRESS_MEMORY_USAGE_PERCENTAGE_DESCRIPTION = "Memory used by all the addresses on broker as a percentage of the global-max-size";
-   String DISK_STORE_USAGE_DESCRIPTION = "Percentage of total disk store used";
+   String DISK_STORE_USAGE_DESCRIPTION = "Fraction of total disk store used";
 
    /**
     * Returns this server's version.
@@ -182,6 +182,12 @@ public interface ActiveMQServerControl {
     */
    @Attribute(desc = "Size of the internal buffer on the journal")
    int getJournalBufferSize();
+
+   /**
+    * Number of files that would be acceptable to keep on a pool
+    */
+   @Attribute(desc = "Number of files that would be acceptable to keep on a pool")
+   int getJournalPoolFiles();
 
    /**
     * Returns the timeout (in nanoseconds) used to flush internal buffers on the journal.
@@ -394,10 +400,22 @@ public interface ActiveMQServerControl {
    String getConnectorsAsJSON() throws Exception;
 
    /**
-    * Returns the addresses created on this server.
+    * Returns the number of addresses created on this server.
     */
-   @Attribute(desc = "Addresses created on this server")
+   @Attribute(desc = "Number of addresses created on this server")
+   int getAddressCount();
+
+   /**
+    * Returns the names of the addresses created on this server.
+    */
+   @Attribute(desc = "Names of the addresses created on this server")
    String[] getAddressNames();
+
+   /**
+    * Returns the number of queues created on this server.
+    */
+   @Attribute(desc = "Number of queues created on this server")
+   int getQueueCount();
 
    /**
     * Returns the names of the queues created on this server.
@@ -1667,6 +1685,10 @@ public interface ActiveMQServerControl {
    @Attribute(desc = "Names of the bridges deployed on this server")
    String[] getBridgeNames();
 
+   /**
+    * @deprecated Deprecated in favour of {@link #createBridge(String)}
+    */
+   @Deprecated
    @Operation(desc = "Create a Bridge", impact = MBeanOperationInfo.ACTION)
    void createBridge(@Parameter(name = "name", desc = "Name of the bridge") String name,
                      @Parameter(name = "queueName", desc = "Name of the source queue") String queueName,
@@ -1687,6 +1709,10 @@ public interface ActiveMQServerControl {
                      @Parameter(name = "user", desc = "User name") String user,
                      @Parameter(name = "password", desc = "User password") String password) throws Exception;
 
+   /**
+    * @deprecated Deprecated in favour of {@link #createBridge(String)}
+    */
+   @Deprecated
    @Operation(desc = "Create a Bridge", impact = MBeanOperationInfo.ACTION)
    void createBridge(@Parameter(name = "name", desc = "Name of the bridge") String name,
                      @Parameter(name = "queueName", desc = "Name of the source queue") String queueName,
@@ -1708,6 +1734,10 @@ public interface ActiveMQServerControl {
                      @Parameter(name = "user", desc = "User name") String user,
                      @Parameter(name = "password", desc = "User password") String password) throws Exception;
 
+   /**
+    * @deprecated Deprecated in favour of {@link #createBridge(String)}
+    */
+   @Deprecated
    @Operation(desc = "Create a Bridge", impact = MBeanOperationInfo.ACTION)
    void createBridge(@Parameter(name = "name", desc = "Name of the bridge") String name,
                      @Parameter(name = "queueName", desc = "Name of the source queue") String queueName,
@@ -1729,6 +1759,10 @@ public interface ActiveMQServerControl {
                      @Parameter(name = "user", desc = "User name") String user,
                      @Parameter(name = "password", desc = "User password") String password) throws Exception;
 
+   /**
+    * @deprecated Deprecated in favour of {@link #createBridge(String)}
+    */
+   @Deprecated
    @Operation(desc = "Create a Bridge", impact = MBeanOperationInfo.ACTION)
    void createBridge(@Parameter(name = "name", desc = "Name of the bridge") String name,
                      @Parameter(name = "queueName", desc = "Name of the source queue") String queueName,
@@ -1748,8 +1782,25 @@ public interface ActiveMQServerControl {
                      @Parameter(name = "user", desc = "User name") String user,
                      @Parameter(name = "password", desc = "User password") String password) throws Exception;
 
+   /**
+    * Create a bridge.
+    *
+    * @param bridgeConfiguration the configuration of the queue in JSON format
+    */
+   @Operation(desc = "Create a bridge", impact = MBeanOperationInfo.ACTION)
+   void createBridge(@Parameter(name = "bridgeConfiguration", desc = "the configuration of the bridge in JSON format") String bridgeConfiguration) throws Exception;
+
    @Operation(desc = "Destroy a bridge", impact = MBeanOperationInfo.ACTION)
    void destroyBridge(@Parameter(name = "name", desc = "Name of the bridge") String name) throws Exception;
+
+   @Operation(desc = "List the existing broker connections", impact = MBeanOperationInfo.INFO)
+   String listBrokerConnections();
+
+   @Operation(desc = "Activate a broker connection that is pre configured", impact = MBeanOperationInfo.ACTION)
+   void startBrokerConnection(@Parameter(name = "name", desc = "Name of the broker connection to be started") String name) throws Exception;
+
+   @Operation(desc = "Stops a broker connection that is pre configured", impact = MBeanOperationInfo.ACTION)
+   void stopBrokerConnection(@Parameter(name = "name", desc = "Name of the broker connection to be stopped") String name) throws Exception;
 
    @Operation(desc = "Create a connector service", impact = MBeanOperationInfo.ACTION)
    void createConnectorService(@Parameter(name = "name", desc = "Name of the connector service") String name,
@@ -1830,45 +1881,45 @@ public interface ActiveMQServerControl {
     * @param roles
     * @throws Exception
     */
-   @Operation(desc = "add a user (only applicable when using the JAAS PropertiesLoginModule)", impact = MBeanOperationInfo.ACTION)
+   @Operation(desc = "add a user (only applicable when using the JAAS PropertiesLoginModule or the ActiveMQBasicSecurityManager)", impact = MBeanOperationInfo.ACTION)
    void addUser(@Parameter(name = "username", desc = "Name of the user") String username,
                 @Parameter(name = "password", desc = "User's password") String password,
                 @Parameter(name = "roles", desc = "User's role (comma separated)") String roles,
                 @Parameter(name = "plaintext", desc = "whether or not to store the password in plaintext or hash it") boolean plaintext) throws Exception;
 
    /**
-    * List the information about a user or all users if no username is supplied (only applicable when using the JAAS PropertiesLoginModule).
+    * List the information about a user or all users if no username is supplied (only applicable when using the JAAS PropertiesLoginModule or the ActiveMQBasicSecurityManager).
     *
     * @param username
     * @return JSON array of user and role information
     * @throws Exception
     */
-   @Operation(desc = "list info about a user or all users if no username is supplied (only applicable when using the JAAS PropertiesLoginModule)", impact = MBeanOperationInfo.ACTION)
+   @Operation(desc = "list info about a user or all users if no username is supplied (only applicable when using the JAAS PropertiesLoginModule or the ActiveMQBasicSecurityManager)", impact = MBeanOperationInfo.ACTION)
    String listUser(@Parameter(name = "username", desc = "Name of the user; leave null to list all known users") String username) throws Exception;
 
    /**
-    * Remove a user (only applicable when using the JAAS PropertiesLoginModule).
+    * Remove a user (only applicable when using the JAAS PropertiesLoginModule or the ActiveMQBasicSecurityManager).
     *
     * @param username
     * @throws Exception
     */
-   @Operation(desc = "remove a user (only applicable when using the JAAS PropertiesLoginModule)", impact = MBeanOperationInfo.ACTION)
+   @Operation(desc = "remove a user (only applicable when using the JAAS PropertiesLoginModule or the ActiveMQBasicSecurityManager)", impact = MBeanOperationInfo.ACTION)
    void removeUser(@Parameter(name = "username", desc = "Name of the user") String username) throws Exception;
 
    /**
-    * Set new properties on an existing user (only applicable when using the JAAS PropertiesLoginModule).
+    * Set new properties on an existing user (only applicable when using the JAAS PropertiesLoginModule or the ActiveMQBasicSecurityManager).
     *
     * @param username
     * @param password
     * @param roles
     * @throws Exception
     */
-   @Operation(desc = "set new properties on an existing user (only applicable when using the JAAS PropertiesLoginModule)", impact = MBeanOperationInfo.ACTION)
+   @Operation(desc = "set new properties on an existing user (only applicable when using the JAAS PropertiesLoginModule or the ActiveMQBasicSecurityManager)", impact = MBeanOperationInfo.ACTION)
    void resetUser(@Parameter(name = "username", desc = "Name of the user") String username,
                   @Parameter(name = "password", desc = "User's password") String password,
                   @Parameter(name = "roles", desc = "User's role (comma separated)") String roles) throws Exception;
    /**
-    * Set new properties on an existing user (only applicable when using the JAAS PropertiesLoginModule).
+    * Set new properties on an existing user (only applicable when using the JAAS PropertiesLoginModule or the ActiveMQBasicSecurityManager).
     *
     * @param username
     * @param password
@@ -1877,10 +1928,13 @@ public interface ActiveMQServerControl {
     * @throws Exception
     */
 
-   @Operation(desc = "set new properties on an existing user (only applicable when using the JAAS PropertiesLoginModule)", impact = MBeanOperationInfo.ACTION)
+   @Operation(desc = "set new properties on an existing user (only applicable when using the JAAS PropertiesLoginModule or the ActiveMQBasicSecurityManager)", impact = MBeanOperationInfo.ACTION)
    void resetUser(@Parameter(name = "username", desc = "Name of the user") String username,
                   @Parameter(name = "password", desc = "User's password") String password,
                   @Parameter(name = "roles", desc = "User's role (comma separated)") String roles,
                   @Parameter(name = "plaintext", desc = "whether or not to store the password in plaintext or hash it") boolean plaintext) throws Exception;
+
+   @Operation(desc = "forces the broker to reload its configuration file", impact = MBeanOperationInfo.ACTION)
+   void reloadConfigurationFile() throws Exception;
 }
 

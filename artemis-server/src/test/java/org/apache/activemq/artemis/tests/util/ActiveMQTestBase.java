@@ -44,6 +44,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -67,6 +68,7 @@ import org.apache.activemq.artemis.api.core.ICoreMessage;
 import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.Pair;
 import org.apache.activemq.artemis.api.core.QueueConfiguration;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
@@ -125,6 +127,7 @@ import org.apache.activemq.artemis.core.server.cluster.RemoteQueueBinding;
 import org.apache.activemq.artemis.core.server.cluster.impl.MessageLoadBalancingType;
 import org.apache.activemq.artemis.core.server.impl.Activation;
 import org.apache.activemq.artemis.core.server.impl.ActiveMQServerImpl;
+import org.apache.activemq.artemis.core.server.impl.AddressInfo;
 import org.apache.activemq.artemis.core.server.impl.LiveOnlyActivation;
 import org.apache.activemq.artemis.core.server.impl.SharedNothingBackupActivation;
 import org.apache.activemq.artemis.core.settings.impl.AddressFullMessagePolicy;
@@ -258,6 +261,10 @@ public abstract class ActiveMQTestBase extends Assert {
    @After
    public void shutdownDerby() {
       try {
+         DriverManager.getConnection("jdbc:derby:" + getEmbeddedDataBaseName() + ";destroy=true");
+      } catch (Exception ignored) {
+      }
+      try {
          DriverManager.getConnection("jdbc:derby:;shutdown=true");
       } catch (Exception ignored) {
       }
@@ -330,7 +337,7 @@ public abstract class ActiveMQTestBase extends Assert {
 
          closeAllOtherComponents();
 
-         ArrayList<Exception> exceptions;
+         List<Exception> exceptions;
          try {
             exceptions = checkCsfStopped();
          } finally {
@@ -349,7 +356,6 @@ public abstract class ActiveMQTestBase extends Assert {
                exception.printStackTrace(System.out);
             }
             System.out.println(threadDump("Thread dump with reconnects happening"));
-            fail("Client Session Factories still trying to reconnect, see above to see where created");
          }
          Map<Thread, StackTraceElement[]> threadMap = Thread.getAllStackTraces();
          for (Map.Entry<Thread, StackTraceElement[]> entry : threadMap.entrySet()) {
@@ -518,6 +524,7 @@ public abstract class ActiveMQTestBase extends Assert {
       dbStorageConfiguration.setJdbcLockAcquisitionTimeoutMillis(getJdbcLockAcquisitionTimeoutMillis());
       dbStorageConfiguration.setJdbcLockExpirationMillis(getJdbcLockExpirationMillis());
       dbStorageConfiguration.setJdbcLockRenewPeriodMillis(getJdbcLockRenewPeriodMillis());
+      dbStorageConfiguration.setJdbcNetworkTimeout(-1);
       return dbStorageConfiguration;
    }
 
@@ -526,11 +533,11 @@ public abstract class ActiveMQTestBase extends Assert {
    }
 
    protected long getJdbcLockExpirationMillis() {
-      return Long.getLong("jdbc.lock.expiration", ActiveMQDefaultConfiguration.getDefaultJdbcLockExpirationMillis());
+      return Long.getLong("jdbc.lock.expiration", 4_000);
    }
 
    protected long getJdbcLockRenewPeriodMillis() {
-      return Long.getLong("jdbc.lock.renew", ActiveMQDefaultConfiguration.getDefaultJdbcLockRenewPeriodMillis());
+      return Long.getLong("jdbc.lock.renew", 200);
    }
 
    public void destroyTables(List<String> tableNames) throws Exception {
@@ -837,8 +844,12 @@ public abstract class ActiveMQTestBase extends Assert {
       return testDir;
    }
 
+   private String getEmbeddedDataBaseName() {
+      return "memory:" + getTestDir();
+   }
+
    protected final String getTestJDBCConnectionUrl() {
-      return System.getProperty("jdbc.connection.url", "jdbc:derby:" + getTestDir() + File.separator + "derby;create=true");
+      return System.getProperty("jdbc.connection.url", "jdbc:derby:" + getEmbeddedDataBaseName() + ";create=true");
    }
 
    protected final String getJDBCClassName() {
@@ -1589,6 +1600,11 @@ public abstract class ActiveMQTestBase extends Assert {
       }
    }
 
+   protected void createAnycastPair(ActiveMQServer server, String queueName) throws Exception {
+      server.addAddressInfo(new AddressInfo(queueName).addRoutingType(RoutingType.ANYCAST).setAutoCreated(false));
+      server.createQueue(new QueueConfiguration(queueName).setRoutingType(RoutingType.ANYCAST).setAddress(queueName));
+   }
+
    protected void createQueue(final String address, final String queue) throws Exception {
       ServerLocator locator = createInVMNonHALocator();
       ClientSessionFactory sf = locator.createSessionFactory();
@@ -1993,29 +2009,25 @@ public abstract class ActiveMQTestBase extends Assert {
       }
    }
 
-   private ArrayList<Exception> checkCsfStopped() {
-      long time = System.currentTimeMillis();
-      long waitUntil = time + 5000;
-      while (!ClientSessionFactoryImpl.CLOSE_RUNNABLES.isEmpty() && time < waitUntil) {
-         try {
-            Thread.sleep(50);
-         } catch (InterruptedException e) {
-            //ignore
-         }
-         time = System.currentTimeMillis();
-      }
-      List<ClientSessionFactoryImpl.CloseRunnable> closeRunnables = new ArrayList<>(ClientSessionFactoryImpl.CLOSE_RUNNABLES);
-      ArrayList<Exception> exceptions = new ArrayList<>();
+   private List<Exception> checkCsfStopped() throws Exception {
+      if (!Wait.waitFor(ClientSessionFactoryImpl.CLOSE_RUNNABLES::isEmpty, 5_000)) {
+         List<ClientSessionFactoryImpl.CloseRunnable> closeRunnables = new ArrayList<>(ClientSessionFactoryImpl.CLOSE_RUNNABLES);
+         ArrayList<Exception> exceptions = new ArrayList<>();
 
-      if (!closeRunnables.isEmpty()) {
-         for (ClientSessionFactoryImpl.CloseRunnable closeRunnable : closeRunnables) {
-            if (closeRunnable != null) {
-               exceptions.add(closeRunnable.stop().createTrace);
+         if (!closeRunnables.isEmpty()) {
+            for (ClientSessionFactoryImpl.CloseRunnable closeRunnable : closeRunnables) {
+               if (closeRunnable != null) {
+                  exceptions.add(closeRunnable.stop().createTrace);
+               }
             }
          }
+         return exceptions;
       }
 
-      return exceptions;
+      return Collections.EMPTY_LIST;
+
+
+
    }
 
    private void assertAllClientProducersAreClosed() {
@@ -2138,7 +2150,7 @@ public abstract class ActiveMQTestBase extends Assert {
    protected MessageReference generateReference(final Queue queue, final long id) {
       Message message = generateMessage(id);
 
-      return MessageReference.Factory.createReference(message, queue, null);
+      return MessageReference.Factory.createReference(message, queue);
    }
 
    protected int calculateRecordSize(final int size, final int alignment) {

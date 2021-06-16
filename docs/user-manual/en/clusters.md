@@ -148,9 +148,9 @@ group:
 ```xml
 <broadcast-groups>
    <broadcast-group name="my-broadcast-group">
+      <broadcast-period>2000</broadcast-period>
       <jgroups-file>test-jgroups-file_ping.xml</jgroups-file>
       <jgroups-channel>activemq_broadcast_channel</jgroups-channel>
-      <broadcast-period>2000</broadcast-period>
       <connector-ref>netty-connector</connector-ref>
    </broadcast-group>
 </broadcast-groups>
@@ -163,6 +163,7 @@ following:
 - `jgroups-file` attribute. This is the name of JGroups configuration
   file. It will be used to initialize JGroups channels. Make sure the
   file is in the java resource path so that Apache ActiveMQ Artemis can load it.
+  The typical location for the file is the `etc` directory from the broker instance.
 
 - `jgroups-channel` attribute. The name that JGroups channels connect
   to for broadcasting.
@@ -301,7 +302,7 @@ We'll consider each parameter of the discovery group:
 
 - `local-bind-address`. If you are running with multiple network
   interfaces on the same machine, you may want to specify that the
-  discovery group listens only only a specific interface. To do this
+  discovery group listens only a specific interface. To do this
   you can specify the interface address with this parameter. This
   parameter is optional. This is a UDP specific attribute.
 

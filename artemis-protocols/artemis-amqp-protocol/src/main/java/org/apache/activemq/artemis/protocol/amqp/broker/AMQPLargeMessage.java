@@ -18,9 +18,11 @@
 package org.apache.activemq.artemis.protocol.amqp.broker;
 
 import java.nio.ByteBuffer;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.PooledByteBufAllocator;
+import io.netty.buffer.Unpooled;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ICoreMessage;
@@ -34,12 +36,20 @@ import org.apache.activemq.artemis.core.persistence.impl.journal.LargeBody;
 import org.apache.activemq.artemis.core.persistence.impl.journal.LargeServerMessageImpl;
 import org.apache.activemq.artemis.core.server.ActiveMQServerLogger;
 import org.apache.activemq.artemis.core.server.LargeServerMessage;
+import org.apache.activemq.artemis.core.server.MessageReference;
+import org.apache.activemq.artemis.protocol.amqp.util.NettyReadable;
+import org.apache.activemq.artemis.protocol.amqp.util.NettyWritable;
 import org.apache.activemq.artemis.protocol.amqp.util.TLSEncode;
 import org.apache.activemq.artemis.utils.collections.TypedProperties;
+import org.apache.qpid.proton.amqp.messaging.ApplicationProperties;
 import org.apache.qpid.proton.amqp.messaging.Header;
+import org.apache.qpid.proton.amqp.messaging.MessageAnnotations;
+import org.apache.qpid.proton.amqp.messaging.Properties;
+import org.apache.qpid.proton.codec.CompositeReadableBuffer;
 import org.apache.qpid.proton.codec.DecoderImpl;
 import org.apache.qpid.proton.codec.ReadableBuffer;
 import org.apache.qpid.proton.codec.TypeConstructor;
+import org.apache.qpid.proton.codec.WritableBuffer;
 
 public class AMQPLargeMessage extends AMQPMessage implements LargeServerMessage {
 
@@ -77,6 +87,8 @@ public class AMQPLargeMessage extends AMQPMessage implements LargeServerMessage 
       }
    }
 
+   private boolean reencoded = false;
+
    /**
     * AMQPLargeMessagePersister will save the buffer here.
     * */
@@ -92,6 +104,9 @@ public class AMQPLargeMessage extends AMQPMessage implements LargeServerMessage 
    private volatile AmqpReadableBuffer parsingData;
 
    private StorageManager storageManager;
+
+   /** this is used to parse the initial packets from the buffer */
+   CompositeReadableBuffer parsingBuffer;
 
    public AMQPLargeMessage(long id,
                            long messageFormat,
@@ -126,6 +141,7 @@ public class AMQPLargeMessage extends AMQPMessage implements LargeServerMessage 
       largeBody = new LargeBody(this, copy.largeBody.getStorageManager(), fileCopy);
       largeBody.setBodySize(copy.largeBody.getStoredBodySize());
       this.storageManager = copy.largeBody.getStorageManager();
+      this.reencoded = copy.reencoded;
       setMessageID(newID);
    }
 
@@ -134,7 +150,7 @@ public class AMQPLargeMessage extends AMQPMessage implements LargeServerMessage 
    }
 
    public void closeLargeMessage() throws Exception {
-      largeBody.releaseResources(false);
+      largeBody.releaseResources(false, true);
       parsingData.freeDirectBuffer();
       parsingData = null;
    }
@@ -151,6 +167,22 @@ public class AMQPLargeMessage extends AMQPMessage implements LargeServerMessage 
     */
    public void releaseEncodedBufferAfterWrite() {
       internalReleaseBuffer(2);
+   }
+
+   /**
+    * This method check the reference for specifics on protocolData.
+    *
+    * It was written to check the deliveryAnnotationsForSendBuffer and eventually move it to the protocolData.
+    */
+   public void checkReference(MessageReference reference) {
+      if (reference.getProtocolData() == null && deliveryAnnotationsForSendBuffer != null) {
+         reference.setProtocolData(deliveryAnnotationsForSendBuffer);
+      }
+   }
+
+   /** during large message deliver, we need this calculation to place a new delivery annotation */
+   public int getPositionAfterDeliveryAnnotations() {
+      return encodedHeaderSize + encodedDeliveryAnnotationsSize;
    }
 
    private void internalReleaseBuffer(int releases) {
@@ -178,15 +210,76 @@ public class AMQPLargeMessage extends AMQPMessage implements LargeServerMessage 
       }
    }
 
-   @Override
-   public void finishParse() throws Exception {
-      openLargeMessage();
+   private void saveEncoding(ByteBuf buf) {
+
+      WritableBuffer oldBuffer = TLSEncode.getEncoder().getBuffer();
+
+      TLSEncode.getEncoder().setByteBuffer(new NettyWritable(buf));
+
       try {
-         this.ensureMessageDataScanned();
-         parsingData.rewind();
-         lazyDecodeApplicationProperties();
+         buf.writeInt(headerPosition);
+         buf.writeInt(encodedHeaderSize);
+         TLSEncode.getEncoder().writeObject(header);
+
+         buf.writeInt(deliveryAnnotationsPosition);
+         buf.writeInt(encodedDeliveryAnnotationsSize);
+
+         buf.writeInt(messageAnnotationsPosition);
+         TLSEncode.getEncoder().writeObject(messageAnnotations);
+
+
+         buf.writeInt(propertiesPosition);
+         TLSEncode.getEncoder().writeObject(properties);
+
+         buf.writeInt(applicationPropertiesPosition);
+         buf.writeInt(remainingBodyPosition);
+
+         TLSEncode.getEncoder().writeObject(applicationProperties);
+
       } finally {
-         closeLargeMessage();
+         TLSEncode.getEncoder().setByteBuffer(oldBuffer);
+      }
+   }
+
+   protected void readSavedEncoding(ByteBuf buf) {
+      ReadableBuffer oldBuffer = TLSEncode.getDecoder().getBuffer();
+
+      TLSEncode.getDecoder().setBuffer(new NettyReadable(buf));
+
+      try {
+         messageDataScanned = MessageDataScanningStatus.SCANNED.code;
+
+         headerPosition = buf.readInt();
+         encodedHeaderSize = buf.readInt();
+         header = (Header)TLSEncode.getDecoder().readObject();
+
+         deliveryAnnotationsPosition = buf.readInt();
+         encodedDeliveryAnnotationsSize = buf.readInt();
+
+         messageAnnotationsPosition = buf.readInt();
+         messageAnnotations = (MessageAnnotations)TLSEncode.getDecoder().readObject();
+
+         propertiesPosition = buf.readInt();
+         properties = (Properties)TLSEncode.getDecoder().readObject();
+
+         applicationPropertiesPosition = buf.readInt();
+         remainingBodyPosition = buf.readInt();
+
+         applicationProperties = (ApplicationProperties)TLSEncode.getDecoder().readObject();
+
+         if (properties != null && properties.getAbsoluteExpiryTime() != null && properties.getAbsoluteExpiryTime().getTime() > 0) {
+            if (!expirationReload) {
+               expiration = properties.getAbsoluteExpiryTime().getTime();
+            }
+         } else if (header != null && header.getTtl() != null) {
+            if (!expirationReload) {
+               expiration = System.currentTimeMillis() + header.getTtl().intValue();
+            }
+         }
+
+
+      } finally {
+         TLSEncode.getDecoder().setBuffer(oldBuffer);
       }
    }
 
@@ -239,7 +332,9 @@ public class AMQPLargeMessage extends AMQPMessage implements LargeServerMessage 
          if (Header.class.equals(constructor.getTypeClass())) {
             header = (Header) constructor.readValue();
             if (header.getTtl() != null) {
-               expiration = System.currentTimeMillis() + header.getTtl().intValue();
+               if (!expirationReload) {
+                  expiration = System.currentTimeMillis() + header.getTtl().intValue();
+               }
             }
          }
       } finally {
@@ -249,12 +344,7 @@ public class AMQPLargeMessage extends AMQPMessage implements LargeServerMessage 
    }
 
    public void addBytes(ReadableBuffer data) throws Exception {
-
-      // We need to parse the header on the first add,
-      // as it will contain information if the message is durable or not
-      if (header == null && largeBody.getStoredBodySize() <= 0) {
-         parseHeader(data);
-      }
+      parseLargeMessage(data);
 
       if (data.hasArray() && data.remaining() == data.array().length) {
          //System.out.println("Received " + data.array().length + "::" + ByteUtil.formatGroup(ByteUtil.bytesToHex(data.array()), 8, 16));
@@ -267,8 +357,65 @@ public class AMQPLargeMessage extends AMQPMessage implements LargeServerMessage 
       }
    }
 
+   protected void parseLargeMessage(ActiveMQBuffer data, boolean initialHeader) {
+      MessageDataScanningStatus status = getDataScanningStatus();
+      if (status == MessageDataScanningStatus.NOT_SCANNED) {
+         ByteBuf buffer = data.byteBuf().duplicate();
+         if (parsingBuffer == null) {
+            parsingBuffer = new CompositeReadableBuffer();
+         }
+         byte[] parsingData = new byte[buffer.readableBytes()];
+         buffer.readBytes(parsingData);
+
+         parsingBuffer.append(parsingData);
+         if (!initialHeader) {
+            genericParseLargeMessage();
+         }
+      }
+   }
+
+   protected void parseLargeMessage(byte[] data, boolean initialHeader) {
+      MessageDataScanningStatus status = getDataScanningStatus();
+      if (status == MessageDataScanningStatus.NOT_SCANNED) {
+         byte[] copy = new byte[data.length];
+         System.arraycopy(data, 0, copy, 0, data.length);
+         if (parsingBuffer == null) {
+            parsingBuffer = new CompositeReadableBuffer();
+         }
+
+         parsingBuffer.append(copy);
+         if (!initialHeader) {
+            genericParseLargeMessage();
+         }
+      }
+   }
+
+   private void genericParseLargeMessage() {
+      try {
+         parsingBuffer.position(0);
+         scanMessageData(parsingBuffer);
+         lazyDecodeApplicationProperties(parsingBuffer);
+         parsingBuffer = null;
+      } catch (RuntimeException expected) {
+         // this would mean the buffer is not complete yet, so we keep parsing it, until we can get enough bytes
+         logger.debug("The buffer for AMQP Large Mesasge was probably not complete, so an exception eventually would be expected", expected);
+      }
+   }
+
+   protected void parseLargeMessage(ReadableBuffer data) {
+      MessageDataScanningStatus status = getDataScanningStatus();
+      if (status == MessageDataScanningStatus.NOT_SCANNED) {
+         if (parsingBuffer == null) {
+            parsingBuffer = new CompositeReadableBuffer();
+         }
+
+         parsingBuffer.append(data.duplicate());
+         genericParseLargeMessage();
+      }
+   }
+
    @Override
-   public ReadableBuffer getSendBuffer(int deliveryCount) {
+   public ReadableBuffer getSendBuffer(int deliveryCount, MessageReference reference) {
       return getData().rewind();
    }
 
@@ -279,11 +426,13 @@ public class AMQPLargeMessage extends AMQPMessage implements LargeServerMessage 
 
    @Override
    public void addBytes(byte[] bytes) throws Exception {
+      parseLargeMessage(bytes, false);
       largeBody.addBytes(bytes);
    }
 
    @Override
-   public void addBytes(ActiveMQBuffer bytes) throws Exception {
+   public void addBytes(ActiveMQBuffer bytes, boolean initialHeader) throws Exception {
+      parseLargeMessage(bytes, initialHeader);
       largeBody.addBytes(bytes);
 
    }
@@ -294,8 +443,8 @@ public class AMQPLargeMessage extends AMQPMessage implements LargeServerMessage 
    }
 
    @Override
-   public void releaseResources(boolean sync) {
-      largeBody.releaseResources(sync);
+   public void releaseResources(boolean sync, boolean sendEvent) {
+      largeBody.releaseResources(sync, sendEvent);
 
    }
 
@@ -355,17 +504,29 @@ public class AMQPLargeMessage extends AMQPMessage implements LargeServerMessage 
       AMQPLargeMessage newMessage = new AMQPLargeMessage(this, newfile, messageID);
       newMessage.setParentRef(this);
       newMessage.setFileDurable(this.isDurable());
+      newMessage.reloadExpiration(this.expiration);
       return newMessage;
    }
 
    @Override
    public Message copy(final long newID) {
+      return copy(newID, false);
+   }
+
+   @Override
+   public Message copy(final long newID, boolean isDLQOrExpiry) {
       try {
          AMQPLargeMessage copy = new AMQPLargeMessage(newID, messageFormat, null, coreMessageObjectPools, storageManager);
          copy.setDurable(this.isDurable());
-         largeBody.copyInto(copy);
-         copy.finishParse();
-         copy.releaseResources(true);
+
+         final AtomicInteger place = new AtomicInteger(0);
+         ByteBuf bufferNewHeader = null;
+         if (isDLQOrExpiry) {
+            bufferNewHeader = newHeaderWithoutExpiry(place);
+         }
+
+         largeBody.copyInto(copy, bufferNewHeader, place.intValue());
+         copy.releaseResources(true, true);
          return copy;
 
       } catch (Exception e) {
@@ -374,7 +535,46 @@ public class AMQPLargeMessage extends AMQPMessage implements LargeServerMessage 
       }
    }
 
+   protected ByteBuf newHeaderWithoutExpiry(AtomicInteger placeOutput) {
+      ByteBuf bufferNewHeader;
+      Header headerCopy = null;
+      if (header != null) {
+         headerCopy = new Header(header);
+         headerCopy.setTtl(null); // just in case
+      }
 
+      MessageAnnotations messageAnnotationsRef = this.messageAnnotations;
+
+      Properties propertiesCopy = null;
+      if (properties != null) {
+         propertiesCopy = new Properties(properties);
+         propertiesCopy.setAbsoluteExpiryTime(null); // just in case
+      }
+
+      if (applicationPropertiesPosition != VALUE_NOT_PRESENT) {
+         placeOutput.set(applicationPropertiesPosition);
+      } else {
+         placeOutput.set(remainingBodyPosition);
+      }
+
+      if (placeOutput.get() < 0) {
+         placeOutput.set(0);
+         bufferNewHeader = null;
+      } else {
+         bufferNewHeader = Unpooled.buffer(placeOutput.get());
+      }
+
+      if (bufferNewHeader != null) {
+         TLSEncode.getEncoder().setByteBuffer(new NettyWritable(bufferNewHeader));
+         if (headerCopy != null)
+            TLSEncode.getEncoder().writeObject(headerCopy);
+         if (messageAnnotationsRef != null)
+            TLSEncode.getEncoder().writeObject(messageAnnotationsRef);
+         if (propertiesCopy != null)
+            TLSEncode.getEncoder().writeObject(propertiesCopy);
+      }
+      return bufferNewHeader;
+   }
 
    @Override
    public void messageChanged() {
@@ -432,7 +632,15 @@ public class AMQPLargeMessage extends AMQPMessage implements LargeServerMessage 
 
    @Override
    public void reencode() {
+      reencoded = true;
+   }
 
+   public void setReencoded(boolean reencoded) {
+      this.reencoded = reencoded;
+   }
+
+   public boolean isReencoded() {
+      return reencoded;
    }
 
    @Override

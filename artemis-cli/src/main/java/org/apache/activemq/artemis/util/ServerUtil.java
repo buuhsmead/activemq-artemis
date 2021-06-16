@@ -23,6 +23,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.util.ArrayList;
 
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
@@ -71,15 +72,30 @@ public class ServerUtil {
 
    private static Process internalStartServer(String artemisInstance,
                                               String serverName) throws IOException, ClassNotFoundException {
+
+      return execute(artemisInstance, serverName, "run");
+   }
+
+   public static Process execute(String artemisInstance, String jobName, String...args) throws IOException, ClassNotFoundException {
       try {
          boolean IS_WINDOWS = System.getProperty("os.name").toLowerCase().trim().startsWith("win");
 
+         ArrayList<String> command = new ArrayList<>();
+
          ProcessBuilder builder = null;
          if (IS_WINDOWS) {
-            builder = new ProcessBuilder("cmd", "/c", "artemis.cmd", "run");
+            command.add("cmd");
+            command.add("/c");
+            command.add("artemis.cmd");
          } else {
-            builder = new ProcessBuilder("./artemis", "run");
+            command.add("./artemis");
          }
+
+         for (String arg: args) {
+            command.add(arg);
+         }
+
+         builder = new ProcessBuilder(command);
 
          builder.directory(new File(artemisInstance + "/bin"));
 
@@ -91,12 +107,12 @@ public class ServerUtil {
             }
          });
 
-         ProcessLogger outputLogger = new ProcessLogger(true, process.getInputStream(), serverName, false);
+         ProcessLogger outputLogger = new ProcessLogger(true, process.getInputStream(), jobName, false);
          outputLogger.start();
 
          // Adding a reader to System.err, so the VM won't hang on a System.err.println as identified on this forum thread:
          // http://www.jboss.org/index.html?module=bb&op=viewtopic&t=151815
-         ProcessLogger errorLogger = new ProcessLogger(true, process.getErrorStream(), serverName, true);
+         ProcessLogger errorLogger = new ProcessLogger(true, process.getErrorStream(), jobName, true);
          errorLogger.start();
          return process;
       } catch (IOException e) {
@@ -105,14 +121,22 @@ public class ServerUtil {
    }
 
    public static boolean waitForServerToStart(int id, int timeout) throws InterruptedException {
-      return waitForServerToStart("tcp://localhost:" + (61616 + id), timeout);
+      return waitForServerToStart(id, null, null, timeout);
+   }
+
+   public static boolean waitForServerToStart(int id, String username, String password, int timeout) throws InterruptedException {
+      return waitForServerToStart("tcp://localhost:" + (61616 + id), username, password, timeout);
    }
 
    public static boolean waitForServerToStart(String uri, long timeout) throws InterruptedException {
+      return waitForServerToStart(uri, null, null, timeout);
+   }
+
+   public static boolean waitForServerToStart(String uri, String username, String password, long timeout) throws InterruptedException {
       long realTimeout = System.currentTimeMillis() + timeout;
       while (System.currentTimeMillis() < realTimeout) {
          try (ActiveMQConnectionFactory cf = ActiveMQJMSClient.createConnectionFactory(uri, null)) {
-            cf.createConnection().close();
+            cf.createConnection(username, password).close();
             System.out.println("server " + uri + " started");
          } catch (Exception e) {
             System.out.println("awaiting server " + uri + " start at ");

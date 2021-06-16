@@ -71,6 +71,7 @@ import org.apache.activemq.artemis.spi.core.remoting.AcceptorFactory;
 import org.apache.activemq.artemis.spi.core.remoting.BufferHandler;
 import org.apache.activemq.artemis.spi.core.remoting.Connection;
 import org.apache.activemq.artemis.spi.core.remoting.ServerConnectionLifeCycleListener;
+import org.apache.activemq.artemis.spi.core.remoting.ssl.OpenSSLContextFactoryProvider;
 import org.apache.activemq.artemis.spi.core.remoting.ssl.SSLContextFactoryProvider;
 import org.apache.activemq.artemis.utils.ActiveMQThreadFactory;
 import org.apache.activemq.artemis.utils.ConfigurationHelper;
@@ -386,6 +387,7 @@ public class RemotingServiceImpl implements RemotingService, ServerConnectionLif
          return;
       }
       SSLContextFactoryProvider.getSSLContextFactory().clearSSLContexts();
+      OpenSSLContextFactoryProvider.getOpenSSLContextFactory().clearSslContexts();
 
       failureCheckAndFlushThread.close(criticalError);
 
@@ -527,6 +529,13 @@ public class RemotingServiceImpl implements RemotingService, ServerConnectionLif
       return connectionCountLatch;
    }
 
+   @Override
+   public void loadProtocolServices(List<ActiveMQComponent> protocolServices) {
+      for (ProtocolManagerFactory protocolManagerFactory : protocolMap.values()) {
+         protocolManagerFactory.loadProtocolServices(this.server, protocolServices);
+      }
+   }
+
    // ServerConnectionLifeCycleListener implementation -----------------------------------
 
    private ProtocolManagerFactory getProtocolManager(String protocol) {
@@ -555,9 +564,14 @@ public class RemotingServiceImpl implements RemotingService, ServerConnectionLif
          logger.trace("Connection created " + connection);
       }
 
-      connections.put(connection.getID(), entry);
+      addConnectionEntry(connection, entry);
       connectionCountLatch.countUp();
       totalConnectionCount.incrementAndGet();
+   }
+
+   @Override
+   public void addConnectionEntry(Connection connection, ConnectionEntry entry) {
+      connections.put(connection.getID(), entry);
    }
 
    @Override

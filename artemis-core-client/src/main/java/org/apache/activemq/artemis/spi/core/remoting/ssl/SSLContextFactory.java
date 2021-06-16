@@ -30,24 +30,44 @@ public interface SSLContextFactory extends Comparable<SSLContextFactory> {
    Logger log = Logger.getLogger(SSLContextFactory.class);
 
    /**
-    * Obtain a SSLContext from the configuration.
-    * @param configuration
-    * @param keystoreProvider
-    * @param keystorePath
-    * @param keystorePassword
-    * @param truststoreProvider
-    * @param truststorePath
-    * @param truststorePassword
-    * @param crlPath
-    * @param trustManagerFactoryPlugin
-    * @param trustAll
-    * @return a SSLContext instance.
-    * @throws Exception
+    * @return an {@link SSLContext} for the given configuration.
+    *
+    * @deprecated use {@link #getSSLContext(SSLContextConfig, Map)} instead
     */
-   SSLContext getSSLContext(Map<String, Object> configuration,
-           String keystoreProvider, String keystorePath, String keystorePassword,
-           String truststoreProvider, String truststorePath, String truststorePassword,
-           String crlPath, String trustManagerFactoryPlugin, boolean trustAll) throws Exception;
+   @SuppressWarnings("unused")
+   @Deprecated
+   default SSLContext getSSLContext(Map<String, Object> configuration,
+           String keystoreProvider, String keystorePath, String keystoreType, String keystorePassword,
+           String truststoreProvider, String truststorePath, String truststoreType, String truststorePassword,
+           String crlPath, String trustManagerFactoryPlugin, boolean trustAll) throws Exception {
+
+      final SSLContextConfig sslContextConfig = SSLContextConfig.builder()
+         .keystoreProvider(keystoreProvider)
+         .keystorePath(keystorePath)
+         .keystoreType(keystoreType)
+         .keystorePassword(keystorePassword)
+         .truststoreProvider(truststoreProvider)
+         .truststorePath(truststorePath)
+         .truststorePassword(truststorePassword)
+         .trustManagerFactoryPlugin(trustManagerFactoryPlugin)
+         .crlPath(crlPath)
+         .build();
+
+      return getSSLContext(sslContextConfig, configuration);
+   }
+
+   /**
+    * @param additionalOpts implementation specific additional options.
+    *
+    * @return an {@link SSLContext} for the given configuration.
+    */
+   default SSLContext getSSLContext(SSLContextConfig config, Map<String, Object> additionalOpts) throws Exception {
+      return getSSLContext(additionalOpts,
+         config.getKeystoreProvider(), config.getKeystorePath(), config.getKeystoreType(), config.getKeystorePassword(),
+         config.getTruststoreProvider(), config.getTruststorePath(), config.getTruststoreType(), config.getTruststorePassword(),
+         config.getCrlPath(), config.getTrustManagerFactoryPlugin(), config.isTrustAll()
+      );
+   }
 
    default void clearSSLContexts() {
    }

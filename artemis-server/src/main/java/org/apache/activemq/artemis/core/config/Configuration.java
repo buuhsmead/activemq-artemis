@@ -22,8 +22,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.activemq.artemis.api.core.QueueConfiguration;
+import org.apache.activemq.artemis.core.config.amqpBrokerConnectivity.AMQPBrokerConnectConfiguration;
 import org.apache.activemq.artemis.core.server.metrics.ActiveMQMetricsPlugin;
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerFederationPlugin;
 import org.apache.activemq.artemis.core.server.plugin.ActiveMQServerAddressPlugin;
@@ -64,7 +66,6 @@ public interface Configuration {
     * To be used on dependency management on the application server
     */
    Configuration setName(String name);
-
 
    /**
     * We use Bean-utils to pass in System.properties that start with {@link #setSystemPropertyPrefix(String)}.
@@ -484,6 +485,10 @@ public interface Configuration {
 
    Configuration clearClusterConfigurations();
 
+   Configuration addAMQPConnection(AMQPBrokerConnectConfiguration amqpBrokerConnectConfiguration);
+
+   List<AMQPBrokerConnectConfiguration> getAMQPConnection();
+
    /**
     * Returns the queues configured for this server.
     */
@@ -663,6 +668,24 @@ public interface Configuration {
     * Sets the file system directory used to store journal log.
     */
    Configuration setJournalDirectory(String dir);
+
+   String getJournalRetentionDirectory();
+
+   /**
+    * Sets the file system directory used to store historical backup journal.
+    */
+   Configuration setJournalRetentionDirectory(String dir);
+
+   File getJournalRetentionLocation();
+
+   /** The retention period for the journal in milliseconds (always in milliseconds, a conversion is performed on set) */
+   long getJournalRetentionPeriod();
+
+   Configuration setJournalRetentionPeriod(TimeUnit unit, long limit);
+
+   long getJournalRetentionMaxBytes();
+
+   Configuration setJournalRetentionMaxBytes(long bytes);
 
    /**
     * Returns the type of journal used by this server ({@code NIO}, {@code ASYNCIO} or {@code MAPPED}).
@@ -844,6 +867,18 @@ public interface Configuration {
     * Sets the buffer size (in bytes) for NIO.
     */
    Configuration setJournalBufferSize_NIO(int journalBufferSize);
+
+   /**
+    * Returns the maximal number of data files before we can start deleting corrupted files instead of moving them to attic.
+    * <br>
+    * Default value is  {@link org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration#DEFAULT_JOURNAL_MAX_ATTIC_FILES}.
+    */
+   int getJournalMaxAtticFiles();
+
+   /**
+    * Sets the maximal number of data files before we can start deleting corrupted files instead of moving them to attic.
+    */
+   Configuration setJournalMaxAtticFiles(int maxAtticFiles);
 
    /**
     * Returns whether the bindings directory is created on this server startup. <br>
@@ -1334,4 +1369,5 @@ public interface Configuration {
    String getTemporaryQueueNamespace();
 
    Configuration setTemporaryQueueNamespace(String temporaryQueueNamespace);
+
 }
